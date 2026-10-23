@@ -48,3 +48,9 @@ code); use worktrees per area.
 - The garage inventory row re-centres after each part is used; recompute click positions.
 - The game server runs on port 8090 (`scripts/rr-restart.sh` in the old scratch folder
   restarted it; `npm start` with `PORT=8090`).
+- Decompiled Lingo (never commit it) and the Playwright scripts used for testing live in
+  the previous thread's scratch folder:
+  `~/.t3/scratch/2026-10-23-can-you-somehow-re-engineer-c31057db/`
+  (`decomp/`, `scripts/pw-garage-arena.js`, `shots/`). Many `.ls` files are Latin-1:
+  use `grep -a` and `iconv -f latin1 -t utf8`. Lingo can be evaluated in the page via
+  `window.__vm.mcp_eval_lingo(...)` (returns JSON; wrap values in `string(...)`).
