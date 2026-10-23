@@ -5,59 +5,68 @@ Read `docs/notes.md` first: protocol findings, the emulator patch list, and how 
 ## Where things stand
 
 - Login, robot list, garage (workshop) and the Training arena load and render in the
-  browser. The garage preview shows the robot and can be dragged; the arena is lit and the
-  camera sits behind the robot.
+  browser, and the robot drives (arrows, Z/X/C weapons).
+- dirplayer is now based on upstream PR #244 (much better Shockwave 3D: the arena has the
+  real dusk sky and lit buildings). See `docs/upstream.md`. The pinned game build is in
+  `docs/game-build.md`.
 - Lobby/relay server work is done and covered by `npm test` (two simulated clients), but
   has not been tried in the real game.
 - Known bugs the maintainer reported (not yet investigated unless noted):
-  - Can't drive the car: fixed (the frame script's `keyPressed()` calls reached the robot
-    behavior's own `keyPressed` handler; see `docs/notes.md`).
+  - Invisible walls on the rooftop (Training arena).
   - Robot list ("Choose a robot"): the selected row is a grey bar with no robot name.
   - Garage preview: the robot model looks wrong (wheel placement/orientation).
   - Workshop tabs (Paintshop, Buy parts, Sell parts) don't respond.
   - Stats tab shows "Ranking: □" (missing glyph).
 
-## Agreed direction (revised 2026-10-23 after an independent review)
+## Decision (the maintainer, 2026-10-23)
 
-Keep running the original files in dirplayer (no rewrite or transpile). Single-player must
-work before visual polish; a real two-player match comes early, not last.
+Accuracy above all. Stay on dirplayer, running the original game files unmodified, and fix
+dirplayer until single-player behaves like the real game. No streaming, no running the
+real player for play, and no Wine/Windows-VM reference player (not approved). A
+TypeScript/Three.js port was considered and dropped.
 
-1. Controls: make the Training arena drivable (keyPressed with Mac key codes 123..126 etc.).
-2. Upstream check: compare our pinned dirplayer (68376fb + patches/dirplayer.patch) with
-   current upstream github.com/igorlira/dirplayer-rs. Pull in relevant fixes (especially 3D,
-   text, input, events) before fixing more ourselves; re-base the patch if worthwhile.
-3. Pin the reference build: record hashes and version strings of the game files we serve.
-   robotrage.pro mixes v60 files with the v55 arena and modified multiplayer, so state
-   which build we target. robotrage.pro screenshots and archived material are a cheap
-   visual reference, but not for timing or physics.
-4. Reference player (needs the maintainer's go-ahead; LAN server): use the Adobe Shockwave
-   debug projector setup Flashpoint uses (Lingo console, script injection, trace logging;
-   https://flashpointarchive.org/datahub/Shockwave_Curation) rather than building
-   instrumentation from scratch. Match the plugin runtime/Xtra versions. Timebox Wine;
-   fall back to a Windows VM with working 3D. Adobe's Multiuser Xtra uses native TCP
-   sockets, while our lobby and relay speak WebSockets, so multiplayer comparison needs a
-   TCP-to-WebSocket adapter.
-5. Comparison, small first: targeted probes for key polling, event order, layering, text
-   encoding, 3D parenting, rotation and transforms. Then checkpointed gameplay replays with
-   fixed robot/database fixtures and controlled network replies. Pitfalls: the arena reads
-   systemDate/milliSeconds and has a busy-wait loop (don't freeze time naively), random
-   numbers, input sampling, and font/renderer differences in screenshots. Compare numbers
-   with tolerances. An empty diff only covers what was tested.
-6. Re-check two of our own patches against the reference; they may be game-specific
-   rather than true Director semantics: "all 3D sprites draw above 2D and take clicks
-   first", and "stop delivering an event to the old frame's remaining behaviors once go()
-   moves the playhead".
-7. A real two-client match in the browser soon after controls work. The simulated
-   npm test doesn't prove in-game sync.
-8. Then work through the comparison diffs: workshop tabs, robot list text, robot model
-   transforms, collisions and weapons, then visual polish.
-9. Use LibreShockwave (github.com/LibreShockwave/LibreShockwave) only for a bounded look at
-   its debugger and input recording; nothing shows it plays this game's 3D. Intel U3D/IFX
-   code and DLL disassembly are for isolated unresolved questions only.
+The outside reference is Adobe's own code, read with Ghidra (and the REA toolkit) for
+targeted questions, e.g. "how does `intersects` handle rotated sprites?", not to read the
+whole player. Real-player screenshots exist from the Flashpoint spike
+(`~/rr-spike/shots/report/`, branch `spike/shockwave-in-browser`).
 
-Estimates: reference 0.5–2 days; harness prototype about half a day. Single-player and
-multiplayer parity estimates are withdrawn until the reference works and one real match
-has been played.
+The maintainer's concern is whack-a-mole: "a million issues" with no visible end, judged by eye.
+So issues are counted (the inventory) and each fix is checked against something real
+(Adobe's code, reference screenshots, documented behaviour) and kept by a test. "Done"
+is an agreed scenario matrix with tolerances, not "every feature checked once".
+
+## Plan
+
+1. Done: controls, upstream rebase, pinned build (`docs/upstream.md`, `docs/game-build.md`).
+2. Inventory: every Director feature the game's Lingo uses (`tools/lingo-inventory.py`
+   over the decompile), each classified works / wrong / unclear against dirplayer's code,
+   Director's documentation, ScummVM's Director engine (2D cross-check) and Adobe's code.
+   Committed as `docs/inventory.md`; its counts answer "how many issues are left?".
+3. Invisible walls first. The arena does collision in a hidden 2D map: the robot is a
+   rotated off-stage sprite, the walls are sprites, and the robot behavior tests
+   `sprite sp intersects N`. dirplayer's `intersects`
+   (`vm-rust/src/player/bytecode/sprite_compare.rs`) compares bounding rects and samples
+   mattes unrotated. Confirm with a debug overlay of the collision map (the robot's true
+   rotated quad) and an automated driving sweep at many angles. Check Director's real rule
+   in Adobe's code, fix it, keep the sweep as a regression test, then ask the maintainer to drive
+   the rooftop.
+4. Work the inventory in order of impact on play: controls and collisions, robot-list text,
+   workshop tabs, garage robot model, sky, Stats "Ranking" glyph. Each fix gets a test.
+5. Re-check two of our patches against Adobe's code; they may be game-specific rather than
+   Director behaviour: "all 3D sprites draw above 2D and take clicks first", and "stop
+   delivering an event to the old frame's remaining behaviors after go() moves the
+   playhead".
+6. A real two-player match in two browser tabs once controls and collisions are right.
+7. The maintainer playtests at checkpoints for feel; what they report becomes measurable tests.
+
+Later, after single-player is accurate (don't start yet): an "enhanced" setting with
+original mode kept exact: 3D and TrueType text at full device resolution (2D menu art
+original, crisp whole-step or smooth scaling), a widescreen arena (wider 3D window and
+field of view, same setting for both players), menus kept 4:3 and centred. Whole-step
+canvas scaling in `public/index.html` is faithful and may be done any time.
+
+Estimates: parity estimates are withdrawn. GPT-6.1-Sol guessed 8–16 engineering weeks for
+convincing fidelity; re-estimate from the inventory.
 
 ## Testing gotchas
 
@@ -67,7 +76,20 @@ has been played.
 - Training refuses to start until the robot has an engine.
 - The garage inventory row re-centres after each part is used; recompute click positions.
 - The game server runs on port 8090 (`scripts/rr-restart.sh` in the old scratch folder
-  restarted it; `npm start` with `PORT=8090`).
+  restarted it; `npm start` with `PORT=8090`). The maintainer plays there: test changes on a second
+  instance (`PORT=8091 PUBLIC_DIR=... DATA_DIR=...` with copies) before installing a new
+  build into `public/dirplayer/`, and stop it afterwards.
+- `scripts/build-dirplayer.sh` also installs into `public/dirplayer/`, which 8090 serves.
+  To build without installing, run the same `docker run` and copy
+  `vendor/dirplayer-rs/dist-polyfill/dirplayer-polyfill.js` yourself.
+- The player takes keys only while its stage element has focus; `public/index.html`
+  forwards keys to it when nothing is focused. `window.__vm.set_glyph_preference(...)` and
+  `clear_font_cache()` switch text rendering paths at runtime.
+- Ghidra 12.2 (JDK 25) is in `~/tools/`, with a headless project
+  `~/tools/ghidra-projects/director101` holding Adobe's Director 10.1 `Dirapi.dll`,
+  `Iml32.dll`, `Shockwave 3D Asset.x32`, `TextXtra.x32` and `Font Xtra.x32` (binaries from
+  `~/rr-spike/fp-shockwave/`). The REA CLI is installed globally (`rea`). Never commit
+  Adobe, Windows or game binaries.
 - Decompiled Lingo (never commit it) and the Playwright scripts used for testing live in
   the previous thread's scratch folder:
   `~/.t3/scratch/2026-10-23-can-you-somehow-re-engineer-c31057db/`
