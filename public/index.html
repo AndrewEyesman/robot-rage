@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Robot Rage</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #bbb; font: 14px system-ui, sans-serif; }
+    main { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+    footer { opacity: 0.6; }
+  </style>
+</head>
+<body>
+<main>
+  <div id="stage"></div>
+  <footer>Private Robot Rage server · game © Raketspel / Miniclip</footer>
+</main>
+<script>
+  // Every tab gets a made-up private "IP". The game shares it with opponents
+  // over IRC, they connectToNetServer() to it on port 1626, and the resolver
+  // below turns that into a relay connection on this server.
+  const myAddress = sessionStorage.rrAddress ||= [10, 1 + Math.random() * 254 | 0,
+    Math.random() * 256 | 0, 1 + Math.random() * 254 | 0].join(".");
+
+  const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+  const IRC_PORTS = new Set([8777, 8778, 8779, 8780, 8781]);
+
+  window.dirplayerResolveSocketUrl = (host, port) => {
+    if (IRC_PORTS.has(port)) return `${wsBase}/ws/irc?addr=${encodeURIComponent(myAddress)}`;
+    if (port === 1626) return `${wsBase}/ws/p2p/connect?addr=${encodeURIComponent(host)}`;
+    return "";
+  };
+  // Page functions the original Miniclip site provided via gotoNetPage("javascript:...").
+  window.openHelpPop = () => {};
+  window.openPassPop = () => console.info("Password resets: ask whoever runs this server.");
+  window.subscribeToNewsletter = () => {};
+
+  window.dirplayerResolveListenUrl = (userID) =>
+    `${wsBase}/ws/p2p/listen?addr=${encodeURIComponent(myAddress)}&user=${encodeURIComponent(userID)}`;
+
+  const embed = document.createElement("embed");
+  Object.assign(embed, { src: "game/wrapper_robotragerearmed.dcr", width: 800, height: 600 });
+  embed.setAttribute("type", "application/x-director");
+  embed.setAttribute("sw1", myAddress);
+  document.getElementById("stage").append(embed);
+</script>
+<script src="dirplayer/dirplayer-polyfill.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "robotrage-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

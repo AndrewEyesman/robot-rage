@@ -1,0 +1,977 @@
+diff --git a/vm-rust/src/director/chunks/score.rs b/vm-rust/src/director/chunks/score.rs
+index 6d1186d..3bf677e 100644
+--- a/vm-rust/src/director/chunks/score.rs
++++ b/vm-rust/src/director/chunks/score.rs
+@@ -1458,7 +1458,7 @@ impl ScoreChunk {
+             // keyframe indices.
+             let looks_like_span = entries
+                 .get(idx)
+-                .map_or(false, |e| e.len() >= 40 && (e.len() - 40) % 4 == 0);
++                .map_or(false, |e| e.len() >= 40 && (e.len() - 40) % 4 == 0 && Self::has_plausible_span_frames(e));
+             let name = if looks_like_span {
+                 entries
+                     .get(idx + 2)
+@@ -1833,6 +1833,18 @@ impl ScoreChunk {
+     }
+ 
+     /// Analyze score entries beyond Entry[0] for behavior attachment data
++    /// A sprite-span record starts with its start and end frame. Behavior
++    /// initializer strings ("[#prop: value]") can be the same 40/44/48 bytes
++    /// long, so size alone is not enough to tell them apart.
++    fn has_plausible_span_frames(b: &[u8]) -> bool {
++        if b.len() < 8 {
++            return false;
++        }
++        let start = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
++        let end = u32::from_be_bytes([b[4], b[5], b[6], b[7]]);
++        start >= 1 && start <= 32000 && end >= start && end <= 100000
++    }
++
+     fn analyze_behavior_attachment_entries(
+         entries: &Vec<Vec<u8>>,
+         _dir_version: u16,
+@@ -1885,7 +1897,7 @@ impl ScoreChunk {
+             // — which reliably rejects the behavior/initializer chunks (their
+             // first u32s are cast ids or ASCII, far outside these ranges).
+             let n = entry_bytes.len();
+-            let size_accepted = matches!(n, 40 | 44 | 48)
++            let size_accepted = (matches!(n, 40 | 44 | 48) && Self::has_plausible_span_frames(entry_bytes))
+                 || (n >= 52 && n % 4 == 0 && {
+                     let b = entry_bytes;
+                     let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+diff --git a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs b/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
+index f7f81be..de61047 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
+@@ -43,6 +43,23 @@ pub(crate) fn char_range_to_byte_range(s: &str, char_start: usize, char_end: usi
+ }
+ 
+ impl StringChunkUtils {
++    /// Text of the field or text member a chunk expression edits, e.g.
++    /// `delete char 1 of member("password_box")` on a #text member.
++    fn member_text(player: &DirPlayer, member_ref: &CastMemberRef) -> Result<String, ScriptError> {
++        let member = player
++            .movie
++            .cast_manager
++            .find_member_by_ref(member_ref)
++            .ok_or_else(|| ScriptError::new("Chunk source member not found".to_string()))?;
++        if let Some(field) = member.member_type.as_field() {
++            return Ok(field.text.clone());
++        }
++        if let Some(text) = member.member_type.as_text() {
++            return Ok(text.text.clone());
++        }
++        Err(ScriptError::new("Chunk source member is not a field or text member".to_string()))
++    }
++
+     pub fn delete(
+         player: &mut DirPlayer,
+         original_str_src: &StringChunkSource,
+@@ -53,16 +70,7 @@ impl StringChunkUtils {
+                 StringChunkSource::Datum(original_str_ref) => {
+                     player.get_datum(original_str_ref).string_value()?
+                 }
+-                StringChunkSource::Member(member_ref) => player
+-                    .movie
+-                    .cast_manager
+-                    .find_member_by_ref(&member_ref)
+-                    .unwrap()
+-                    .member_type
+-                    .as_field()
+-                    .unwrap()
+-                    .text
+-                    .clone(),
++                StringChunkSource::Member(member_ref) => Self::member_text(player, member_ref)?,
+             };
+             Self::string_by_deleting_chunk(&original_str, &chunk_expr)
+         }?;
+@@ -81,16 +89,7 @@ impl StringChunkUtils {
+                 StringChunkSource::Datum(original_str_ref) => {
+                     player.get_datum(original_str_ref).string_value()?
+                 }
+-                StringChunkSource::Member(member_ref) => player
+-                    .movie
+-                    .cast_manager
+-                    .find_member_by_ref(&member_ref)
+-                    .unwrap()
+-                    .member_type
+-                    .as_field()
+-                    .unwrap()
+-                    .text
+-                    .clone(),
++                StringChunkSource::Member(member_ref) => Self::member_text(player, member_ref)?,
+             };
+             Self::string_by_putting_into_chunk(&original_str, &chunk_expr, &new_string)
+         }?;
+diff --git a/vm-rust/src/player/handlers/datum_handlers/timeout.rs b/vm-rust/src/player/handlers/datum_handlers/timeout.rs
+index 112ca86..635f68e 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/timeout.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/timeout.rs
+@@ -213,6 +213,7 @@ impl TimeoutDatumHandlers {
+                 period: timeout_period as u32,
+                 target_ref: target_ref.clone(),
+                 is_scheduled: false,
++                persistent: false,
+                 next_fire_ms: 0.0,
+             };
+             // Retire any same-named timeout BEFORE scheduling the replacement.
+@@ -316,6 +317,10 @@ impl TimeoutDatumHandlers {
+                         let p = timeout.map_or(0, |t| t.period as i32);
+                         Ok(player.alloc_datum(Datum::Int(p)))
+                     }
++                    "persistent" => {
++                        let p = timeout.map_or(false, |t| t.persistent);
++                        Ok(player.alloc_datum(Datum::Int(p as i32)))
++                    }
+                     _ => Err(ScriptError::new(format!(
+                         "Cannot get timeout property {}",
+                         prop
+@@ -333,6 +338,13 @@ impl TimeoutDatumHandlers {
+                             .map_or(0, |t| t.period as i32);
+                         Ok(player.alloc_datum(Datum::Int(p)))
+                     }
++                    "persistent" => {
++                        let p = player
++                            .timeout_manager
++                            .get_timeout(&ti.name)
++                            .map_or(false, |t| t.persistent);
++                        Ok(player.alloc_datum(Datum::Int(p as i32)))
++                    }
+                     _ => Err(ScriptError::new(format!(
+                         "Cannot get timeout property {}",
+                         prop
+@@ -360,6 +372,18 @@ impl TimeoutDatumHandlers {
+             )),
+         };
+         
++        if prop.as_lower_str() == "persistent" {
++            let persistent = player.get_datum(value).int_value()? != 0;
++            return match player.timeout_manager.get_timeout_mut(&timeout_name) {
++                Some(timeout) => {
++                    timeout.persistent = persistent;
++                    Ok(())
++                }
++                None => Err(ScriptError::new(
++                    "Cannot set persistent of unscheduled timeout".to_string(),
++                )),
++            };
++        }
+         let timeout = player.timeout_manager.get_timeout_mut(&timeout_name);
+         match prop.into_builtin() {
+             Some(BuiltInSymbol::Target) => {
+diff --git a/vm-rust/src/player/handlers/manager.rs b/vm-rust/src/player/handlers/manager.rs
+index 8bcc917..609827e 100644
+--- a/vm-rust/src/player/handlers/manager.rs
++++ b/vm-rust/src/player/handlers/manager.rs
+@@ -2519,6 +2519,15 @@ impl BuiltInHandlerManager {
+                         return res;
+                     }
+                 }
++                // Browser cache controls have no meaning here: the host page's
++                // HTTP cache is outside the movie's reach.
++                match name.as_lower_str() {
++                    "clearcache" => return Ok(DatumRef::Void),
++                    "cachesize" => {
++                        return reserve_player_mut(|player| Ok(player.alloc_datum(Datum::Int(0))));
++                    }
++                    _ => {}
++                }
+                 // Static-only Xtras (OpenURL, SysMenu, BudAPI, Curl statics).
+                 if let Some(res) =
+                     crate::player::xtra::manager::try_call_xtra_static_handler(name.into(), args)
+diff --git a/vm-rust/src/player/handlers/movie.rs b/vm-rust/src/player/handlers/movie.rs
+index f5f820c..b6cdddd 100644
+--- a/vm-rust/src/player/handlers/movie.rs
++++ b/vm-rust/src/player/handlers/movie.rs
+@@ -378,6 +378,11 @@ impl MovieHandlers {
+             Ok(frame)
+         })?;
+ 
++        if frame_advanced && reserve_player_ref(|player| player.in_begin_sprite_dispatch) {
++            // Queued via next_frame; the frame loop jumps once beginSprite is done.
++            frame_advanced = false;
++        }
++
+         if frame_advanced {
+             let mut execute_frame_change = false;
+ 
+@@ -476,10 +481,12 @@ impl MovieHandlers {
+ 
+                 player_wait_available().await;
+ 
++                reserve_player_mut(|player| player.in_begin_sprite_dispatch = true);
+                 let begin_sprite_nums = player_dispatch_event_beginsprite(
+                     Symbol::builtin(BuiltInSymbol::BeginSprite),
+                     &vec![]
+                 ).await;
++                reserve_player_mut(|player| player.in_begin_sprite_dispatch = false);
+ 
+                 player_wait_available().await;
+ 
+@@ -758,6 +765,13 @@ impl MovieHandlers {
+             let message = player.get_datum(&args[1]).symbol_value()
+                 .map_err(|e| ScriptError::new(format!("sendSprite: invalid message: {:?}", e)))?;
+             let remaining_args = &args[2..].to_vec();
++            // Sprite 0 is the frame script channel; its behavior instance is
++            // tracked on the movie rather than on channel 0's sprite.
++            if sprite_num == 0 {
++                if let Some(frame_script) = player.movie.frame_script_instance.clone() {
++                    return Ok((message.clone(), remaining_args.clone(), vec![frame_script]));
++                }
++            }
+             let sprite = player.movie.score.get_sprite(sprite_num as i16)
+                 .ok_or_else(|| ScriptError::new(format!("sendSprite: sprite {} not found", sprite_num)))?;
+             let fallback = sprite.script_instance_list.clone();
+diff --git a/vm-rust/src/player/handlers/types.rs b/vm-rust/src/player/handlers/types.rs
+index ad5a8a0..fc8e82e 100644
+--- a/vm-rust/src/player/handlers/types.rs
++++ b/vm-rust/src/player/handlers/types.rs
+@@ -1007,6 +1007,13 @@ impl TypeHandlers {
+                         .await?,
+                 )
+             }
++            // Director 10 function form: new(timeout(), name, period, #handler, target)
++            DatumType::TimeoutRef => {
++                Ok(
++                    player_call_datum_handler(&args[0], Symbol::builtin(BuiltInSymbol::New), &args[1..].to_vec())
++                        .await?,
++                )
++            }
+             DatumType::Xtra => {
+                 let xtra_name = reserve_player_ref(|player| {
+                     player
+diff --git a/vm-rust/src/player/mod.rs b/vm-rust/src/player/mod.rs
+index 8fef74e..2b80388 100644
+--- a/vm-rust/src/player/mod.rs
++++ b/vm-rust/src/player/mod.rs
+@@ -478,6 +478,11 @@ pub struct DirPlayer {
+     pub in_prepare_frame: bool,
+     pub in_step_frame: bool,
+     pub in_event_dispatch: bool,
++    /// True while beginSprite is being dispatched to a frame's sprites. A
++    /// go() issued from beginSprite only queues the jump: running the frame
++    /// change inline would begin the next frame's behaviors against sprite
++    /// channels that have not been refreshed yet.
++    pub in_begin_sprite_dispatch: bool,
+     /// Set by `stopEvent()` (Director 11.5 Scripting Dictionary, Movie method):
+     /// "prevents scripts from passing an event message to subsequent locations
+     /// in the message hierarchy… Neither subsequent scripts nor other behaviors
+@@ -832,6 +837,7 @@ impl DirPlayer {
+             in_prepare_frame: false,
+             in_step_frame: false,
+             in_event_dispatch: false,
++            in_begin_sprite_dispatch: false,
+             event_stopped: false,
+             command_handler_yielding: false,
+             active_static_event_handlers: Vec::new(),
+@@ -5525,10 +5531,12 @@ async fn run_movie_init_sequence() {
+         player.is_in_frame_update = true;
+     });
+ 
++    reserve_player_mut(|player| player.in_begin_sprite_dispatch = true);
+     let begin_sprite_nums = player_dispatch_event_beginsprite(
+         Symbol::builtin(BuiltInSymbol::BeginSprite),
+         &vec![]
+     ).await;
++    reserve_player_mut(|player| player.in_begin_sprite_dispatch = false);
+ 
+     player_wait_available().await;
+ 
+@@ -5810,7 +5818,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
+     // 3. Load the new movie data (preserving globals and allocator)
+     reserve_player_mut(|player| {
+         player.is_dispatching_events = prev_dispatching;
+-        player.movie.score.reset();
++        player.movie.score.reset_for_new_movie();
+         player.clear_script_instance_list_caches();
+         player.movie.frame_script_instance = None;
+         player.movie.frame_script_member = None;
+@@ -6406,10 +6414,12 @@ pub async fn run_single_frame() -> (bool, bool) {
+         player.is_in_frame_update = true;
+     });
+ 
++    reserve_player_mut(|player| player.in_begin_sprite_dispatch = true);
+     let begin_sprite_nums = player_dispatch_event_beginsprite(
+         Symbol::builtin(BuiltInSymbol::BeginSprite),
+         &vec![]
+     ).await;
++    reserve_player_mut(|player| player.in_begin_sprite_dispatch = false);
+ 
+     player_wait_available().await;
+ 
+diff --git a/vm-rust/src/player/score.rs b/vm-rust/src/player/score.rs
+index 25330f7..7ea9808 100644
+--- a/vm-rust/src/player/score.rs
++++ b/vm-rust/src/player/score.rs
+@@ -3483,6 +3483,19 @@ impl Score {
+         JsApi::dispatch_score_changed();
+     }
+ 
++    /// Reset for a different movie: every sprite starts clean, not just
++    /// puppets. Without this, properties a script set on a non-puppet sprite
++    /// (loader animations moving and swapping members) leak into the next
++    /// movie's sprites in the same channel.
++    pub fn reset_for_new_movie(&mut self) {
++        for channel in &mut self.channels {
++            channel.sprite.script_instance_list.clear();
++            channel.sprite.reset();
++        }
++        self.invalidate_render_channel_cache();
++        JsApi::dispatch_score_changed();
++    }
++
+     pub fn get_sorted_channels(&self, frame_num: u32) -> Vec<&SpriteChannel> {
+         let generation = self.render_channel_cache_generation;
+         if let Some((cached_frame, cached_generation, cached_indices)) =
+diff --git a/vm-rust/src/player/timeout.rs b/vm-rust/src/player/timeout.rs
+index 3574d9e..2925929 100644
+--- a/vm-rust/src/player/timeout.rs
++++ b/vm-rust/src/player/timeout.rs
+@@ -14,6 +14,9 @@ pub struct Timeout {
+     pub handler: Symbol,
+     pub target_ref: DatumRef,
+     pub is_scheduled: bool,
++    /// `the persistent of timeout`. dirplayer never clears timeouts on movie
++    /// change, so this is only stored and reported back.
++    pub persistent: bool,
+     /// Wall-clock timestamp (ms) when this timeout should next fire.
+     pub next_fire_ms: f64,
+ }
+diff --git a/vm-rust/src/player/xtra/multiuser/mod.rs b/vm-rust/src/player/xtra/multiuser/mod.rs
+index 9bc0ebe..ef055fe 100644
+--- a/vm-rust/src/player/xtra/multiuser/mod.rs
++++ b/vm-rust/src/player/xtra/multiuser/mod.rs
+@@ -49,6 +49,9 @@ pub struct MultiuserXtraInstance {
+     pub connection_mode: MultiuserConnectionMode,
+     pub sender_id: String,
+     pub recv_buffer: Vec<u8>,
++    /// Set by waitForNetConnection: the socket leads to a relay that
++    /// forwards peers' messages to us instead of to a real server.
++    pub is_listener: bool,
+ }
+ 
+ impl MultiuserXtraInstance {
+@@ -121,6 +124,7 @@ impl MultiuserXtraManager {
+                 connection_mode: MultiuserConnectionMode::Binary,
+                 sender_id: String::new(),
+                 recv_buffer: Vec::new(),
++                is_listener: false,
+             },
+         );
+         self.instance_counter
+@@ -141,6 +145,232 @@ impl MultiuserXtraManager {
+         )))
+     }
+ 
++    /// Open the WebSocket behind a Multiuser instance. `logon` carries
++    /// (userName, password, movieID, encryptionKey) for connectToNetServer;
++    /// it is None for a waitForNetConnection listener, which neither
++    /// announces ConnectToNetServer nor sends a Logon.
++    fn open_socket(
++        instance_id: u32,
++        ws_url: String,
++        logon: Option<(String, String, String, String)>,
++    ) -> Result<DatumRef, ScriptError> {
++        let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++        let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
++        let socket = match WebSocket::new(&ws_url) {
++            Ok(s) => s,
++            Err(e) => {
++                multiuser_log!("Multiuser: Failed to create WebSocket: {:?}", e);
++                // Dispatch error message to handler
++                instance.dispatch_message(MultiuserMessage {
++                    error_code: -1,
++                    recipients: vec![],
++                    sender_id: "System".to_string(),
++                    subject: "ConnectToNetServer".to_string(),
++                    content: StaticDatum::String(format!("Failed to create WebSocket: {:?}", e)),
++                    time_stamp: 0,
++                });
++                return Ok(DatumRef::Void);
++            }
++        };
++        socket.set_binary_type(web_sys::BinaryType::Arraybuffer);
++
++        // Log initial socket state
++        multiuser_log!("Multiuser: WebSocket created, readyState={}", socket.ready_state());
++
++        let socket_clone = socket.clone();
++        let ws_url_clone = ws_url.clone();
++        // Snapshot the player generation at connection time. All four
++        // callbacks check this before touching global state so that
++        // forgotten (leaked) closures from a previous test cannot fire
++        // on the new test's manager/player after a reset.
++        let conn_generation = unsafe { crate::player::PLAYER_GENERATION };
++        let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
++            if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
++            // Handle both ArrayBuffer and String messages
++            let data = e.data();
++            let message_bytes = if let Ok(array_buffer) = data.clone().dyn_into::<js_sys::ArrayBuffer>() {
++                let array = js_sys::Uint8Array::new(&array_buffer);
++                array.to_vec()
++            } else if let Ok(js_string) = data.dyn_into::<js_sys::JsString>() {
++                // js_string.as_string().unwrap().into_bytes()
++                js_string.as_string().unwrap_or_default().chars().map(|c| c as u8).collect()
++            } else {
++                multiuser_log!("Multiuser: Received unknown message type");
++                return;
++            };
++            // let message_str = if let Ok(array_buffer) = data.clone().dyn_into::<js_sys::ArrayBuffer>() {
++            //     let array = js_sys::Uint8Array::new(&array_buffer);
++            //     let vec = array.to_vec();
++            //     let char_vec: Vec<char> = vec.into_iter().map(|byte| byte as char).collect();
++            //     char_vec.into_iter().collect()
++            // } else if let Ok(js_string) = data.dyn_into::<js_sys::JsString>() {
++            //     js_string.as_string().unwrap_or_default()
++            // } else {
++            //     multiuser_log!("Multiuser: Received unknown message type");
++            //     return;
++            // };
++            // multiuser_log!("Multiuser: WebSocket message received: {:?}", message_str);
++
++            let multiusr_manager =
++                unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut() };
++            if let Some(manager) = multiusr_manager {
++                if let Some(instance) = manager.instances.get_mut(&instance_id) {
++                    match instance.connection_mode {
++                        MultiuserConnectionMode::Text => {
++                            // A Unicode Director (11.5) Multiuser Xtra hands
++                            // the movie UNICODE text — it decodes the wire
++                            // itself. Habbo relies on that: `String Services
++                            // Class.decodeUTF8` opens with
++                            //   `if pUnicodeDirector and not tForceDecode then return tStr`
++                            // and `pUnicodeDirector` is 1 whenever
++                            // `_player.productVersion >= 11`, so the client
++                            // deliberately does NOT decode incoming chat.
++                            //
++                            // Mapping each byte to a char (Latin-1) therefore
++                            // surfaced the server's UTF-8 verbatim: `ö` came
++                            // back as `C3 B6` and rendered as two characters,
++                            // which is the `ÄÖÄÖ` garbling in v26/v31 chat.
++                            // v7 predates all of this (`pUnicodeDirector = 0`,
++                            // no `encodeUTF8`) and sends plain Latin-1, so it
++                            // never showed the fault.
++                            //
++                            // `decode_text_auto` decodes valid UTF-8 as UTF-8
++                            // and falls back to per-byte for anything else, so
++                            // a Latin-1 server (v7) is untouched.
++                            let message_str =
++                                crate::io::encoding::decode_text_auto(&message_bytes);
++                            instance.dispatch_message(MultiuserMessage {
++                                error_code: 0,
++                                recipients: vec!["*".to_string()],
++                                sender_id: "System".to_string(),
++                                subject: "String".to_string(),
++                                content: StaticDatum::String(message_str),
++                                time_stamp: 0,
++                            });
++                        }
++                        MultiuserConnectionMode::Binary => {
++                            instance.receive_binary_data(&message_bytes);
++                        }
++                    }
++                }
++            }
++        });
++
++        let onerror_callback = Closure::<dyn FnMut(_)>::new(move |_e: Event| {
++            if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
++            // Note: WebSocket error events typically don't provide detailed error info.
++            // The ErrorEvent's message/filename/etc. fields are often undefined for WebSocket errors.
++            // We just log a generic error message.
++            multiuser_log!("Multiuser: WebSocket error occurred (connection failed or aborted)");
++
++            let mut multiusr_manager =
++                unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++            if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
++                instance.dispatch_message(MultiuserMessage {
++                    error_code: -1,
++                    recipients: vec![],
++                    sender_id: "System".to_string(),
++                    subject: "ConnectToNetServer".to_string(),
++                    content: StaticDatum::String("WebSocket connection error".to_string()),
++                    time_stamp: 0,
++                });
++            }
++        });
++
++        let onclose_callback = Closure::<dyn FnMut(_)>::new(move |e: CloseEvent| {
++            if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
++            multiuser_log!("Multiuser: WebSocket closed - code: {}, reason: '{}', wasClean: {}",
++                e.code(), e.reason(), e.was_clean());
++
++            let mut multiusr_manager =
++                unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++            if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
++                instance.dispatch_message(MultiuserMessage {
++                    error_code: e.code() as i32,
++                    recipients: vec![],
++                    sender_id: "System".to_string(),
++                    subject: "DisconnectFromServer".to_string(),
++                    content: StaticDatum::String(e.reason()),
++                    time_stamp: 0,
++                });
++            }
++        });
++
++        let onopen_callback = Closure::<dyn FnMut(_)>::new(move |_e: Event| {
++            if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
++            multiuser_log!("Multiuser: WebSocket connected to {}", ws_url_clone);
++            let multiusr_manager =
++                unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut() };
++            let Some(manager) = multiusr_manager else { return; };
++            let Some(instance) = manager.instances.get_mut(&instance_id) else { return; };
++            let Some((username, password, movie_id, encryption_key)) = &logon else { return; };
++            instance.dispatch_message(MultiuserMessage {
++                error_code: 0,
++                recipients: vec!["*".to_string()],
++                sender_id: "System".to_string(),
++                subject: "ConnectToNetServer".to_string(),
++                content: StaticDatum::Void,
++                time_stamp: 0, // TODO timestamp
++            });
++            if let MultiuserConnectionMode::Binary = instance.connection_mode {
++                let message = MultiuserMessage {
++                    error_code: 0,
++                    recipients: vec!["System".to_string()],
++                    sender_id: username.to_string(),
++                    subject: "Logon".to_string(),
++                    content: StaticDatum::List(vec![
++                        StaticDatum::String(movie_id.clone()),
++                        StaticDatum::String(username.clone()),
++                        StaticDatum::String(password.clone()),
++                    ]),
++                    time_stamp: 0,
++                };
++                let resolved_encryption_key: Vec<u8> = if encryption_key.is_empty() {
++                    DEFAULT_CIPHER_KEY.to_vec()
++                } else if encryption_key.len() < 20 {
++                    // DEFAULT_CIPHER_KEY + &encryption_key
++                    let mut key = DEFAULT_CIPHER_KEY.to_vec();
++                    key.extend_from_slice(encryption_key.as_bytes());
++                    key
++                } else {
++                    encryption_key.as_bytes().to_vec()
++                };
++                let mut cipher = MUSBlowfish::new(&resolved_encryption_key);
++                let bytes = message.to_bytes(Some(&mut cipher));
++                instance.socket_tx.as_ref().unwrap().try_send(bytes.to_vec()).unwrap();
++            }
++        });
++        socket.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
++        socket.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
++        socket.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
++        socket.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
++
++        let (tx, rx) = async_std::channel::unbounded();
++        instance.socket_tx = Some(tx);
++        crate::player::spawn_player_local(async move {
++            while let Ok(message) = rx.recv().await {
++                // Check if WebSocket is open (readyState == 1) before sending
++                // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
++                if socket_clone.ready_state() != 1 {
++                    multiuser_log!("Multiuser: Cannot send message, WebSocket not open (state={})", socket_clone.ready_state());
++                    continue;
++                }
++                // multiuser_log!("Multiuser: Sending message: {:?}", message);
++                if let Err(e) = socket_clone.send_with_u8_array(&message) {
++                    multiuser_log!("Multiuser: Failed to send message: {:?}", e);
++                }
++            }
++        });
++
++        // Forget the callbacks to keep them alive
++        onmessage_callback.forget();
++        onerror_callback.forget();
++        onclose_callback.forget();
++        onopen_callback.forget();
++
++        Ok(DatumRef::Void)
++    }
++
+     pub fn call_instance_handler(
+         handler_name: &str,
+         instance_id: u32,
+@@ -181,6 +411,14 @@ impl MultiuserXtraManager {
+                 // Script uses. Detect it by sniffing args[2]: a PropList
+                 // means form B; otherwise assume form A.
+                 let (username, password, host, port, movie_id, mode, encryption_key) = reserve_player_ref(|player| {
++                    // Mode may be an int or a symbol (#smus / #text), as in connectToNetServer(ip, port, props, #text).
++                    let parse_mode = |d: &DatumRef| -> i32 {
++                        match player.get_datum(d) {
++                            Datum::Symbol(sym) if sym.as_lower_str() == "text" => 1,
++                            Datum::Symbol(_) => 0,
++                            other => other.int_value().unwrap_or(0),
++                        }
++                    };
+                     let arg2 = args.get(2).map(|d| player.get_datum(d));
+                     let is_form_b = matches!(arg2, Some(Datum::PropList(..)));
+                     if is_form_b {
+@@ -204,7 +442,7 @@ impl MultiuserXtraManager {
+                         let username = lookup_str(BuiltInSymbol::UserID);
+                         let password = lookup_str(BuiltInSymbol::Password);
+                         let movie_id = lookup_str(BuiltInSymbol::Movieid);
+-                        let mode = args.get(3).and_then(|d| player.get_datum(d).int_value().ok()).unwrap_or(0);
++                        let mode = args.get(3).map(|d| parse_mode(d)).unwrap_or(0);
+                         let encryption_key = args.get(4).and_then(|d| player.get_datum(d).string_value().ok()).unwrap_or_default();
+                         Ok((username, password, host, port, movie_id, mode, encryption_key))
+                     } else {
+@@ -214,7 +452,7 @@ impl MultiuserXtraManager {
+                         let host = player.get_datum(args.get(2).unwrap()).string_value()?;
+                         let port = player.get_datum(args.get(3).unwrap()).int_value()?;
+                         let movie_id = player.get_datum(args.get(4).unwrap()).string_value().unwrap_or_default();
+-                        let mode = args.get(5).and_then(|d| player.get_datum(d).int_value().ok()).unwrap_or(0);
++                        let mode = args.get(5).map(|d| parse_mode(d)).unwrap_or(0);
+                         let encryption_key = args.get(6).and_then(|d| player.get_datum(d).string_value().ok()).unwrap_or_default();
+                         Ok((username, password, host, port, movie_id, mode, encryption_key))
+                     }
+@@ -285,218 +523,7 @@ impl MultiuserXtraManager {
+                     return Err(ScriptError::new(format!("Invalid connection mode: {}", mode)));
+                 };
+ 
+-                let socket = match WebSocket::new(&ws_url) {
+-                    Ok(s) => s,
+-                    Err(e) => {
+-                        multiuser_log!("Multiuser: Failed to create WebSocket: {:?}", e);
+-                        // Dispatch error message to handler
+-                        instance.dispatch_message(MultiuserMessage {
+-                            error_code: -1,
+-                            recipients: vec![],
+-                            sender_id: "System".to_string(),
+-                            subject: "ConnectToNetServer".to_string(),
+-                            content: StaticDatum::String(format!("Failed to create WebSocket: {:?}", e)),
+-                            time_stamp: 0,
+-                        });
+-                        return Ok(DatumRef::Void);
+-                    }
+-                };
+-                socket.set_binary_type(web_sys::BinaryType::Arraybuffer);
+-
+-                // Log initial socket state
+-                multiuser_log!("Multiuser: WebSocket created, readyState={}", socket.ready_state());
+-
+-                let socket_clone = socket.clone();
+-                let ws_url_clone = ws_url.clone();
+-                // Snapshot the player generation at connection time. All four
+-                // callbacks check this before touching global state so that
+-                // forgotten (leaked) closures from a previous test cannot fire
+-                // on the new test's manager/player after a reset.
+-                let conn_generation = unsafe { crate::player::PLAYER_GENERATION };
+-                let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
+-                    if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
+-                    // Handle both ArrayBuffer and String messages
+-                    let data = e.data();
+-                    let message_bytes = if let Ok(array_buffer) = data.clone().dyn_into::<js_sys::ArrayBuffer>() {
+-                        let array = js_sys::Uint8Array::new(&array_buffer);
+-                        array.to_vec()
+-                    } else if let Ok(js_string) = data.dyn_into::<js_sys::JsString>() {
+-                        // js_string.as_string().unwrap().into_bytes()
+-                        js_string.as_string().unwrap_or_default().chars().map(|c| c as u8).collect()
+-                    } else {
+-                        multiuser_log!("Multiuser: Received unknown message type");
+-                        return;
+-                    };
+-                    // let message_str = if let Ok(array_buffer) = data.clone().dyn_into::<js_sys::ArrayBuffer>() {
+-                    //     let array = js_sys::Uint8Array::new(&array_buffer);
+-                    //     let vec = array.to_vec();
+-                    //     let char_vec: Vec<char> = vec.into_iter().map(|byte| byte as char).collect();
+-                    //     char_vec.into_iter().collect()
+-                    // } else if let Ok(js_string) = data.dyn_into::<js_sys::JsString>() {
+-                    //     js_string.as_string().unwrap_or_default()
+-                    // } else {
+-                    //     multiuser_log!("Multiuser: Received unknown message type");
+-                    //     return;
+-                    // };
+-                    // multiuser_log!("Multiuser: WebSocket message received: {:?}", message_str);
+-
+-                    let multiusr_manager =
+-                        unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut() };
+-                    if let Some(manager) = multiusr_manager {
+-                        if let Some(instance) = manager.instances.get_mut(&instance_id) {
+-                            match instance.connection_mode {
+-                                MultiuserConnectionMode::Text => {
+-                                    // A Unicode Director (11.5) Multiuser Xtra hands
+-                                    // the movie UNICODE text — it decodes the wire
+-                                    // itself. Habbo relies on that: `String Services
+-                                    // Class.decodeUTF8` opens with
+-                                    //   `if pUnicodeDirector and not tForceDecode then return tStr`
+-                                    // and `pUnicodeDirector` is 1 whenever
+-                                    // `_player.productVersion >= 11`, so the client
+-                                    // deliberately does NOT decode incoming chat.
+-                                    //
+-                                    // Mapping each byte to a char (Latin-1) therefore
+-                                    // surfaced the server's UTF-8 verbatim: `ö` came
+-                                    // back as `C3 B6` and rendered as two characters,
+-                                    // which is the `ÄÖÄÖ` garbling in v26/v31 chat.
+-                                    // v7 predates all of this (`pUnicodeDirector = 0`,
+-                                    // no `encodeUTF8`) and sends plain Latin-1, so it
+-                                    // never showed the fault.
+-                                    //
+-                                    // `decode_text_auto` decodes valid UTF-8 as UTF-8
+-                                    // and falls back to per-byte for anything else, so
+-                                    // a Latin-1 server (v7) is untouched.
+-                                    let message_str =
+-                                        crate::io::encoding::decode_text_auto(&message_bytes);
+-                                    instance.dispatch_message(MultiuserMessage {
+-                                        error_code: 0,
+-                                        recipients: vec!["*".to_string()],
+-                                        sender_id: "System".to_string(),
+-                                        subject: "String".to_string(),
+-                                        content: StaticDatum::String(message_str),
+-                                        time_stamp: 0,
+-                                    });
+-                                }
+-                                MultiuserConnectionMode::Binary => {
+-                                    instance.receive_binary_data(&message_bytes);
+-                                }
+-                            }
+-                        }
+-                    }
+-                });
+-
+-                let onerror_callback = Closure::<dyn FnMut(_)>::new(move |_e: Event| {
+-                    if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
+-                    // Note: WebSocket error events typically don't provide detailed error info.
+-                    // The ErrorEvent's message/filename/etc. fields are often undefined for WebSocket errors.
+-                    // We just log a generic error message.
+-                    multiuser_log!("Multiuser: WebSocket error occurred (connection failed or aborted)");
+-
+-                    let mut multiusr_manager =
+-                        unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+-                    if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
+-                        instance.dispatch_message(MultiuserMessage {
+-                            error_code: -1,
+-                            recipients: vec![],
+-                            sender_id: "System".to_string(),
+-                            subject: "ConnectToNetServer".to_string(),
+-                            content: StaticDatum::String("WebSocket connection error".to_string()),
+-                            time_stamp: 0,
+-                        });
+-                    }
+-                });
+-
+-                let onclose_callback = Closure::<dyn FnMut(_)>::new(move |e: CloseEvent| {
+-                    if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
+-                    multiuser_log!("Multiuser: WebSocket closed - code: {}, reason: '{}', wasClean: {}",
+-                        e.code(), e.reason(), e.was_clean());
+-
+-                    let mut multiusr_manager =
+-                        unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+-                    if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
+-                        instance.dispatch_message(MultiuserMessage {
+-                            error_code: e.code() as i32,
+-                            recipients: vec![],
+-                            sender_id: "System".to_string(),
+-                            subject: "DisconnectFromServer".to_string(),
+-                            content: StaticDatum::String(e.reason()),
+-                            time_stamp: 0,
+-                        });
+-                    }
+-                });
+-
+-                let onopen_callback = Closure::<dyn FnMut(_)>::new(move |_e: Event| {
+-                    if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
+-                    multiuser_log!("Multiuser: WebSocket connected to {}", ws_url_clone);
+-                    let multiusr_manager =
+-                        unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut() };
+-                    let Some(manager) = multiusr_manager else { return; };
+-                    let Some(instance) = manager.instances.get_mut(&instance_id) else { return; };
+-                    instance.dispatch_message(MultiuserMessage {
+-                        error_code: 0,
+-                        recipients: vec!["*".to_string()],
+-                        sender_id: "System".to_string(),
+-                        subject: "ConnectToNetServer".to_string(),
+-                        content: StaticDatum::Void,
+-                        time_stamp: 0, // TODO timestamp
+-                    });
+-                    if let MultiuserConnectionMode::Binary = instance.connection_mode {
+-                        let message = MultiuserMessage {
+-                            error_code: 0,
+-                            recipients: vec!["System".to_string()],
+-                            sender_id: username.to_string(),
+-                            subject: "Logon".to_string(),
+-                            content: StaticDatum::List(vec![
+-                                StaticDatum::String(movie_id.clone()),
+-                                StaticDatum::String(username.clone()),
+-                                StaticDatum::String(password.clone()),
+-                            ]),
+-                            time_stamp: 0,
+-                        };
+-                        let resolved_encryption_key: Vec<u8> = if encryption_key.is_empty() {
+-                            DEFAULT_CIPHER_KEY.to_vec()
+-                        } else if encryption_key.len() < 20 {
+-                            // DEFAULT_CIPHER_KEY + &encryption_key
+-                            let mut key = DEFAULT_CIPHER_KEY.to_vec();
+-                            key.extend_from_slice(encryption_key.as_bytes());
+-                            key
+-                        } else {
+-                            encryption_key.as_bytes().to_vec()
+-                        };
+-                        let mut cipher = MUSBlowfish::new(&resolved_encryption_key);
+-                        let bytes = message.to_bytes(Some(&mut cipher));
+-                        instance.socket_tx.as_ref().unwrap().try_send(bytes.to_vec()).unwrap();
+-                    }
+-                });
+-                socket.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+-                socket.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
+-                socket.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
+-                socket.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
+-
+-                let (tx, rx) = async_std::channel::unbounded();
+-                instance.socket_tx = Some(tx);
+-                crate::player::spawn_player_local(async move {
+-                    while let Ok(message) = rx.recv().await {
+-                        // Check if WebSocket is open (readyState == 1) before sending
+-                        // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
+-                        if socket_clone.ready_state() != 1 {
+-                            multiuser_log!("Multiuser: Cannot send message, WebSocket not open (state={})", socket_clone.ready_state());
+-                            continue;
+-                        }
+-                        // multiuser_log!("Multiuser: Sending message: {:?}", message);
+-                        if let Err(e) = socket_clone.send_with_u8_array(&message) {
+-                            multiuser_log!("Multiuser: Failed to send message: {:?}", e);
+-                        }
+-                    }
+-                });
+-
+-                // Forget the callbacks to keep them alive
+-                onmessage_callback.forget();
+-                onerror_callback.forget();
+-                onclose_callback.forget();
+-                onopen_callback.forget();
+-
+-                Ok(DatumRef::Void)
++                Self::open_socket(instance_id, ws_url, Some((username, password, movie_id, encryption_key)))
+             }
+             "getnetmessage" => {
+                 let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+@@ -626,8 +653,28 @@ impl MultiuserXtraManager {
+                 Ok(DatumRef::Void)
+             }
+             "breakconnection" => {
+-                // Close the WebSocket connection
++                // A listener drops one peer: ask the relay to disconnect it.
++                let peer = args.get(0).and_then(|arg| {
++                    reserve_player_ref(|player| player.get_datum(arg).string_value().ok())
++                }).filter(|peer| !peer.is_empty());
+                 let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++                if let (Some(peer), Some(instance)) = (peer, multiusr_manager.instances.get(&instance_id)) {
++                    if instance.is_listener {
++                        let message = MultiuserMessage {
++                            error_code: 0,
++                            recipients: vec!["System".to_string()],
++                            sender_id: instance.sender_id.clone(),
++                            subject: "BreakConnection".to_string(),
++                            content: StaticDatum::String(peer),
++                            time_stamp: 0,
++                        };
++                        if let Some(tx) = &instance.socket_tx {
++                            let _ = tx.try_send(message.to_bytes(None));
++                        }
++                        return Ok(DatumRef::Void);
++                    }
++                }
++                // Close the WebSocket connection
+                 if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
+                     // Drop the sender to close the send loop; the WebSocket
+                     // close is handled by the browser when the socket is dropped
+@@ -660,11 +707,46 @@ impl MultiuserXtraManager {
+                 })
+             }
+             "waitfornetconnection" => {
+-                // Server-side: start listening for incoming connections
+-                // In a browser WASM context, we can't act as a server — return error code
+-                reserve_player_mut(|player| {
+-                    Ok(player.alloc_datum(Datum::Int(-1)))
+-                })
++                // A browser cannot accept sockets. If the host page defines
++                // `window.dirplayerResolveListenUrl(userID)`, connect to the
++                // relay it returns; peers that connectToNetServer to us reach
++                // this instance through that relay. Otherwise report failure.
++                let user_id = reserve_player_ref(|player| {
++                    let Some(arg) = args.get(0) else { return Ok(String::new()) };
++                    match player.get_datum(arg) {
++                        Datum::PropList(pairs, _) => {
++                            for (k, v) in pairs.iter() {
++                                let key = player.get_datum(k).string_value().unwrap_or_default();
++                                if key.eq_ignore_ascii_case("userID") {
++                                    return player.get_datum(v).string_value();
++                                }
++                            }
++                            Ok(String::new())
++                        }
++                        other => Ok(other.string_value().unwrap_or_default()),
++                    }
++                })?;
++                let listen_url = web_sys::window().and_then(|window| {
++                    let resolver = js_sys::Reflect::get(&window, &"dirplayerResolveListenUrl".into()).ok()?;
++                    let func = resolver.dyn_ref::<js_sys::Function>()?;
++                    func.call1(&wasm_bindgen::JsValue::NULL, &user_id.as_str().into())
++                        .ok()?
++                        .as_string()
++                        .filter(|url| !url.is_empty())
++                });
++                let Some(listen_url) = listen_url else {
++                    return reserve_player_mut(|player| Ok(player.alloc_datum(Datum::Int(-1))));
++                };
++                multiuser_log!("Multiuser: listening as {} via {}", user_id, listen_url);
++                {
++                    let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++                    let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
++                    instance.sender_id = user_id;
++                    instance.connection_mode = MultiuserConnectionMode::Binary;
++                    instance.is_listener = true;
++                }
++                Self::open_socket(instance_id, listen_url, None)?;
++                reserve_player_mut(|player| Ok(player.alloc_datum(Datum::Int(0))))
+             }
+             _ => Err(ScriptError::new(format!(
+                 "No handler {} found for Multiuser xtra instance #{}",
+diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
+new file mode 100644
+index 0000000..1bb7a72
+--- /dev/null
++++ b/vm-rust/tests/rr_score.rs
+@@ -0,0 +1,42 @@
++// Diagnostic: dump how dirplayer reads a movie's score.
++//   RR_DCR=/path/movie.dcr RR_FRAME=5 RR_CHANNELS=8-15 cargo test --test rr_score -- --nocapture
++
++use vm_rust::director::file::read_director_file_bytes;
++use vm_rust::player::score::Score;
++
++#[test]
++fn dump_score() {
++    let Ok(path) = std::env::var("RR_DCR") else { return };
++    let frame: u32 = std::env::var("RR_FRAME").ok().and_then(|f| f.parse().ok()).unwrap_or(1);
++    let (lo, hi) = std::env::var("RR_CHANNELS")
++        .ok()
++        .and_then(|r| r.split_once('-').map(|(a, b)| (a.parse().unwrap(), b.parse().unwrap())))
++        .unwrap_or((1u32, 20u32));
++
++    let bytes = std::fs::read(&path).expect("read movie");
++    let file = read_director_file_bytes(&bytes, "movie.dcr", "http://local/").expect("parse movie");
++    let chunk = file.score.as_ref().expect("score chunk");
++    let mut score = Score::empty();
++    score.load_from_score_chunk(chunk, file.version);
++
++    println!("frame_count={:?} spans={}", score.frame_count, score.sprite_spans.len());
++    for span in &score.sprite_spans {
++        if (lo..=hi).contains(&span.channel_number) || span.channel_number == 0 {
++            println!(
++                "span ch={} frames={}-{} scripts={:?}",
++                span.channel_number,
++                span.start_frame,
++                span.end_frame,
++                span.scripts.iter().map(|s| (s.cast_lib, s.cast_member)).collect::<Vec<_>>()
++            );
++        }
++    }
++    for (frame_idx, channel, data) in &score.channel_initialization_data {
++        if *frame_idx + 1 == frame && (lo as u16..=hi as u16).contains(channel) {
++            println!(
++                "frame {} ch {}: member {}/{} pos {},{} size {}x{} type {}",
++                frame, channel, data.cast_lib, data.cast_member, data.pos_x, data.pos_y, data.width, data.height, data.sprite_type
++            );
++        }
++    }
++}

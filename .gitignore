@@ -1,0 +1,8 @@
+node_modules/
+.cache/
+vendor/
+data/
+# Raketspel/Miniclip files: fetched by scripts/fetch-game.sh, never committed.
+public/game/
+# Build output of scripts/build-dirplayer.sh.
+public/dirplayer/
