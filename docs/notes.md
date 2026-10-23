@@ -163,6 +163,12 @@ see `docs/upstream.md` for why.
 - Ink 6 (Not Reverse) XORs into the framebuffer (robot list highlight).
 - Clicks go to the highest channel under the point (locZ only changes drawing), and 32-bit
   alpha bitmaps honour their authored `alphaThreshold` (workshop tabs).
+- The player's stage keeps its CSS size at fractional device pixel ratios (it used to snap
+  scale × DPR and shrank the game to 0.8 at 125% display scaling, with black borders).
+- Built-in tiles (shape patterns 57-64) are drawn through the Mac system palette, the
+  palette of Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll), and ScummVM's
+  row-rotated pixel arrays are rotated back (about 96% of pixels now match Adobe's). The
+  arena's battery shows tile 57 when it drains.
 - `rr_intersect_sweep(...)` (debug export) sweeps a sprite over a grid and reports
   `intersects` results, for the collision checks in `tools/`.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back

@@ -13,13 +13,13 @@ code reading can tell", not "proven against Adobe's player". Items marked
 
 ## Counts
 
-411 Director features (114 call, 20 event, 15 machinery, 78 method, 5 operator, 133 prop, 46 the).
+412 Director features (114 call, 20 event, 16 machinery, 78 method, 5 operator, 133 prop, 46 the).
 
 | verdict | high | medium | low | total |
 | --- | ---: | ---: | ---: | ---: |
 | wrong | 3 | 7 | 44 | 54 |
 | unclear | 8 | 14 | 19 | 41 |
-| fixed | 9 | 6 | 1 | 16 |
+| fixed | 9 | 7 | 1 | 17 |
 | works | 66 | 82 | 152 | 300 |
 
 Impact is impact on play: high blocks or visibly breaks single-player (driving,
@@ -132,7 +132,7 @@ Adobe's code to settle.
 | low | `stopMovie` | event | Sent on movie switch and when playback stops: timeouts are cleared, then stopMovie (broadcast to globals' instances first, see prepareMovie), then endSprite for all sprites. The documented stop order lists endSprite before stopMovie, so the order may be reversed. Nothing in the game depends on the order. Clearing every timeout, including persistent ones, may also differ from Director, but the game only uses timeou... **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/mod.rs:5720-5755 |
 | low | `urlEncode` | call | Escapes ASCII punctuation (space -> %20) and passes non-ASCII through unescaped. Director's exact output (space as + or %20, cp1252 escaping of accented letters) is not documented. **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:180-258 |
 
-## Fixed (16)
+## Fixed (17)
 
 | impact | feature | kind | what's wrong / open | where |
 | --- | --- | --- | --- | --- |
@@ -146,6 +146,7 @@ Adobe's code to settle.
 | high | `setPixel` | method | Fixed 2026-10-23. An integer on an indexed image is written as the palette index (the dictionary's raw pixel value), not matched as a grey. The robot paint maps are decoded this way. | player/handlers/datum_handlers/bitmap.rs |
 | high | `systemDate` | the | Fixed 2026-10-23. date .seconds now counts from midnight (Director's documented value; a read gave 48006 at 13:20). The arena's pacing and walkover timer only act when it grows, so it stalled at each minute. | player/handlers/datum_handlers/date.rs |
 | medium | `key` | the | Fixed 2026-10-23. the key / the keyCode are the last key pressed (ScummVM, tested against Director, sets them on key-down only). Verified in game: with Up held, pressing 2/3/1 changes the follow camera distance 500->1000->1500->500. | player/keyboard.rs |
+| medium | `machinery:builtin-tiles` | machinery | Fixed 2026-10-23: compared against Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll, 8-bit with the Mac system palette). Tiles are now drawn through that palette (the arena palette made them red-speckled) and ScummVM's row-rotated data is rotated back (96% of tile 1's pixels match; the rest were lost in ScummVM's copy). | player/bitmap/builtin_tiles.rs, rendering_gpu/webgl2/mod.rs, player/bitmap/drawing.rs (... |
 | medium | `numToChar` | call | Fixed 2026-10-23. Windows-1252, as Director on Windows: numToChar(151) is the em dash. The Stats line now reads 'Ranking: <tab>—'; the em dash isn't drawn, apparently missing from the embedded Impact subset (font coverage not yet checked). | player/handlers/string.rs |
 | medium | `offset` | call | Fixed 2026-10-23. offset(rect, h, v) is the rect form; robot hit dents now get a valid rect. | player/handlers/manager.rs |
 | medium | `seconds` | prop | Fixed 2026-10-23. See systemDate: seconds since midnight. | player/handlers/datum_handlers/date.rs |

@@ -130,5 +130,17 @@
   "game_usage": "The robot list highlights the selected row with a grey filled shape in ink 6 over the name.",
   "evidence": "Fixed 2026-10-23: ink 6 XORs the source into the framebuffer (the RGB form of Not Reverse; ScummVM's 32-bit path does the same). Was drawn as a solid grey bar hiding the name; now an inverse-video highlight with the name readable.",
   "dirplayer": "rendering_gpu/webgl2/shaders.rs, mod.rs (capture_ink_dest)"
+ },
+ "machinery:machinery:builtin-tiles": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "uses": 1,
+  "movies": [
+   "arena104"
+  ],
+  "game_usage": "The arena's bottom panel is a shape filled with built-in tile 57; it shows through the battery as it drains.",
+  "evidence": "Fixed 2026-10-23: compared against Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll, 8-bit with the Mac system palette). Tiles are now drawn through that palette (the arena palette made them red-speckled) and ScummVM's row-rotated data is rotated back (96% of tile 1's pixels match; the rest were lost in ScummVM's copy).",
+  "dirplayer": "player/bitmap/builtin_tiles.rs, rendering_gpu/webgl2/mod.rs, player/bitmap/drawing.rs (fill_rect_tiled)"
  }
 }

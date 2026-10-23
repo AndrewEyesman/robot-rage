@@ -2283,6 +2283,20 @@
   "evidence": "Initializer property lists are applied to the instance before beginSprite, case-insensitively (symbols are interned lowercase), and re-applied after an auto-called `on new`. Matches Director. Verified on the workshop tabs' Jump parameters (factory spans 1628/2095/1644): \"buy\", \"paint\" and \"sell\" are labels at frames 101, 10 and 164."
  },
  {
+  "category": "machinery",
+  "name": "machinery:builtin-tiles",
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "uses": 1,
+  "movies": [
+   "arena104"
+  ],
+  "game_usage": "The arena's bottom panel is a shape filled with built-in tile 57; it shows through the battery as it drains.",
+  "evidence": "Fixed 2026-10-23: compared against Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll, 8-bit with the Mac system palette). Tiles are now drawn through that palette (the arena palette made them red-speckled) and ScummVM's row-rotated data is rotated back (96% of tile 1's pixels match; the rest were lost in ScummVM's copy).",
+  "dirplayer": "player/bitmap/builtin_tiles.rs, rendering_gpu/webgl2/mod.rs, player/bitmap/drawing.rs (fill_rect_tiled)"
+ },
+ {
   "name": "machinery:cursor",
   "category": "machinery",
   "uses": null,
