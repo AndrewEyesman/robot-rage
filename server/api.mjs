@@ -86,17 +86,28 @@ export function createApi(store, log) {
       if (!robot) return { err: -1 };
       const propertyList = robot.propertyList || "[]";
       const friendslist = robot.friendslist || "[]";
-      const stats = robot.stats || { Win: 0, lose: 0, draw: 0 };
-      const gameStats = `[#Win: ${stats.Win}, #lose: ${stats.lose}, #draw: ${stats.draw}]`;
+      const gameStats = gameStatsOf(robot);
       return {
         err: 0,
-        robotid: robot.robotid,
-        robotname: robot.robotname,
-        score: robot.score ?? DEFAULT_SCORE,
+        ...robotCard(robot),
         propertyList: raw(propertyList),
         friendslist: raw(friendslist),
         GameStats: raw(gameStats),
         checksum: robotChecksum(propertyList, friendslist, gameStats),
+      };
+    },
+
+    // Any robot by id, without a session: the lobby shows the opponent's robot
+    // (stats, 3D model and paint map) before a challenge.
+    getrobotall(p) {
+      const robot = store.robot(p.robotid);
+      if (!robot) return { err: -1 };
+      return {
+        err: 0,
+        ...robotCard(robot),
+        propertyList: raw(robot.propertyList || "[]"),
+        GameStats: raw(gameStatsOf(robot)),
+        map: robot.map ?? "",
       };
     },
 
@@ -118,6 +129,17 @@ export function createApi(store, log) {
       if (!robot) return { err: -1 };
       robot.map = p.map || "";
       store.save();
+      return { err: 0 };
+    },
+
+    // The garage's save button uses this name; same payload.
+    setrobotmapNew(p, member) {
+      return actions.setrobotmap(p, member);
+    },
+
+    // The challenge host reports each match it starts; only logged.
+    setrwgames(p) {
+      log("match started", p.gamegescription);
       return { err: 0 };
     },
 
@@ -157,15 +179,33 @@ export function createApi(store, log) {
     },
   };
 
+  function robotCard(robot) {
+    return {
+      robotid: robot.robotid,
+      robotname: robot.robotname,
+      // Logins are email addresses; other players only see the local part.
+      UserLibName: (store.memberById(robot.memberId)?.name ?? "").split("@")[0],
+      score: robot.score ?? DEFAULT_SCORE,
+    };
+  }
+
+  function gameStatsOf(robot) {
+    const stats = robot.stats || { Win: 0, lose: 0, draw: 0 };
+    return `[#Win: ${stats.Win}, #lose: ${stats.lose}, #draw: ${stats.draw}]`;
+  }
+
   function ownRobot(p, member) {
     const robot = store.robot(p.robotid);
     return robot && robot.memberId === member.id ? robot : undefined;
   }
 
   // Actions that can be called without a session.
-  const PUBLIC = new Set(["createmember", "loginmember", "PingPayMember"]);
+  const PUBLIC = new Set(["createmember", "loginmember", "PingPayMember", "getrobotall", "setrwgames"]);
 
-  return function handleMainAsp(params) {
+  return function handleMainAsp(rawParams) {
+    // Field names vary in case between screens ("sessionid" / "sessionID").
+    const params = {};
+    for (const [key, value] of Object.entries(rawParams)) params[key.toLowerCase()] = value;
     const action = params.action || "";
     const handler = actions[action];
     if (!handler) {

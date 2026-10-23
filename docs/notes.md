@@ -20,9 +20,12 @@ relay below is designed around.
 
 Form POSTs with an `action` field; replies are Lingo property-list literals parsed with
 `value()`, e.g. `[#err: 0, #sid: "..."]`. Actions used: `createmember`, `loginmember`,
-`logoutmember`, `getmyrobots`, `createrobot`, `deleterobot`, `getrobot`, `getrobotmap`,
-`setrobot`, `setrobotmap`, `setrobotscore`, `gethiscore`, `PING`, `PingPayMember`,
-`reportabuse`.
+`logoutmember`, `getmyrobots`, `createrobot`, `deleterobot`, `getrobot`, `getrobotall`,
+`getrobotmap`, `setrobot`, `setrobotmap`, `setrobotmapNew`, `setrobotscore`, `setrwgames`,
+`gethiscore`, `PING`, `PingPayMember`, `reportabuse`.
+
+- Field names are not consistently cased (`sessionid` / `sessionID`, `uniquecode` /
+  `uniqueCode`), so the server lowercases them.
 
 - The garage list places each robot in row `entry.count`, so entries carry an explicit
   `#count`.
@@ -30,7 +33,12 @@ Form POSTs with an `action` field; replies are Lingo property-list literals pars
   MD5 of the uppercased, space-stripped concatenation of the robot's property list,
   friends list and stats, plus a fixed salt (see `robotChecksum` in `server/api.mjs`).
   Robot data is stored exactly as the client sends it so the checksum stays stable.
+  The client re-serializes the parsed lists with `string()` before hashing, so the
+  stored text has to be in Lingo's own `string()` form (it is, since the client sends it).
 - `getrobotmap` is plain text (TAB-separated), not a property list.
+- `getrobotall` needs no session: the lobby fetches any robot by id to show the
+  opponent's card, 3D model and paint map (`#map`, TAB-separated like `getrobotmap`).
+  Cards show `#UserLibName` as the owner; the server sends the email's local part.
 
 ## Lobby (IRC)
 
@@ -58,4 +66,11 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
 - Movie switches reset every sprite channel, not just puppets.
 - `sendSprite(0, ...)` reaches the frame script.
 - Chunk edits (`delete char ... of member`) work on text members, not just fields.
+- `the selStart` / `the selEnd` read the focused field's live selection (clicks and the
+  built-in editor move it), and setting them moves the caret. The login fields use a
+  behavior that does its own editing based on these.
+- Home, End, Page Up/Down and forward Delete get Director's Mac key codes, matched by key
+  name (their JS codes collide with the char codes of `!"#$.`, which the field input sends).
+- Clicking in a field whose font isn't embedded (e.g. Verdana, drawn with Canvas2D) places
+  the caret using Canvas2D text measurement.
 - `tests/rr_score.rs`: native diagnostic that prints how a movie's score is decoded.

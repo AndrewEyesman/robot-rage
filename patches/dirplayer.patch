@@ -240,8 +240,168 @@ index ad5a8a0..fc8e82e 100644
              DatumType::Xtra => {
                  let xtra_name = reserve_player_ref(|player| {
                      player
+diff --git a/vm-rust/src/player/keyboard.rs b/vm-rust/src/player/keyboard.rs
+index ea4974c..ed2eaaa 100644
+--- a/vm-rust/src/player/keyboard.rs
++++ b/vm-rust/src/player/keyboard.rs
+@@ -29,9 +29,8 @@ impl KeyboardManager {
+     }
+ 
+     pub fn key_down(&mut self, key: String, code: u16) {
+-        let code_mapped = keyboard_map::get_keyboard_key_map_js_to_sw().get(&code);
+-        debug!("Key down: {} {} (mapped to: {:?})", key, code, code_mapped);
+-        let mapped_code = *code_mapped.unwrap_or(&code);
++        let mapped_code = director_key_code(&key, code);
++        debug!("Key down: {} {} (mapped to: {})", key, code, mapped_code);
+         self.last_key_time = Some(chrono::Local::now());
+ 
+         // Map JS key names to Director key values
+@@ -62,10 +61,9 @@ impl KeyboardManager {
+         self.down_keys.last().or(self.last_key.as_ref())
+     }
+ 
+-    pub fn key_up(&mut self, _: &str, code: u16) {
++    pub fn key_up(&mut self, key: &str, code: u16) {
+         // Map the code the same way as key_down does
+-        let code_mapped = keyboard_map::get_keyboard_key_map_js_to_sw().get(&code);
+-        let code_to_remove = *code_mapped.unwrap_or(&code);
++        let code_to_remove = director_key_code(key, code);
+ 
+         self.down_keys.retain(|x| x.code != code_to_remove);
+     }
+@@ -148,6 +146,20 @@ impl KeyboardManager {
+     }
+ }
+ 
++/// Director (Mac) key code for a browser key. Navigation keys are matched by
++/// name: their JS key codes (33-36, 46) equal the char codes of "!", "\"", "#",
++/// "$" and ".", which the editable-field input path sends as key codes.
++fn director_key_code(key: &str, code: u16) -> u16 {
++    match key {
++        "PageUp" => 116,
++        "PageDown" => 121,
++        "End" => 119,
++        "Home" => 115,
++        "Delete" => 117,
++        _ => *keyboard_map::get_keyboard_key_map_js_to_sw().get(&code).unwrap_or(&code),
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::KeyboardManager;
+@@ -176,4 +188,3 @@ mod tests {
+         assert_eq!(kb.key(), "a");
+     }
+ }
+-
+diff --git a/vm-rust/src/player/keyboard_events.rs b/vm-rust/src/player/keyboard_events.rs
+index cce1bce..cbbab13 100644
+--- a/vm-rust/src/player/keyboard_events.rs
++++ b/vm-rust/src/player/keyboard_events.rs
+@@ -343,6 +343,58 @@ pub(crate) enum CaretAtMode {
+     SelectLine,
+ }
+ 
++/// Byte index of the caret nearest to (local_x, local_y) in unwrapped text drawn
++/// natively (Canvas2D) in `font_name` at `font_size`.
++fn native_caret_index(
++    text: &str,
++    font_name: &str,
++    font_size: u16,
++    fixed_line_space: u16,
++    local_x: i32,
++    local_y: i32,
++) -> i32 {
++    use crate::player::handlers::datum_handlers::cast_member::font::FontMemberHandlers;
++    let font_name = if font_name.is_empty() { "Arial" } else { font_name };
++    let font_size = if font_size > 0 { font_size } else { 12 };
++    let line_h = if fixed_line_space > 0 {
++        fixed_line_space as i32
++    } else {
++        (font_size as i32 * 6 + 4) / 5
++    };
++    let width_of = |s: &str| -> i32 {
++        if s.is_empty() {
++            return 0;
++        }
++        FontMemberHandlers::measure_text_native(s, font_name, font_size, false, 0, 0, 0, 0).0 as i32
++    };
++
++    // Pick the line under the click, then the nearest character boundary on it.
++    let line_index = (local_y.max(0) / line_h.max(1)) as usize;
++    let mut line_start = 0;
++    let mut line = text;
++    for (i, l) in text.split(|c| c == '\r' || c == '\n').enumerate() {
++        line = l;
++        if i == line_index {
++            break;
++        }
++        line_start += l.len() + 1;
++    }
++    line_start = line_start.min(text.len());
++
++    let mut prev_byte = 0;
++    let mut prev_w = 0;
++    for (byte, ch) in line.char_indices() {
++        let next_byte = byte + ch.len_utf8();
++        let next_w = width_of(&line[..next_byte]);
++        if local_x < (prev_w + next_w) / 2 {
++            return (line_start + prev_byte) as i32;
++        }
++        prev_byte = next_byte;
++        prev_w = next_w;
++    }
++    (line_start + line.len()) as i32
++}
++
+ /// Convert a movie-space (x, y) point into a caret index inside the focused
+ /// editable member at `sprite_id`, then apply the requested selection update.
+ ///
+@@ -453,17 +505,30 @@ pub(crate) fn set_caret_at_screen(
+                             .and_then(|fr| player.font_manager.fonts.get(&fr).cloned())
+                     })
+                 });
+-                let Some(f) = font_opt else { return false };
+-                // Scale the click coords into the renderer's coordinate
+-                // space too. movie_x is in unscaled movie space; the
+-                // renderer's char_widths sum is in scaled space.
+-                let local_x = ((movie_x - sprite_loc_h) as f64 * stage_scale).round() as i32;
+-                let local_y = ((movie_y - sprite_loc_v - *top_spacing as i32) as f64 * stage_scale).round() as i32;
+-                let scaled_width = ((sprite_width as f64) * stage_scale).round() as i32;
+-                let line_h = effective_line_height(&f, *fixed_line_space);
+-                crate::player::bitmap::bitmap::Bitmap::xy_to_caret_index(
+-                    text, &f, scaled_width, alignment.as_str(), line_h, local_x, local_y,
+-                )
++                match font_opt {
++                    // System fonts (e.g. Verdana) that the movie doesn't embed are
++                    // drawn with Canvas2D, so measure the click the same way.
++                    None => native_caret_index(
++                        text,
++                        font,
++                        *font_size,
++                        *fixed_line_space,
++                        movie_x - sprite_loc_h,
++                        movie_y - sprite_loc_v - *top_spacing as i32,
++                    ),
++                    Some(f) => {
++                        // Scale the click coords into the renderer's coordinate
++                        // space too. movie_x is in unscaled movie space; the
++                        // renderer's char_widths sum is in scaled space.
++                        let local_x = ((movie_x - sprite_loc_h) as f64 * stage_scale).round() as i32;
++                        let local_y = ((movie_y - sprite_loc_v - *top_spacing as i32) as f64 * stage_scale).round() as i32;
++                        let scaled_width = ((sprite_width as f64) * stage_scale).round() as i32;
++                        let line_h = effective_line_height(&f, *fixed_line_space);
++                        crate::player::bitmap::bitmap::Bitmap::xy_to_caret_index(
++                            text, &f, scaled_width, alignment.as_str(), line_h, local_x, local_y,
++                        )
++                    }
++                }
+             }
+             MemberSnapshot::Text { text, font, font_size, fixed_line_space, top_spacing } => {
+                 // Same stage-scaled font lookup + coord scaling as the
 diff --git a/vm-rust/src/player/mod.rs b/vm-rust/src/player/mod.rs
-index 8fef74e..2b80388 100644
+index 8fef74e..8188424 100644
 --- a/vm-rust/src/player/mod.rs
 +++ b/vm-rust/src/player/mod.rs
 @@ -478,6 +478,11 @@ pub struct DirPlayer {
@@ -264,7 +424,102 @@ index 8fef74e..2b80388 100644
              event_stopped: false,
              command_handler_yielding: false,
              active_static_event_handlers: Vec::new(),
-@@ -5525,10 +5531,12 @@ async fn run_movie_init_sequence() {
+@@ -2785,6 +2791,63 @@ impl DirPlayer {
+             .map(|(_, v)| v.clone())
+     }
+ 
++    /// Setting `the selStart` / `the selEnd` moves the caret of the field that
++    /// has keyboard focus, as in Director. Input-filter behaviors insert text
++    /// themselves and then put the caret after it; without this the editor's
++    /// own caret stayed where it was, so Backspace deleted the wrong thing.
++    fn sync_focused_text_selection(&mut self) {
++        if self.keyboard_focus_sprite <= 0 {
++            return;
++        }
++        let Some(member_ref) = self
++            .movie
++            .score
++            .get_sprite(self.keyboard_focus_sprite)
++            .and_then(|sprite| sprite.member.clone())
++        else {
++            return;
++        };
++        let Some(member) = self.movie.cast_manager.find_mut_member_by_ref(&member_ref) else {
++            return;
++        };
++        let (text, sel_start, sel_end, sel_anchor) = match &mut member.member_type {
++            CastMemberType::Field(f) => (&f.text, &mut f.sel_start, &mut f.sel_end, &mut f.sel_anchor),
++            CastMemberType::Text(t) => (&t.text, &mut t.sel_start, &mut t.sel_end, &mut t.sel_anchor),
++            _ => return,
++        };
++        // Lingo counts characters; the editor stores byte offsets.
++        let byte_offset = |chars: u16| -> i32 {
++            text.char_indices()
++                .nth(chars as usize)
++                .map_or(text.len(), |(byte, _)| byte) as i32
++        };
++        let start = byte_offset(self.text_selection_start);
++        let end = byte_offset(self.text_selection_end).max(start);
++        *sel_start = start;
++        *sel_end = end;
++        *sel_anchor = start;
++    }
++
++    /// Selection of the focused field in characters. Clicks and the built-in editor move
++    /// the caret inside the member, so `the selStart` has to read it from there.
++    fn focused_text_selection(&self) -> Option<(i32, i32)> {
++        if self.keyboard_focus_sprite <= 0 {
++            return None;
++        }
++        let member_ref = self.movie.score.get_sprite(self.keyboard_focus_sprite)?.member.clone()?;
++        let member = self.movie.cast_manager.find_member_by_ref(&member_ref)?;
++        let (text, sel_start, sel_end) = match &member.member_type {
++            CastMemberType::Field(f) => (&f.text, f.sel_start, f.sel_end),
++            CastMemberType::Text(t) => (&t.text, t.sel_start, t.sel_end),
++            _ => return None,
++        };
++        let chars = |byte: i32| -> i32 {
++            let byte = (byte.max(0) as usize).min(text.len());
++            text.char_indices().take_while(|(i, _)| *i < byte).count() as i32
++        };
++        Some((chars(sel_start), chars(sel_end)))
++    }
++
+     /// `the runMode` / `the environment.runMode` / `_player.runMode`.
+     /// LeechProtectionRemovalHelp's `setTheRunMode` outranks the `_runMode`
+     /// external param, which in turn outranks the "Plugin" default.
+@@ -3538,8 +3601,12 @@ impl DirPlayer {
+             }
+             BuiltInSymbol::MultiSound => Ok(Datum::Int(1)),
+             BuiltInSymbol::PauseState => Ok(datum_bool(self.is_script_paused)),
+-            BuiltInSymbol::SelStart => Ok(Datum::Int(self.text_selection_start as i32)),
+-            BuiltInSymbol::SelEnd => Ok(Datum::Int(self.text_selection_end as i32)),
++            BuiltInSymbol::SelStart => Ok(Datum::Int(
++                self.focused_text_selection().map_or(self.text_selection_start as i32, |(s, _)| s),
++            )),
++            BuiltInSymbol::SelEnd => Ok(Datum::Int(
++                self.focused_text_selection().map_or(self.text_selection_end as i32, |(_, e)| e),
++            )),
+             // `the safePlayer` is 0 (unsafe / full trust) unless
+             // LeechProtectionRemovalHelp's `forceTheSafePlayer` pins it —
+             // movies test it to decide whether local file access is allowed.
+@@ -3630,11 +3697,13 @@ impl DirPlayer {
+                 Ok(())
+             },
+             Some(BuiltInSymbol::SelStart) => {
+-                self.text_selection_start = value.int_value()? as u16;
++                self.text_selection_start = value.int_value()?.max(0) as u16;
++                self.sync_focused_text_selection();
+                 Ok(())
+             },
+             Some(BuiltInSymbol::SelEnd) => {
+-                self.text_selection_end = value.int_value()? as u16;
++                self.text_selection_end = value.int_value()?.max(0) as u16;
++                self.sync_focused_text_selection();
+                 Ok(())
+             },
+             Some(BuiltInSymbol::ClipBoard) => {
+@@ -5525,10 +5594,12 @@ async fn run_movie_init_sequence() {
          player.is_in_frame_update = true;
      });
  
@@ -277,7 +532,7 @@ index 8fef74e..2b80388 100644
  
      player_wait_available().await;
  
-@@ -5810,7 +5818,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
+@@ -5810,7 +5881,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
      // 3. Load the new movie data (preserving globals and allocator)
      reserve_player_mut(|player| {
          player.is_dispatching_events = prev_dispatching;
@@ -286,7 +541,7 @@ index 8fef74e..2b80388 100644
          player.clear_script_instance_list_caches();
          player.movie.frame_script_instance = None;
          player.movie.frame_script_member = None;
-@@ -6406,10 +6414,12 @@ pub async fn run_single_frame() -> (bool, bool) {
+@@ -6406,10 +6477,12 @@ pub async fn run_single_frame() -> (bool, bool) {
          player.is_in_frame_update = true;
      });
  

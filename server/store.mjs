@@ -45,6 +45,10 @@ export class Store {
     return member;
   }
 
+  memberById(id) {
+    return Object.values(this.db.members).find((member) => member.id === id);
+  }
+
   checkPassword(member, password) {
     const hash = scryptSync(password, member.salt, 32);
     return timingSafeEqual(hash, Buffer.from(member.hash, "hex"));
