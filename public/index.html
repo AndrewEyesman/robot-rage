@@ -29,6 +29,16 @@
     if (port === 1626) return `${wsBase}/ws/p2p/connect?addr=${encodeURIComponent(host)}`;
     return "";
   };
+  // The login screen fetches its country lookup from a hardcoded Shockplay URL;
+  // answer it from this server instead.
+  const SHOCKPLAY_PHP = "http://miniclip2.shockplay.com/php/";
+  const fetchOriginal = window.fetch;
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input?.url;
+    if (url?.startsWith(SHOCKPLAY_PHP)) input = `/api/${url.slice(SHOCKPLAY_PHP.length)}`;
+    return fetchOriginal.call(window, input, init);
+  };
+
   // Page functions the original Miniclip site provided via gotoNetPage("javascript:...").
   window.openHelpPop = () => {};
   window.openPassPop = () => console.info("Password resets: ask whoever runs this server.");

@@ -143,7 +143,8 @@ const server = createServer(async (req, res) => {
         case "robotcount.php":
           return send(res, 200, String(irc.clients.size));
         case "ip2country.php":
-          return send(res, 200, "SE");
+          // The login screen reads the part after "=".
+          return send(res, 200, "country=SE");
         default:
           log(`api: unhandled ${req.method} ${name}`, params);
           return send(res, 200, "[#err: 0]");

@@ -73,4 +73,10 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   name (their JS codes collide with the char codes of `!"#$.`, which the field input sends).
 - Clicking in a field whose font isn't embedded (e.g. Verdana, drawn with Canvas2D) places
   the caret using Canvas2D text measurement.
+- When a behavior's `go()` moves the playhead during an event dispatch, the remaining
+  behaviors of the frame that was left no longer get that event. The garage's five door
+  sprites each call `go(the frame + 1)` when their animation ends; without this they
+  stepped the playhead five frames on, past the workshop into "load backyard".
+- Setting a property on a list of 3D objects (`model.shaderList.blend = 50`) sets it on
+  each object.
 - `tests/rr_score.rs`: native diagnostic that prints how a movie's score is decoded.

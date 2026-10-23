@@ -39,6 +39,47 @@ index 6d1186d..3bf677e 100644
                  || (n >= 52 && n % 4 == 0 && {
                      let b = entry_bytes;
                      let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+diff --git a/vm-rust/src/player/events.rs b/vm-rust/src/player/events.rs
+index 5acf223..308e7d8 100644
+--- a/vm-rust/src/player/events.rs
++++ b/vm-rust/src/player/events.rs
+@@ -1891,7 +1891,17 @@ pub async fn dispatch_event_to_all_behaviors(
+     // Dispatch to sprite behaviors first (channel order)
+     // Set the score context before invoking each event so sprite property access works correctly
+     let mount_gen = reserve_player_ref(|player| player.movie_mount_generation);
++    // go() changes frames inline. Once a receiver has moved the playhead, the
++    // rest of this list belongs to the frame that was left: in Director those
++    // receivers still run against the old frame, so five door behaviors that
++    // each call go(the frame + 1) all land on the same next frame. Here they
++    // would each step one frame further, so stop dispatching to them instead.
++    let start_frame = reserve_player_ref(|player| player.movie.current_frame);
++    let left_frame = || reserve_player_ref(|player| player.movie.current_frame) != start_frame;
+     for (score_ref, sprite_number, behaviors, member_handler) in sprite_behaviors {
++        if left_frame() {
++            break;
++        }
+         // An eager go(frame, movie) swapped the movie under this dispatch
+         // (the Miniclip wrapper does exactly this from an exitFrame behavior).
+         // The remaining receivers belong to the OLD movie — their script refs
+@@ -1909,6 +1919,9 @@ pub async fn dispatch_event_to_all_behaviors(
+         });
+ 
+         for behavior in behaviors {
++            if left_frame() {
++                break;
++            }
+             // Same mid-dispatch movie-swap stop, for sibling behaviors on the
+             // sprite whose earlier behavior called go(frame, movie).
+             if reserve_player_ref(|player| player.movie_mount_generation) != mount_gen {
+@@ -1959,7 +1972,7 @@ pub async fn dispatch_event_to_all_behaviors(
+         // order, after the behaviors and before the frame/movie scripts below.
+         // (Skipped if a behavior above swapped the movie via eager go().)
+         let swapped = reserve_player_ref(|player| player.movie_mount_generation) != mount_gen;
+-        if let Some(handler) = member_handler.filter(|_| !swapped) {
++        if let Some(handler) = member_handler.filter(|_| !swapped && !left_frame()) {
+             reserve_player_mut(|player| {
+                 player.member_script_sprite_num = sprite_number as i16;
+             });
 diff --git a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs b/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
 index f7f81be..de61047 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
@@ -578,6 +619,32 @@ index 25330f7..7ea9808 100644
      pub fn get_sorted_channels(&self, frame_num: u32) -> Vec<&SpriteChannel> {
          let generation = self.render_channel_cache_generation;
          if let Some((cached_frame, cached_generation, cached_indices)) =
+diff --git a/vm-rust/src/player/script.rs b/vm-rust/src/player/script.rs
+index 10b920b..ac785f5 100644
+--- a/vm-rust/src/player/script.rs
++++ b/vm-rust/src/player/script.rs
+@@ -613,6 +613,21 @@ pub async fn player_set_obj_prop(
+         Datum::Transform3d(_) => reserve_player_mut(|player| {
+             crate::player::handlers::datum_handlers::transform3d::Transform3dDatumHandlers::set_prop(player, obj_ref, prop_name, value_ref)
+         }),
++        // `model.shaderList.blend = 50`: setting a property on a list of 3D
++        // objects sets it on every object in the list.
++        Datum::List(_, items, _)
++            if !items.is_empty()
++                && reserve_player_ref(|player| {
++                    items.iter().all(|item| {
++                        matches!(player.get_datum(item), Datum::Shockwave3dObjectRef(_))
++                    })
++                }) =>
++        {
++            for item in &items {
++                crate::player::handlers::datum_handlers::shockwave3d_object::Shockwave3dObjectDatumHandlers::set_prop(item, prop_name.as_str(), &value_clone)?;
++            }
++            Ok(())
++        }
+         Datum::HavokObjectRef(_) => {
+             crate::player::handlers::datum_handlers::havok_object::HavokObjectDatumHandlers::set_prop(obj_ref, prop_name.as_str(), value_ref.clone())
+         }
 diff --git a/vm-rust/src/player/timeout.rs b/vm-rust/src/player/timeout.rs
 index 3574d9e..2925929 100644
 --- a/vm-rust/src/player/timeout.rs
