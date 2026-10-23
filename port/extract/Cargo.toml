@@ -1,0 +1,16 @@
+[package]
+name = "rr-extract"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Reads the original game files with dirplayer's parsers and writes the assets the port
+# loads (3D scenes, bitmaps, score layout) into port/assets/, which is never committed.
+[dependencies]
+vm-rust = { path = "../../vendor/dirplayer-rs/vm-rust", default-features = false }
+serde_json = "1.0"
+image = "0.25.8"
+flate2 = "1"
+
+[profile.dev]
+opt-level = 2

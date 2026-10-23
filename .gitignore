@@ -9,3 +9,7 @@ public/dirplayer/
 # Playwright MCP scratch output (test scripts, screenshots).
 .playwright-mcp/
 __pycache__/
+# Port: assets extracted from the game files (port/extract.sh) and build output.
+port/assets/
+port/extract/target/
+port/web/dist/
