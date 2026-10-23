@@ -31,6 +31,25 @@ the real player is the reference it is compared against.
 - 3D renders through Wine's Direct3D on Mesa's software OpenGL (no GPU in the container),
   so 3D comparisons need a tolerance; 2D should match closely.
 
+## Asking Adobe's player questions (Lingo)
+
+    tools/reference/ref-movie.sh arena104.dcr                   # one movie, with ref-repl installed
+    tools/reference/refeval.sh 'member("arena").model.count'    # prints string(expression)
+    tools/reference/refeval.sh -s 'global gM' 'gM = member("arena").model(1)'   # statements
+
+`ref-repl.ls` is installed through the projector's `--do` arguments and polls
+`ref-cmd.txt` every 200 ms. It only works in a movie that stays put: it dies when the
+movie switches, so the full login-to-arena flow can't be scripted this way (start the
+movie directly instead; the arena then has its 3D member but no game state). Any Lingo
+error stops it for good: restart with `ref-movie.sh`, and send statements one at a time
+when unsure. In standalone arena104 sprite 2 is empty: puppet it with the `arena` member,
+and use `member("arena").camera(1)` (not `sprite(2).camera`).
+
+For dirplayer, `tools/reference/emu-driver.mjs` keeps a session open in Chrome and takes
+the same kind of commands over HTTP (`/login`, `/click`, `/eval`, `/shot`; see its header).
+In its `/eval`, `a.b.c = v` is a comparison: assign through a variable (`g = a.b` then
+`g.c = v`) or `set the c of a.b to v`.
+
 ## First findings (robot list, 2026-10-23)
 
 - The robot name in the list is yellow in the real player, white in dirplayer.
@@ -49,7 +68,12 @@ so its drive/turn steps start later.
 
 ## Backlog from the first tour (2026-10-23), most visible first
 
-1. Arena: the player's car top is see-through (solid and lit in the reference).
+1. ~~Arena: the player's car top is see-through.~~ Fixed: mirrored models were culled
+   inside out (every model here is mirrored by the W3D's "Scene Root"; Adobe's player
+   culls by the mesh's own winding whatever the handedness, checked with a box drawn
+   `#front`/`#back` with and without a mirror). This also fixed the arena's buildings,
+   the glass pyramid and the garage preview's car. The car roof is still lit flatter
+   than in the reference.
 2. Text at device scale 1.25: Verdana lists with fixedLineSpace 15 step 12px (Buy lists,
    category dropdown). Correct at scale 1.
 3. Verdana is missing in Chrome on Linux; the fallback is a serif font.
@@ -57,7 +81,7 @@ so its drive/turn steps start later.
    white in dirplayer.
 5. Tab stops ignored: Stats ("Won/Lost/Ties" values column) and Highscore rows.
 6. Ink 6 robot-list highlight: the reference shows a lighter olive row, not navy.
-7. Garage preview robot: different view and wheel placement.
+7. Garage preview robot: different camera angle, flat shading, wheel texture.
 8. Buy parts: the part's 3D wireframe preview is blank.
 9. The "- Zoom +" bar under the workshop/paintshop preview is missing.
 10. Smaller: Ranking dash missing, Impact tab labels 1-3px low, battery cap blue, stray
