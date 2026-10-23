@@ -15,9 +15,14 @@
   <footer>Private Robot Rage server · game © Raketspel / Miniclip</footer>
 </main>
 <script>
-  // Every tab gets a made-up private "IP". The game shares it with opponents
+  // Every tab gets a made-up private "IP". The server hands it to opponents
   // over IRC, they connectToNetServer() to it on port 1626, and the resolver
   // below turns that into a relay connection on this server.
+  //
+  // The game's "external IP" (sw1) is the same for every tab: it believes all
+  // players sit behind one router, so they see each other in the lobby (it
+  // hides players behind other routers) and the challenged player hosts.
+  const SHARED_EXTERNAL_IP = "10.0.0.1";
   const myAddress = sessionStorage.rrAddress ||= [10, 1 + Math.random() * 254 | 0,
     Math.random() * 256 | 0, 1 + Math.random() * 254 | 0].join(".");
 
@@ -50,7 +55,7 @@
   const embed = document.createElement("embed");
   Object.assign(embed, { src: "game/wrapper_robotragerearmed.dcr", width: 800, height: 600 });
   embed.setAttribute("type", "application/x-director");
-  embed.setAttribute("sw1", myAddress);
+  embed.setAttribute("sw1", SHARED_EXTERNAL_IP);
   document.getElementById("stage").append(embed);
 </script>
 <script src="dirplayer/dirplayer-polyfill.js"></script>

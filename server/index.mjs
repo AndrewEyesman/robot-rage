@@ -38,7 +38,10 @@ const MIME = {
 
 // The game reads its server settings from main.ini. Hostnames ending in
 // .robotrage.local never resolve; the page's socket resolver maps them to
-// this server's WebSocket endpoints.
+// this server's WebSocket endpoints. There is no `fallbackip`: with one, the
+// fan lobby wrapper first logs on to a Robot Rage relay server that this
+// server does not implement, and the scripts it would need are compiled at
+// runtime, which the emulator cannot do.
 function mainIni(origin) {
   const api = `${origin}/api/`;
   return [
@@ -63,7 +66,6 @@ function mainIni(origin) {
     'ircip2 = "irc.robotrage.local"',
     "ircwait = 50",
     "ircports = [8777, 8778, 8779, 8780, 8781]",
-    'fallbackip = "relay.robotrage.local"',
     "",
     "[defaultRooms]",
     'list = ["room1", "room2", "room3", "room4", "room5", "room6", "room7"]',
@@ -136,6 +138,7 @@ const server = createServer(async (req, res) => {
       const name = pathname.slice("/api/".length).toLowerCase();
       switch (name) {
         case "main.asp":
+        case "abuse.asp": // the arena's report button
           return send(res, 200, handleMainAsp(params));
         case "ip.php":
           // The page supplies the real per-tab address as the sw1 param.
@@ -161,6 +164,12 @@ const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://local");
   const params = Object.fromEntries(url.searchParams);
+  // The emulator reports a successful connectToNetServer as soon as the socket
+  // opens, so a connection to nobody must fail before that.
+  if (url.pathname === "/ws/p2p/connect" && !relay.isListening(params.addr)) {
+    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    return;
+  }
   wss.handleUpgrade(req, socket, head, (ws) => {
     switch (url.pathname) {
       case "/ws/irc": {
@@ -169,7 +178,8 @@ server.on("upgrade", (req, socket, head) => {
           send: (line) => ws.readyState === ws.OPEN && ws.send(line),
           close: () => ws.close(),
         });
-        ws.on("message", (data) => session.receive(data.toString("latin1")));
+        // The emulator's Multiuser Xtra writes text-mode messages as UTF-8.
+        ws.on("message", (data) => session.receive(data.toString("utf8")));
         ws.on("close", () => session.disconnect());
         return;
       }

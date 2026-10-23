@@ -143,25 +143,22 @@ export function createApi(store, log) {
       return { err: 0 };
     },
 
-    // Sent by both players after a match; each reports from its own side,
-    // so only the sender's robot is updated.
+    // After each ranked round only the winner reports (the server player
+    // reports a tie with winner 0): user1id is the sender's robot, user2id its
+    // opponent. Both robots are updated, with the client's own scoring rule.
     setrobotscore(p, member) {
-      const robot = ownRobot(p, member);
-      if (!robot) return { err: -1 };
-      const stats = (robot.stats ||= { Win: 0, lose: 0, draw: 0 });
+      const own = ownRobot(p, member);
+      const opponent = store.robot(p.user2id);
+      if (!own || Number(p.user1id) !== own.robotid || !opponent || opponent === own) return { err: -1 };
       const winner = Number(p.winner);
-      robot.score ??= DEFAULT_SCORE;
-      if (winner === robot.robotid) {
-        stats.Win++;
-        robot.score += SCORE_STEP;
-      } else if (winner && winner === Number(p.user2id ?? p.user1id)) {
-        stats.lose++;
-        robot.score = Math.max(0, robot.score - SCORE_STEP);
-      } else {
-        stats.draw++;
-      }
+      if (winner === own.robotid) recordWin(own, opponent);
+      else if (winner === opponent.robotid) recordWin(opponent, own);
+      else if (!winner) {
+        statsOf(own).draw++;
+        statsOf(opponent).draw++;
+      } else return { err: -1 };
       store.save();
-      return { err: 0, score: robot.score };
+      return { err: 0, score: own.score ?? DEFAULT_SCORE };
     },
 
     gethiscore() {
@@ -187,6 +184,22 @@ export function createApi(store, log) {
       UserLibName: (store.memberById(robot.memberId)?.name ?? "").split("@")[0],
       score: robot.score ?? DEFAULT_SCORE,
     };
+  }
+
+  function statsOf(robot) {
+    return (robot.stats ||= { Win: 0, lose: 0, draw: 0 });
+  }
+
+  // Beating a stronger robot, or losing to a weaker one, moves the score by a
+  // quarter of the gap on top of the base step.
+  function recordWin(winner, loser) {
+    const winnerScore = winner.score ?? DEFAULT_SCORE;
+    const loserScore = loser.score ?? DEFAULT_SCORE;
+    const upset = loserScore > winnerScore ? Math.round(0.25 * (loserScore - winnerScore)) : 0;
+    statsOf(winner).Win++;
+    statsOf(loser).lose++;
+    winner.score = winnerScore + SCORE_STEP + upset;
+    loser.score = Math.max(0, loserScore - SCORE_STEP - upset);
   }
 
   function gameStatsOf(robot) {

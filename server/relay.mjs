@@ -11,11 +11,20 @@
 // <address> is the per-tab token the page hands the game as its "IP" (see
 // public/index.html). Frames are Shockwave Multiuser (SMUS) messages; the
 // relay reads only their envelope (sender, recipients, subject) and forwards
-// the bytes untouched.
+// the bytes, stamped with the relay's clock: the arena estimates lag from
+// message time stamps, which the emulator leaves at 0.
+//
+// What the host's Multiuser instance sees, as with a real listening Xtra:
+//   "WaitForNetConnection" from a peer that logged on,
+//   errorCode ERR_NO_CONNECTION ("ConnectionProblem") from a peer that went
+//   away on its own; the arena turns that into a walkover.
+// Messages the host addresses to nobody (getPeerConnectionList() is empty in
+// the emulator) go to all its peers.
 
 const MUS_HEADER = 0x7200;
 // Multiuser Xtra "no current connection" error, which the client handles.
 const ERR_NO_CONNECTION = -2147216214;
+const TIMESTAMP_OFFSET = 10; // frame header (6) + error code (4)
 
 export function parseEnvelope(frame) {
   const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
@@ -28,7 +37,8 @@ export function parseEnvelope(frame) {
     return text;
   };
   const errorCode = view.getInt32(pos);
-  pos += 8; // error code + timestamp
+  const timestamp = view.getUint32(pos + 4);
+  pos += 8;
   const subject = readString();
   const sender = readString();
   const count = view.getUint32(pos);
@@ -36,10 +46,10 @@ export function parseEnvelope(frame) {
   const recipients = [];
   for (let i = 0; i < count; i++) recipients.push(readString());
   const content = frame.subarray(pos);
-  return { errorCode, subject, sender, recipients, content };
+  return { errorCode, timestamp, subject, sender, recipients, content };
 }
 
-export function buildMessage({ errorCode = 0, subject, sender, recipients, contentString }) {
+export function buildMessage({ errorCode = 0, timestamp = 0, subject, sender, recipients, contentString }) {
   const parts = [];
   const u32 = (n) => {
     const b = Buffer.alloc(4);
@@ -54,7 +64,7 @@ export function buildMessage({ errorCode = 0, subject, sender, recipients, conte
   };
   const head = Buffer.alloc(8);
   head.writeInt32BE(errorCode, 0);
-  head.writeUInt32BE(0, 4);
+  head.writeUInt32BE(timestamp >>> 0, 4);
   parts.push(head);
   str(subject);
   str(sender);
@@ -93,14 +103,41 @@ function takeFrames(state, chunk) {
 export class Relay {
   constructor({ log }) {
     this.log = log;
-    this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, ws> }
+    this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, peer> }
+    this.epoch = Date.now();
+  }
+
+  isListening(addr) {
+    return this.hosts.has(addr);
+  }
+
+  now() {
+    return (Date.now() - this.epoch) >>> 0;
+  }
+
+  forward(ws, frame) {
+    if (ws.readyState !== ws.OPEN) return;
+    frame.writeUInt32BE(this.now(), TIMESTAMP_OFFSET);
+    ws.send(frame);
+  }
+
+  notify(ws, { errorCode = 0, subject, sender, recipient }) {
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(buildMessage({ errorCode, timestamp: this.now(), subject, sender, recipients: [recipient] }));
+  }
+
+  // Drop a peer without telling the host (it asked for it or was replaced).
+  dropPeer(peer, reason) {
+    peer.expected = true;
+    peer.ws.close(1000, reason);
   }
 
   listen(ws, { addr, user }) {
     if (!addr || !user) return ws.close(1008, "addr and user required");
-    this.hosts.get(addr)?.ws.close(1000, "replaced");
+    const previous = this.hosts.get(addr);
     const host = { ws, user, peers: new Map(), state: { buffer: Buffer.alloc(0) } };
     this.hosts.set(addr, host);
+    previous?.ws.close(1000, "replaced");
     this.log(`relay: ${user} listening at ${addr}`);
 
     ws.on("message", (data) => {
@@ -111,27 +148,41 @@ export class Relay {
         } catch {
           continue;
         }
-        if (env.subject === "BreakConnection" && env.recipients[0] === "System") {
-          const peerName = this.contentString(env.content);
-          host.peers.get(peerName?.toLowerCase())?.close(1000, "breakConnection");
+        if (env.recipients.length === 1 && env.recipients[0] === "System") {
+          if (env.subject === "BreakConnection") {
+            const peer = host.peers.get(this.contentString(env.content)?.toLowerCase());
+            if (peer) this.dropPeer(peer, "breakConnection");
+          }
           continue;
         }
-        for (const recipient of env.recipients) {
-          host.peers.get(recipient.toLowerCase())?.send(frame);
-        }
+        for (const peer of this.recipientsOf(host, env.recipients)) this.forward(peer.ws, frame);
       }
     });
     ws.on("close", () => {
       if (this.hosts.get(addr) === host) this.hosts.delete(addr);
-      for (const peer of host.peers.values()) peer.close(1001, "host left");
+      for (const peer of host.peers.values()) {
+        this.notify(peer.ws, { errorCode: ERR_NO_CONNECTION, subject: "ConnectionProblem", sender: user, recipient: peer.name });
+        this.dropPeer(peer, "host left");
+      }
       this.log(`relay: ${user} stopped listening`);
     });
+  }
+
+  // Peers are matched by the userID they logged on with. The game addresses
+  // its opponent by a name decoded from the IRC nick, so with a single peer
+  // any name reaches it.
+  recipientsOf(host, recipients) {
+    const peers = [...host.peers.values()];
+    if (recipients.length === 0 || recipients.includes("*")) return peers;
+    const named = recipients.map((r) => host.peers.get(r.toLowerCase())).filter(Boolean);
+    if (named.length) return [...new Set(named)];
+    return peers.length === 1 ? peers : [];
   }
 
   connect(ws, { addr }) {
     const host = this.hosts.get(addr);
     const state = { buffer: Buffer.alloc(0) };
-    let peerName = null;
+    let peer = null;
 
     if (!host) {
       ws.send(buildMessage({
@@ -151,22 +202,27 @@ export class Relay {
         } catch {
           continue;
         }
-        if (!peerName) {
+        if (!peer) {
           // First frame is the Logon; its sender is the peer's userID.
-          peerName = env.sender;
-          host.peers.get(peerName.toLowerCase())?.close(1000, "replaced");
-          host.peers.set(peerName.toLowerCase(), ws);
-          this.log(`relay: ${peerName} connected to ${host.user}`);
+          peer = { ws, name: env.sender, expected: false };
+          const key = peer.name.toLowerCase();
+          const replaced = host.peers.get(key);
+          host.peers.set(key, peer);
+          if (replaced) this.dropPeer(replaced, "replaced");
+          this.log(`relay: ${peer.name} connected to ${host.user}`);
+          this.notify(host.ws, { subject: "WaitForNetConnection", sender: peer.name, recipient: host.user });
           if (env.subject === "Logon") continue;
         }
-        if (host.ws.readyState === host.ws.OPEN) host.ws.send(frame);
+        this.forward(host.ws, frame);
       }
     });
     ws.on("close", () => {
-      if (peerName && host.peers.get(peerName.toLowerCase()) === ws) {
-        host.peers.delete(peerName.toLowerCase());
-        this.log(`relay: ${peerName} left ${host.user}`);
+      if (!peer || host.peers.get(peer.name.toLowerCase()) !== peer) return;
+      host.peers.delete(peer.name.toLowerCase());
+      if (!peer.expected) {
+        this.notify(host.ws, { errorCode: ERR_NO_CONNECTION, subject: "ConnectionProblem", sender: peer.name, recipient: host.user });
       }
+      this.log(`relay: ${peer.name} left ${host.user}`);
     });
   }
 

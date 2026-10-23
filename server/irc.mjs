@@ -3,11 +3,16 @@
 // IRC lines). Only what the client parses is implemented:
 //
 //   001       welcome; the client reads its own address from the last
-//             "@host" item, which becomes the address peers connect to
-//   265       online count (word 7) and max (word 9)
+//             "@host" item
+//   265       online count (word 7) and max (word 9), also after LUSERS
 //   375/372/376  MOTD; 376 makes the client show the lobby
-//   321-323   LIST, 353/366 NAMES, 303 ISON
+//   321-323   LIST with masks ("LIST #r*"), 353/366 NAMES, 303 ISON
 //   JOIN/PART/QUIT/PRIVMSG relayed between users
+//
+// Players swap the address their opponent should connect to in private
+// messages ("SMUS_GetIP", "Challenge"). The game derives it from the Multiuser
+// Xtra's address cookies, which the emulator cannot provide, so the server
+// fills in the sender's relay address (see relay.mjs).
 
 const SERVER = "robotrage.local";
 
@@ -79,6 +84,8 @@ export class IrcServer {
         return this.list(client, args[0]);
       case "ISON":
         return this.ison(client, args.join(" ").split(" "));
+      case "LUSERS":
+        return this.lusers(client);
       case "MODE":
       case "WHO":
       case "WATCH":
@@ -92,22 +99,35 @@ export class IrcServer {
 
   nick(client, nick) {
     if (!nick) return;
-    for (const other of this.clients) {
-      if (other !== client && other.nick?.toLowerCase() === nick.toLowerCase()) {
+    const other = this.findNick(nick);
+    if (other && other !== client) {
+      // The emulator never closes the socket of a dropped Multiuser instance,
+      // so a tab coming back from a match still holds its old nick.
+      if (other.address !== client.address) {
         return this.reply(client, "433", `${nick} :Nickname is already in use`);
       }
+      this.quit(other, "Reconnected");
+      other.close();
     }
     client.nick = nick;
     this.maybeWelcome(client);
   }
 
+  findNick(nick) {
+    const lower = nick.toLowerCase();
+    return [...this.clients].find((c) => c.nick?.toLowerCase() === lower);
+  }
+
+  onlineCount() {
+    return [...this.clients].filter((c) => c.registered).length;
+  }
+
   maybeWelcome(client) {
     if (client.registered || !client.nick || !client.user) return;
     client.registered = true;
-    const online = [...this.clients].filter((c) => c.registered).length;
     this.reply(client, "001", `:Welcome to RobotRage ${this.prefix(client)}`);
     this.reply(client, "002", `:Your host is ${SERVER}`);
-    this.reply(client, "265", `:Current local users: ${online} max: ${this.maxUsers}`);
+    this.reply(client, "265", `:Current local users: ${this.onlineCount()} max: ${this.maxUsers}`);
     this.reply(client, "375", `:- ${SERVER} Message of the day -`);
     for (const line of this.motd) this.reply(client, "372", `:- ${line}`);
     this.reply(client, "376", ":End of MOTD command");
@@ -143,6 +163,7 @@ export class IrcServer {
 
   privmsg(client, cmd, target, text) {
     if (!client.registered || !target) return;
+    if (!target.startsWith("#")) text = this.withAddress(client, text);
     const line = `:${this.prefix(client)} ${cmd} ${target} :${text}\r\n`;
     if (target.startsWith("#")) {
       const channel = this.channels.get(target.toLowerCase());
@@ -150,9 +171,22 @@ export class IrcServer {
       for (const member of channel.members) if (member !== client) member.send(line);
       return;
     }
-    const recipient = [...this.clients].find((c) => c.nick?.toLowerCase() === target.toLowerCase());
-    if (recipient) recipient.send(line);
+    const recipient = this.findNick(target);
+    if (recipient?.registered) recipient.send(line);
     else this.reply(client, "401", `${target} :No such nick/channel`);
+  }
+
+  // "SMUS_GetIP 0 <ip>_<hex robot id>" and "Challenge 0 [..., #ip: <ip>, ...]".
+  withAddress(client, text) {
+    const address = client.address;
+    if (!/^[\w.:-]+$/.test(address) || address === "0.0.0.0") return text;
+    if (text.startsWith("SMUS_GetIP ")) {
+      return text.replace(/^(SMUS_GetIP \S+ ).*_([0-9A-Fa-f]*)\s*$/, (_, head, id) => `${head}${address}_${id}`);
+    }
+    if (text.startsWith("Challenge ")) {
+      return text.replace(/(#ip:\s*)("[^"]*"|[^,\]]*)/, (_, key) => `${key}"${address}"`);
+    }
+    return text;
   }
 
   names(client, name) {
@@ -162,26 +196,35 @@ export class IrcServer {
     this.reply(client, "366", `${channel?.name ?? name} :End of /NAMES list.`);
   }
 
+  // The lobby polls "LIST #<prefix>*" for the user count of every room.
   list(client, filter) {
     this.reply(client, "321", "Channel :Users  Name");
-    const wanted = filter ? new Set(filter.split(",").map((n) => n.toLowerCase())) : null;
-    for (const [key, channel] of this.channels) {
-      if (wanted && !wanted.has(key)) continue;
+    const masks = filter ? filter.split(",").filter(Boolean).map(maskPattern) : [/^/];
+    for (const channel of this.channels.values()) {
+      if (!masks.some((mask) => mask.test(channel.name))) continue;
       this.reply(client, "322", `${channel.name} ${channel.members.size} :`);
     }
-    // Rooms the client asked for but nobody is in yet still need an entry.
-    if (wanted) {
-      for (const key of wanted) {
-        if (!this.channels.has(key)) this.reply(client, "322", `${key} 0 :`);
+    // Rooms the client asked for by name but nobody is in yet still need an entry.
+    for (const name of filter ? filter.split(",") : []) {
+      if (name && !/[*?]/.test(name) && !this.channels.has(name.toLowerCase())) {
+        this.reply(client, "322", `${name} 0 :`);
       }
     }
     this.reply(client, "323", ":End of /LIST");
   }
 
+  // The game sends LUSERS while checking a match opponent is still around
+  // and reads the online count from 265.
+  lusers(client) {
+    const online = this.onlineCount();
+    this.reply(client, "251", `:There are ${online} users and 0 invisible on 1 servers`);
+    this.reply(client, "255", `:I have ${online} clients and 0 servers`);
+    this.reply(client, "265", `:Current local users: ${online} max: ${this.maxUsers}`);
+    this.reply(client, "266", `:Current global users: ${online} max: ${this.maxUsers}`);
+  }
+
   ison(client, nicks) {
-    const online = nicks.filter((n) =>
-      [...this.clients].some((c) => c.registered && c.nick?.toLowerCase() === n.toLowerCase())
-    );
+    const online = nicks.filter((n) => n && this.findNick(n)?.registered);
     this.reply(client, "303", `:${online.join(" ")}`);
   }
 
@@ -198,4 +241,9 @@ export class IrcServer {
     for (const member of notified) member.send(line);
     if (client.registered) this.log(`irc: ${client.nick} quit (${reason})`);
   }
+}
+
+function maskPattern(mask) {
+  const escaped = mask.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`, "i");
 }
