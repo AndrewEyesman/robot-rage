@@ -40,10 +40,105 @@ index 6d1186d..3bf677e 100644
                      let b = entry_bytes;
                      let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
 diff --git a/vm-rust/src/player/events.rs b/vm-rust/src/player/events.rs
-index 5acf223..308e7d8 100644
+index 5acf223..b7ec0bf 100644
 --- a/vm-rust/src/player/events.rs
 +++ b/vm-rust/src/player/events.rs
-@@ -1891,7 +1891,17 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -373,7 +373,7 @@ async fn player_invoke_frame_and_movie_scripts_inner(
+                 None
+             }
+         });
+-        
++
+         let result = player_call_script_handler(
+             receiver,  // Changed from None to receiver
+             (script_member_ref.clone(), Symbol::from_str(handler_name)),
+@@ -1600,28 +1600,46 @@ pub async fn player_dispatch_event_beginsprite(
+             (sprite_instances, frame_instances, all_channels)
+         });
+     
++    // The frame script instance lives on the movie, not in channel 0's
++    // behavior list, so it's dispatched here, once per span. beginSprite never
++    // falls through to static scripts: a behavior without a beginSprite handler
++    // used to hand the event to the frame script, so the arena's frame script
++    // built and scaled the robot once per handler-less sprite.
++    let frame_script_instance = reserve_player_mut(|player| {
++        let inst = player.movie.frame_script_instance.clone()?;
++        let entry = player.allocator.get_script_instance_entry_mut(inst.id())?;
++        if entry.script_instance.begin_sprite_called {
++            return None;
++        }
++        entry.script_instance.begin_sprite_called = true;
++        Some(inst)
++    });
++    let frame_instances: Vec<ScriptInstanceRef> = frame_instances
++        .into_iter()
++        .map(|(_, inst)| inst)
++        .chain(frame_script_instance)
++        .unique_by(|inst| inst.id())
++        .collect();
++
+     if sprite_instances.is_empty() && frame_instances.is_empty() {
+         return Ok(Vec::new());
+     }
+ 
+-    if frame_instances.len() > 0 {
+-        let _ = player_invoke_frame_and_movie_scripts(
+-            handler_name,
+-            args,
+-        )
+-        .await;
+-    }
+-    
+     // Dispatch to sprite behaviors (number > 0)
+     // Set the score context before invoking each event so sprite property access works correctly
+     for (score_ref, sprite_number, behavior) in sprite_instances {
+-        // Set the score context for this sprite's behavior
++        // Set the score context for this sprite's behavior, and mark it begun
++        // before the call so a nested go() from a beginSprite handler can't
++        // send it a second beginSprite.
+         reserve_player_mut(|player| {
+             player.current_score_context = score_ref.clone();
++            if let Some(entry) = player.allocator.get_script_instance_entry_mut(behavior.id()) {
++                entry.script_instance.begin_sprite_called = true;
++            }
+         });
+ 
+         let receivers = vec![behavior.clone()];
+-        if let Err(err) = player_invoke_targeted_event(handler_name, args, Some(receivers).as_ref()).await {
++        if let Err(err) = player_invoke_event_to_instances(handler_name, args, &receivers).await {
+             if err.code == ScriptErrorCode::Abort {
+                 reserve_player_mut(|player| {
+                     player.current_score_context = ScoreRef::Stage;
+@@ -1637,6 +1655,28 @@ pub async fn player_dispatch_event_beginsprite(
+         }
+     }
+ 
++    reserve_player_mut(|player| {
++        player.current_score_context = ScoreRef::Stage;
++    });
++
++    // Frame script last: Director's message order is sprite behaviors, then
++    // the frame script.
++    if !frame_instances.is_empty() {
++        reserve_player_mut(|player| {
++            for inst in &frame_instances {
++                if let Some(entry) = player.allocator.get_script_instance_entry_mut(inst.id()) {
++                    entry.script_instance.begin_sprite_called = true;
++                }
++            }
++        });
++        if let Err(err) = player_invoke_event_to_instances(handler_name, args, &frame_instances).await {
++            if err.code == ScriptErrorCode::Abort {
++                return Ok(vec![]);
++            }
++            reserve_player_mut(|player| player.on_script_error(&err));
++        }
++    }
++
+     // Reset the score context to Stage after each invocation
+     reserve_player_mut(|player| {
+         player.current_score_context = ScoreRef::Stage;
+@@ -1891,7 +1931,17 @@ pub async fn dispatch_event_to_all_behaviors(
      // Dispatch to sprite behaviors first (channel order)
      // Set the score context before invoking each event so sprite property access works correctly
      let mount_gen = reserve_player_ref(|player| player.movie_mount_generation);
@@ -61,7 +156,7 @@ index 5acf223..308e7d8 100644
          // An eager go(frame, movie) swapped the movie under this dispatch
          // (the Miniclip wrapper does exactly this from an exitFrame behavior).
          // The remaining receivers belong to the OLD movie — their script refs
-@@ -1909,6 +1919,9 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -1909,6 +1959,9 @@ pub async fn dispatch_event_to_all_behaviors(
          });
  
          for behavior in behaviors {
@@ -71,7 +166,7 @@ index 5acf223..308e7d8 100644
              // Same mid-dispatch movie-swap stop, for sibling behaviors on the
              // sprite whose earlier behavior called go(frame, movie).
              if reserve_player_ref(|player| player.movie_mount_generation) != mount_gen {
-@@ -1959,7 +1972,7 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -1959,7 +2012,7 @@ pub async fn dispatch_event_to_all_behaviors(
          // order, after the behaviors and before the frame/movie scripts below.
          // (Skipped if a behavior above swapped the movie via eager go().)
          let swapped = reserve_player_ref(|player| player.movie_mount_generation) != mount_gen;
@@ -236,9 +331,18 @@ index 8bcc917..609827e 100644
                  if let Some(res) =
                      crate::player::xtra::manager::try_call_xtra_static_handler(name.into(), args)
 diff --git a/vm-rust/src/player/handlers/movie.rs b/vm-rust/src/player/handlers/movie.rs
-index f5f820c..b6cdddd 100644
+index f5f820c..d31efb9 100644
 --- a/vm-rust/src/player/handlers/movie.rs
 +++ b/vm-rust/src/player/handlers/movie.rs
+@@ -3,7 +3,7 @@ use crate::{
+     director::lingo::datum::{Datum, DatumType},
+     player::{
+         DatumRef, MovieFrameTarget, Score, ScriptError, ScriptErrorCode, ScriptInstanceRef, cast_lib::{CastMemberRef, INVALID_CAST_MEMBER_REF, NULL_CAST_MEMBER_REF}, datum_formatting::format_datum, events::{
+-            dispatch_event_to_all_behaviors, dispatch_system_event_to_timeouts, player_dispatch_event_beginsprite, player_invoke_static_event, player_invoke_targeted_event, player_wait_available
++            dispatch_event_to_all_behaviors, dispatch_system_event_to_timeouts, player_dispatch_event_beginsprite, player_invoke_event_to_instances, player_invoke_static_event, player_wait_available
+         }, get_score_sprite_mut, handlers::datum_handlers::{player_call_datum_handler, script_instance::ScriptInstanceUtils}, player_call_script_handler, reserve_player_mut, reserve_player_mut_async, reserve_player_ref, score::{concrete_sprite_hit_test, get_sprite_at}, symbols::{builtin::BuiltInSymbol, symbol::Symbol}
+     },
+     utils::log_i,
 @@ -378,6 +378,11 @@ impl MovieHandlers {
              Ok(frame)
          })?;
@@ -263,6 +367,19 @@ index f5f820c..b6cdddd 100644
 +                reserve_player_mut(|player| player.in_begin_sprite_dispatch = false);
  
                  player_wait_available().await;
+ 
+@@ -517,10 +524,10 @@ impl MovieHandlers {
+ 
+                 for behavior_ref in &remaining_behaviors {
+                     let receivers = vec![behavior_ref.clone()];
+-                    let _ = player_invoke_targeted_event(
++                    let _ = player_invoke_event_to_instances(
+                         Symbol::builtin(BuiltInSymbol::BeginSprite),
+                         &vec![],
+-                        Some(&receivers),
++                        &receivers,
+                     ).await;
+                 }
  
 @@ -758,6 +765,13 @@ impl MovieHandlers {
              let message = player.get_datum(&args[1]).symbol_value()
@@ -457,9 +574,18 @@ index cce1bce..cbbab13 100644
              MemberSnapshot::Text { text, font, font_size, fixed_line_space, top_spacing } => {
                  // Same stage-scaled font lookup + coord scaling as the
 diff --git a/vm-rust/src/player/mod.rs b/vm-rust/src/player/mod.rs
-index 8fef74e..8188424 100644
+index 8fef74e..d4c54bb 100644
 --- a/vm-rust/src/player/mod.rs
 +++ b/vm-rust/src/player/mod.rs
+@@ -110,7 +110,7 @@ use crate::{
+             datum::{Datum, DatumType, VarRef, datum_bool},
+         },
+     }, js_api::JsApi, player::{
+-        bytecode::handler_manager::{BytecodeHandlerContext, player_execute_bytecode, try_execute_bytecode_sync, try_execute_opcode_sync}, datum_formatting::format_datum, events::{dispatch_event_to_all_behaviors, dispatch_system_event_to_timeouts, player_dispatch_event_beginsprite, player_invoke_event_to_instances, player_invoke_frame_and_movie_scripts, player_invoke_targeted_event}, geometry::IntRect, profiling::{get_profiler_report, ProfileScope}, scope::Scope, symbols::{builtin::BuiltInSymbol, symbol::Symbol, symbol_table::init_symbol_table}
++        bytecode::handler_manager::{BytecodeHandlerContext, player_execute_bytecode, try_execute_bytecode_sync, try_execute_opcode_sync}, datum_formatting::format_datum, events::{dispatch_event_to_all_behaviors, dispatch_system_event_to_timeouts, player_dispatch_event_beginsprite, player_invoke_event_to_instances, player_invoke_frame_and_movie_scripts}, geometry::IntRect, profiling::{get_profiler_report, ProfileScope}, scope::Scope, symbols::{builtin::BuiltInSymbol, symbol::Symbol, symbol_table::init_symbol_table}
+     }, rendering::with_renderer_mut, utils::{get_base_url, get_elapsed_ticks}
+ };
+ use url::Url;
 @@ -478,6 +478,11 @@ pub struct DirPlayer {
      pub in_prepare_frame: bool,
      pub in_step_frame: bool,
@@ -588,6 +714,19 @@ index 8fef74e..8188424 100644
  
      player_wait_available().await;
  
+@@ -5565,10 +5636,10 @@ async fn run_movie_init_sequence() {
+ 
+     for behavior_ref in &remaining_behaviors {
+         let receivers = vec![behavior_ref.clone()];
+-        let _ = player_invoke_targeted_event(
++        let _ = player_invoke_event_to_instances(
+             Symbol::builtin(BuiltInSymbol::BeginSprite),
+             &vec![],
+-            Some(&receivers),
++            &receivers,
+         ).await;
+     }
+ 
 @@ -5810,7 +5881,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
      // 3. Load the new movie data (preserving globals and allocator)
      reserve_player_mut(|player| {
@@ -611,10 +750,49 @@ index 8fef74e..8188424 100644
      player_wait_available().await;
  
 diff --git a/vm-rust/src/player/score.rs b/vm-rust/src/player/score.rs
-index 25330f7..7ea9808 100644
+index 25330f7..7303baa 100644
 --- a/vm-rust/src/player/score.rs
 +++ b/vm-rust/src/player/score.rs
-@@ -3483,6 +3483,19 @@ impl Score {
+@@ -2400,10 +2400,37 @@ impl Score {
+             .filter(|_| is_stage)
+         {
+             // Only create when no instance is cached (covers initial entry and post-discard).
+-            let needs_creation = reserve_player_ref(|player| {
++            let mut needs_creation = reserve_player_ref(|player| {
+                 player.movie.frame_script_instance.is_none()
+             });
+ 
++            // Channel 0 may already carry an instance of this script from the
++            // span's behavior attach. Adopt it rather than creating a second
++            // copy: events would otherwise split between the two (prepareFrame
++            // to one, sendAllSprites to the other) and their state diverges.
++            if needs_creation {
++                let existing = reserve_player_ref(|player| {
++                    let channel = player.movie.score.channels.get(0)?;
++                    channel.sprite.script_instance_list.iter().find(|inst| {
++                        let script = &player.allocator.get_script_instance(inst).script;
++                        script.cast_member == behavior_ref.cast_member as i32
++                            && (behavior_ref.cast_lib == u16::MAX
++                                || script.cast_lib == behavior_ref.cast_lib as i32)
++                    }).cloned()
++                });
++                if let Some(instance_ref) = existing {
++                    reserve_player_mut(|player| {
++                        player.movie.frame_script_instance = Some(instance_ref);
++                        player.movie.frame_script_member = Some(CastMemberRef {
++                            cast_lib: behavior_ref.cast_lib as i32,
++                            cast_member: behavior_ref.cast_member as i32,
++                        });
++                        player.movie.frame_script_span_start = new_span_start;
++                    });
++                    needs_creation = false;
++                }
++            }
++
+             if needs_creation {
+                 debug!(
+                     "🔧 Creating frame script instance from cast {}/{} with {} parameters",
+@@ -3483,6 +3510,19 @@ impl Score {
          JsApi::dispatch_score_changed();
      }
  
@@ -634,6 +812,25 @@ index 25330f7..7ea9808 100644
      pub fn get_sorted_channels(&self, frame_num: u32) -> Vec<&SpriteChannel> {
          let generation = self.render_channel_cache_generation;
          if let Some((cached_frame, cached_generation, cached_indices)) =
+@@ -5703,7 +5743,17 @@ pub fn get_sprites_at(player: &DirPlayer, x: i32, y: i32) -> Vec<u32> {
+ }
+ 
+ pub fn get_sprite_at(player: &DirPlayer, x: i32, y: i32, scripted: bool) -> Option<u32> {
+-    for channel in player.movie.score.get_sorted_channels(player.movie.current_frame).iter().rev() {
++    let channels = player.movie.score.get_sorted_channels(player.movie.current_frame);
++    let is_3d = |sprite: &Sprite| {
++        sprite.member.as_ref()
++            .and_then(|r| player.movie.cast_manager.find_member_by_ref(r))
++            .is_some_and(|m| matches!(m.member_type, CastMemberType::Shockwave3d(_)))
++    };
++    // 3D sprites are drawn over every 2D sprite (see the renderer's
++    // is_direct_to_stage_3d), so they also take the click first.
++    let ordered = channels.iter().rev().filter(|c| is_3d(&c.sprite))
++        .chain(channels.iter().rev().filter(|c| !is_3d(&c.sprite)));
++    for channel in ordered {
+         if concrete_sprite_hit_test(player, &channel.sprite, x, y)
+             && (!scripted || is_active_sprite(player, &channel.sprite))
+             && !is_click_transparent_sprite(player, &channel.sprite)
 diff --git a/vm-rust/src/player/script.rs b/vm-rust/src/player/script.rs
 index 10b920b..ac785f5 100644
 --- a/vm-rust/src/player/script.rs
@@ -675,10 +872,62 @@ index 3574d9e..2925929 100644
      pub next_fire_ms: f64,
  }
 diff --git a/vm-rust/src/player/xtra/multiuser/mod.rs b/vm-rust/src/player/xtra/multiuser/mod.rs
-index 9bc0ebe..ef055fe 100644
+index 9bc0ebe..3d4356e 100644
 --- a/vm-rust/src/player/xtra/multiuser/mod.rs
 +++ b/vm-rust/src/player/xtra/multiuser/mod.rs
-@@ -49,6 +49,9 @@ pub struct MultiuserXtraInstance {
+@@ -23,7 +23,7 @@ macro_rules! multiuser_log {
+ use crate::{
+     director::{lingo::datum::{Datum, DatumType}, static_datum::{StaticDatum, static_datum_to_runtime}},
+     player::{
+-        DatumRef, ScriptError, events::player_dispatch_callback_event, reserve_player_mut, reserve_player_ref, symbols::{builtin::BuiltInSymbol, symbol::Symbol}, xtra::multiuser::blowfish::{DEFAULT_CIPHER_KEY, MUSBlowfish}
++        DatumRef, DirPlayer, ScriptError, events::{player_dispatch_callback_event, player_dispatch_global_event}, reserve_player_mut, reserve_player_ref, symbols::{builtin::BuiltInSymbol, symbol::Symbol}, xtra::multiuser::blowfish::{DEFAULT_CIPHER_KEY, MUSBlowfish}
+     },
+ };
+ 
+@@ -42,27 +42,148 @@ pub struct MultiuserMessage {
+     pub time_stamp: u32,
+ }
+ 
++/// One setNetMessageHandler registration.
++pub struct NetMessageHandler {
++    pub handler: Symbol,
++    /// The scriptObject; None when it was 0/VOID, which means a movie-script
++    /// (global) handler called as `handler(0, message)`.
++    pub target: Option<DatumRef>,
++    /// Lowercased subject filter; None matches any subject.
++    pub subject: Option<String>,
++    /// Lowercased sender filter; None matches any sender.
++    pub sender: Option<String>,
++    /// Pass the message property list to the handler.
++    pub pass_message: bool,
++}
++
++impl NetMessageHandler {
++    /// Match rank for a message: subject+sender 3 > subject 2 > sender 1 >
++    /// default 0. None if a filter excludes the message.
++    fn rank(&self, message: &MultiuserMessage) -> Option<u8> {
++        let mut rank = 0;
++        if let Some(subject) = &self.subject {
++            if !subject.eq_ignore_ascii_case(&message.subject) {
++                return None;
++            }
++            rank += 2;
++        }
++        if let Some(sender) = &self.sender {
++            if !sender.eq_ignore_ascii_case(&message.sender_id) {
++                return None;
++            }
++            rank += 1;
++        }
++        Some(rank)
++    }
++}
++
+ pub struct MultiuserXtraInstance {
+-    pub net_message_handler: Option<(DatumRef, Symbol)>,
++    pub net_message_handlers: Vec<NetMessageHandler>,
+     pub message_queue: Vec<MultiuserMessage>,
+     pub socket_tx: Option<Sender<Vec<u8>>>,
      pub connection_mode: MultiuserConnectionMode,
      pub sender_id: String,
      pub recv_buffer: Vec<u8>,
@@ -687,8 +936,122 @@ index 9bc0ebe..ef055fe 100644
 +    pub is_listener: bool,
  }
  
- impl MultiuserXtraInstance {
-@@ -121,6 +124,7 @@ impl MultiuserXtraManager {
+-impl MultiuserXtraInstance {
+-    pub fn dispatch_message_handler(&self) {
+-        if let Some((handler_obj_ref, handler_symbol)) = &self.net_message_handler {
+-            let handler_symbol = handler_symbol.clone();
+-            let handler_obj_ref = handler_obj_ref.clone();
+-            player_dispatch_callback_event(handler_obj_ref, handler_symbol, &vec![]);
+-        }
+-    }
++/// Build the Multiuser message property list
++/// [#errorCode, #recipients, #senderID, #subject, #content, #timeStamp].
++fn message_to_datum(player: &mut DirPlayer, message: MultiuserMessage) -> DatumRef {
++    let recipient_refs: VecDeque<DatumRef> = message
++        .recipients
++        .iter()
++        .map(|recipient| player.alloc_datum(Datum::String(recipient.clone())))
++        .collect();
++
++    let error_code = player.alloc_datum(Datum::Int(message.error_code));
++    let recipients = player.alloc_datum(Datum::List(DatumType::List, recipient_refs, false));
++    let sender_id = player.alloc_datum(Datum::String(message.sender_id));
++    let subject = player.alloc_datum(Datum::String(message.subject));
++    let content = static_datum_to_runtime(&message.content, &mut player.allocator);
++    let time_stamp = player.alloc_datum(Datum::Int(message.time_stamp as i32)); // TODO: i64
++
++    // SYMBOL keys, not strings. The Multiuser Xtra delivers its
++    // message as a prop list keyed by #errorCode / #recipients /
++    // #senderID / #subject / #content / #timeStamp, and movies read
++    // it that way — Habbo v7's Connection Instance Class does
++    // `tNewMsg.getaProp(#errorCode)`, `pMsgStruct.getaProp(#content)`,
++    // `tMsg[#content]`.
++    //
++    // Director never matches a STRING key against a SYMBOL probe
++    // (measured: `["Foo":1].getaProp(#foo)` -> VOID), so building
++    // these as strings made every such read miss. It only appeared
++    // to work while our prop-list compare matched across the two
++    // types — and that same cross-type leniency is what let a symbol
++    // lookup alias onto a string registry key and send Habbo v7's
++    // room teardown into the Object/Window Manager recursion.
++    // Emitting the documented key type fixes the cause instead.
++    let mut key = |name: &str| player.alloc_datum(Datum::Symbol(Symbol::from_str(name)));
++    let error_code_key = key("errorCode");
++    let recipients_key = key("recipients");
++    let sender_id_key = key("senderID");
++    let subject_key = key("subject");
++    let content_key = key("content");
++    let time_stamp_key = key("timeStamp");
++
++    player.alloc_datum(Datum::PropList(
++        VecDeque::from(vec![
++            (error_code_key, error_code),
++            (recipients_key, recipients),
++            (sender_id_key, sender_id),
++            (subject_key, subject),
++            (content_key, content),
++            (time_stamp_key, time_stamp),
++        ]),
++        false,
++    ))
++}
+ 
++impl MultiuserXtraInstance {
++    /// Deliver an incoming message. The most specific matching
++    /// setNetMessageHandler registration fires (subject+sender > subject >
++    /// sender > default). A passMessage handler receives the message as its
++    /// argument and consumes it; otherwise the message is queued for
++    /// getNetMessage() and the handler is called without it. With no match
++    /// the message just waits in the queue.
+     pub fn dispatch_message(&mut self, message: MultiuserMessage) {
+-        self.message_queue.push(message);
+-        self.dispatch_message_handler();
++        let best = self
++            .net_message_handlers
++            .iter()
++            .filter_map(|h| h.rank(&message).map(|rank| (rank, h)))
++            .max_by_key(|(rank, _)| *rank)
++            .map(|(_, h)| (h.handler, h.target.clone(), h.pass_message));
++        let Some((handler, target, pass_message)) = best else {
++            self.message_queue.push(message);
++            return;
++        };
++        let message_arg = if pass_message {
++            Some(reserve_player_mut(|player| message_to_datum(player, message)))
++        } else {
++            self.message_queue.push(message);
++            None
++        };
++        match target {
++            Some(target) => {
++                let args = message_arg.into_iter().collect_vec();
++                player_dispatch_callback_event(target, handler, &args);
++            }
++            None => {
++                // Movie-script handler, called as handler(0, message). A
++                // missing handler (e.g. a registration that outlived a movie
++                // switch) finds no receiver and is silently ignored.
++                let args = match message_arg {
++                    Some(message) => {
++                        let zero = reserve_player_mut(|player| player.alloc_datum(Datum::Int(0)));
++                        vec![zero, message]
++                    }
++                    None => vec![],
++                };
++                player_dispatch_global_event(handler, &args);
++            }
++        }
+     }
+ 
+     pub fn next_message(&mut self) -> Option<MultiuserMessage> {
+@@ -115,12 +236,13 @@ impl MultiuserXtraManager {
+         self.instances.insert(
+             self.instance_counter,
+             MultiuserXtraInstance {
+-                net_message_handler: None,
++                net_message_handlers: vec![],
+                 message_queue: vec![],
+                 socket_tx: None,
                  connection_mode: MultiuserConnectionMode::Binary,
                  sender_id: String::new(),
                  recv_buffer: Vec::new(),
@@ -696,7 +1059,7 @@ index 9bc0ebe..ef055fe 100644
              },
          );
          self.instance_counter
-@@ -141,6 +145,232 @@ impl MultiuserXtraManager {
+@@ -141,6 +263,250 @@ impl MultiuserXtraManager {
          )))
      }
  
@@ -851,48 +1214,62 @@ index 9bc0ebe..ef055fe 100644
 +            }
 +        });
 +
++        // Messages sent while the socket is still CONNECTING wait here and
++        // are flushed on open, after the Logon.
++        let pending: std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>> = Default::default();
++        let pending_open = pending.clone();
++        let socket_open = socket.clone();
 +        let onopen_callback = Closure::<dyn FnMut(_)>::new(move |_e: Event| {
 +            if unsafe { crate::player::PLAYER_GENERATION } != conn_generation { return; }
 +            multiuser_log!("Multiuser: WebSocket connected to {}", ws_url_clone);
++            let send = |bytes: &[u8]| {
++                if let Err(e) = socket_open.send_with_u8_array(bytes) {
++                    multiuser_log!("Multiuser: Failed to send message: {:?}", e);
++                }
++            };
 +            let multiusr_manager =
 +                unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut() };
-+            let Some(manager) = multiusr_manager else { return; };
-+            let Some(instance) = manager.instances.get_mut(&instance_id) else { return; };
-+            let Some((username, password, movie_id, encryption_key)) = &logon else { return; };
-+            instance.dispatch_message(MultiuserMessage {
-+                error_code: 0,
-+                recipients: vec!["*".to_string()],
-+                sender_id: "System".to_string(),
-+                subject: "ConnectToNetServer".to_string(),
-+                content: StaticDatum::Void,
-+                time_stamp: 0, // TODO timestamp
-+            });
-+            if let MultiuserConnectionMode::Binary = instance.connection_mode {
-+                let message = MultiuserMessage {
++            let instance = multiusr_manager.and_then(|m| m.instances.get_mut(&instance_id));
++            if let (Some(instance), Some((username, password, movie_id, encryption_key))) = (instance, &logon) {
++                instance.dispatch_message(MultiuserMessage {
 +                    error_code: 0,
-+                    recipients: vec!["System".to_string()],
-+                    sender_id: username.to_string(),
-+                    subject: "Logon".to_string(),
-+                    content: StaticDatum::List(vec![
-+                        StaticDatum::String(movie_id.clone()),
-+                        StaticDatum::String(username.clone()),
-+                        StaticDatum::String(password.clone()),
-+                    ]),
-+                    time_stamp: 0,
-+                };
-+                let resolved_encryption_key: Vec<u8> = if encryption_key.is_empty() {
-+                    DEFAULT_CIPHER_KEY.to_vec()
-+                } else if encryption_key.len() < 20 {
-+                    // DEFAULT_CIPHER_KEY + &encryption_key
-+                    let mut key = DEFAULT_CIPHER_KEY.to_vec();
-+                    key.extend_from_slice(encryption_key.as_bytes());
-+                    key
-+                } else {
-+                    encryption_key.as_bytes().to_vec()
-+                };
-+                let mut cipher = MUSBlowfish::new(&resolved_encryption_key);
-+                let bytes = message.to_bytes(Some(&mut cipher));
-+                instance.socket_tx.as_ref().unwrap().try_send(bytes.to_vec()).unwrap();
++                    recipients: vec!["*".to_string()],
++                    sender_id: "System".to_string(),
++                    subject: "ConnectToNetServer".to_string(),
++                    content: StaticDatum::Void,
++                    time_stamp: 0, // TODO timestamp
++                });
++                if let MultiuserConnectionMode::Binary = instance.connection_mode {
++                    let message = MultiuserMessage {
++                        error_code: 0,
++                        recipients: vec!["System".to_string()],
++                        sender_id: username.to_string(),
++                        subject: "Logon".to_string(),
++                        content: StaticDatum::List(vec![
++                            StaticDatum::String(movie_id.clone()),
++                            StaticDatum::String(username.clone()),
++                            StaticDatum::String(password.clone()),
++                        ]),
++                        time_stamp: 0,
++                    };
++                    let resolved_encryption_key: Vec<u8> = if encryption_key.is_empty() {
++                        DEFAULT_CIPHER_KEY.to_vec()
++                    } else if encryption_key.len() < 20 {
++                        // DEFAULT_CIPHER_KEY + &encryption_key
++                        let mut key = DEFAULT_CIPHER_KEY.to_vec();
++                        key.extend_from_slice(encryption_key.as_bytes());
++                        key
++                    } else {
++                        encryption_key.as_bytes().to_vec()
++                    };
++                    let mut cipher = MUSBlowfish::new(&resolved_encryption_key);
++                    // Sent directly (not via the channel) so it precedes the
++                    // queued messages flushed below.
++                    send(&message.to_bytes(Some(&mut cipher)));
++                }
++            }
++            for bytes in pending_open.borrow_mut().drain(..) {
++                send(&bytes);
 +            }
 +        });
 +        socket.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
@@ -906,6 +1283,10 @@ index 9bc0ebe..ef055fe 100644
 +            while let Ok(message) = rx.recv().await {
 +                // Check if WebSocket is open (readyState == 1) before sending
 +                // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
++                if socket_clone.ready_state() == 0 {
++                    pending.borrow_mut().push(message);
++                    continue;
++                }
 +                if socket_clone.ready_state() != 1 {
 +                    multiuser_log!("Multiuser: Cannot send message, WebSocket not open (state={})", socket_clone.ready_state());
 +                    continue;
@@ -929,7 +1310,81 @@ index 9bc0ebe..ef055fe 100644
      pub fn call_instance_handler(
          handler_name: &str,
          instance_id: u32,
-@@ -181,6 +411,14 @@ impl MultiuserXtraManager {
+@@ -149,30 +515,54 @@ impl MultiuserXtraManager {
+         match handler_name.to_lowercase().as_str() {
+             "setnetbufferlimits" => Ok(DatumRef::Void),
+             "setnetmessagehandler" => {
+-                let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+-                let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
+-                reserve_player_mut(|player| {
+-                    let handler_symbol = player.get_datum(args.get(0).unwrap());
+-                    let handler_obj_ref = args.get(1).unwrap().clone();
+-                    // TODO subject and sender
+-                    if handler_symbol.is_void() {
+-                        instance.net_message_handler = None;
++                // setNetMessageHandler(handlerSymbol, scriptObject, subject, sender, passMessage)
++                let (handler, target, subject, sender, pass_message) = reserve_player_ref(|player| {
++                    let datum = |i: usize| args.get(i).map(|d| player.get_datum(d));
++                    // VOID / 0 / EMPTY mean "no handler", "movie script" or "no filter".
++                    let is_unset = |d: Option<&Datum>| match d {
++                        None | Some(Datum::Void) | Some(Datum::Int(0)) => true,
++                        Some(Datum::String(s)) => s.is_empty(),
++                        _ => false,
++                    };
++                    let handler = if is_unset(datum(0)) {
++                        None
+                     } else {
+-                        let handler_symbol = handler_symbol.symbol_value()?;
+-                        instance.net_message_handler = Some((handler_obj_ref, handler_symbol));
+-                    }
+-
+-                    // TODO return error code?
+-                    Ok(player.alloc_datum(Datum::Int(0)))
+-                })
++                        Some(datum(0).unwrap().symbol_value()?)
++                    };
++                    let target = if is_unset(datum(1)) { None } else { args.get(1).cloned() };
++                    let filter = |i: usize| -> Result<Option<String>, ScriptError> {
++                        if is_unset(datum(i)) {
++                            Ok(None)
++                        } else {
++                            Ok(Some(datum(i).unwrap().string_value()?.to_lowercase()))
++                        }
++                    };
++                    let subject = filter(2)?;
++                    let sender = filter(3)?;
++                    let pass_message = datum(4).map_or(false, |d| d.int_value().unwrap_or(0) != 0);
++                    Ok((handler, target, subject, sender, pass_message))
++                })?;
++                let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++                let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
++                // A registration is keyed by its (subject, sender) filters:
++                // registering replaces it, handler 0 removes it.
++                instance
++                    .net_message_handlers
++                    .retain(|h| h.subject != subject || h.sender != sender);
++                if let Some(handler) = handler {
++                    instance.net_message_handlers.push(NetMessageHandler {
++                        handler,
++                        target,
++                        subject,
++                        sender,
++                        pass_message,
++                    });
++                }
++                reserve_player_mut(|player| Ok(player.alloc_datum(Datum::Int(0))))
+             }
+             "connecttonetserver" => {
+                 let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+                 let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
+-                if let Some((handler_obj_ref, handler_symbol)) = &instance.net_message_handler {
+-                    let _handler_symbol = handler_symbol.clone();
+-                    let _handler_obj_ref = handler_obj_ref.clone();
+-                }
+                 // Director's connectToNetServer has two overloads:
+                 //   (A) (userName, password, serverID, port, movieID, [mode, encKey])
+                 //   (B) (serverID, port, propList[#userID, #password, #movieid],
+@@ -181,6 +571,14 @@ impl MultiuserXtraManager {
                  // Script uses. Detect it by sniffing args[2]: a PropList
                  // means form B; otherwise assume form A.
                  let (username, password, host, port, movie_id, mode, encryption_key) = reserve_player_ref(|player| {
@@ -944,7 +1399,7 @@ index 9bc0ebe..ef055fe 100644
                      let arg2 = args.get(2).map(|d| player.get_datum(d));
                      let is_form_b = matches!(arg2, Some(Datum::PropList(..)));
                      if is_form_b {
-@@ -204,7 +442,7 @@ impl MultiuserXtraManager {
+@@ -204,7 +602,7 @@ impl MultiuserXtraManager {
                          let username = lookup_str(BuiltInSymbol::UserID);
                          let password = lookup_str(BuiltInSymbol::Password);
                          let movie_id = lookup_str(BuiltInSymbol::Movieid);
@@ -953,7 +1408,7 @@ index 9bc0ebe..ef055fe 100644
                          let encryption_key = args.get(4).and_then(|d| player.get_datum(d).string_value().ok()).unwrap_or_default();
                          Ok((username, password, host, port, movie_id, mode, encryption_key))
                      } else {
-@@ -214,7 +452,7 @@ impl MultiuserXtraManager {
+@@ -214,7 +612,7 @@ impl MultiuserXtraManager {
                          let host = player.get_datum(args.get(2).unwrap()).string_value()?;
                          let port = player.get_datum(args.get(3).unwrap()).int_value()?;
                          let movie_id = player.get_datum(args.get(4).unwrap()).string_value().unwrap_or_default();
@@ -962,7 +1417,7 @@ index 9bc0ebe..ef055fe 100644
                          let encryption_key = args.get(6).and_then(|d| player.get_datum(d).string_value().ok()).unwrap_or_default();
                          Ok((username, password, host, port, movie_id, mode, encryption_key))
                      }
-@@ -285,218 +523,7 @@ impl MultiuserXtraManager {
+@@ -285,326 +683,84 @@ impl MultiuserXtraManager {
                      return Err(ScriptError::new(format!("Invalid connection mode: {}", mode)));
                  };
  
@@ -1181,8 +1636,181 @@ index 9bc0ebe..ef055fe 100644
 +                Self::open_socket(instance_id, ws_url, Some((username, password, movie_id, encryption_key)))
              }
              "getnetmessage" => {
-                 let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
-@@ -626,8 +653,28 @@ impl MultiuserXtraManager {
+-                let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++                let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+                 let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
+                 if let Some(message) = instance.next_message() {
+-                    reserve_player_mut(|player| {
+-                        let recipient_refs: VecDeque<DatumRef> = message
+-                            .recipients
+-                            .iter()
+-                            .map(|recipient| player.alloc_datum(Datum::String(recipient.clone())))
+-                            .collect();
+-
+-                        let error_code = player.alloc_datum(Datum::Int(message.error_code));
+-                        let recipients =
+-                            player.alloc_datum(Datum::List(DatumType::List, recipient_refs, false));
+-                        let sender_id = player.alloc_datum(Datum::String(message.sender_id));
+-                        let subject = player.alloc_datum(Datum::String(message.subject));
+-                        let content = static_datum_to_runtime(&message.content, &mut player.allocator);
+-                        let time_stamp = player.alloc_datum(Datum::Int(message.time_stamp as i32)); // TODO: i64
+-
+-                        // SYMBOL keys, not strings. The Multiuser Xtra delivers its
+-                        // message as a prop list keyed by #errorCode / #recipients /
+-                        // #senderID / #subject / #content / #timeStamp, and movies read
+-                        // it that way — Habbo v7's Connection Instance Class does
+-                        // `tNewMsg.getaProp(#errorCode)`, `pMsgStruct.getaProp(#content)`,
+-                        // `tMsg[#content]`.
+-                        //
+-                        // Director never matches a STRING key against a SYMBOL probe
+-                        // (measured: `["Foo":1].getaProp(#foo)` -> VOID), so building
+-                        // these as strings made every such read miss. It only appeared
+-                        // to work while our prop-list compare matched across the two
+-                        // types — and that same cross-type leniency is what let a symbol
+-                        // lookup alias onto a string registry key and send Habbo v7's
+-                        // room teardown into the Object/Window Manager recursion.
+-                        // Emitting the documented key type fixes the cause instead.
+-                        let error_code_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("errorCode")));
+-                        let recipients_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("recipients")));
+-                        let sender_id_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("senderID")));
+-                        let subject_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("subject")));
+-                        let content_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("content")));
+-                        let time_stamp_key =
+-                            player.alloc_datum(Datum::Symbol(Symbol::from_str("timeStamp")));
+-
+-                        Ok(player.alloc_datum(Datum::PropList(
+-                            VecDeque::from(vec![
+-                                (error_code_key, error_code),
+-                                (recipients_key, recipients),
+-                                (sender_id_key, sender_id),
+-                                (subject_key, subject),
+-                                (content_key, content),
+-                                (time_stamp_key, time_stamp),
+-                            ]),
+-                            false,
+-                        )))
+-                    })
++                    reserve_player_mut(|player| Ok(message_to_datum(player, message)))
+                 } else {
+                     Ok(DatumRef::Void)
+                 }
+             }
+             "sendnetmessage" => {
+-                let mut multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
++                let multiusr_manager = unsafe { MULTIUSER_XTRA_MANAGER_OPT.as_mut().unwrap() };
+                 let instance = multiusr_manager.instances.get_mut(&instance_id).unwrap();
+                 reserve_player_mut(|player| {
+-                    // multiuser_log!("sendNetMessage: {:?}", msg_string);
+-                    if let Some(tx) = &instance.socket_tx {
+-                        let msg_bytes = match instance.connection_mode {
+-                            MultiuserConnectionMode::Text => {
+-                                let msg_data = player.get_datum(args.get(2).unwrap());
+-                                let s = msg_data.string_value()?;
+-                                // Mirror of the receive side: a Unicode Director's
+-                                // Multiuser Xtra puts UTF-8 on the wire. Truncating
+-                                // each char to a byte (`c as u8`) silently mangled
+-                                // anything outside Latin-1 and disagreed with what the
+-                                // server sends back.
+-                                s.into_bytes()
+-                            }
+-                            MultiuserConnectionMode::Binary => {
+-                                let subject = player.get_datum(args.get(1).unwrap()).string_value()?;
+-                                let msg_data = player.get_datum(args.get(2).unwrap());
+-                                let content = StaticDatum::from(msg_data);
+-                                let recipients_list = match player.get_datum(args.get(0).unwrap()) {
+-                                    Datum::List(_, list, ..) => list.iter().map(|d| player.get_datum(d).string_value().unwrap_or_default()).collect_vec(),
+-                                    Datum::String(s) => vec![s.clone()],
+-                                    Datum::Int(0) => vec![],
+-                                    _ => return Err(ScriptError::new("Invalid recipients argument, expected list or string".to_string())),
+-                                };
+-
+-                                let message = MultiuserMessage {
+-                                    error_code: 0,
+-                                    recipients: recipients_list,
+-                                    sender_id: instance.sender_id.clone(),
+-                                    subject,
+-                                    content,
+-                                    time_stamp: 0,
+-                                };
+-                                message.to_bytes(None)
++                    // Two forms: sendNetMessage(recipients, subject, content) and
++                    // sendNetMessage([#recipients:, #subject:, #content:, #udp:]).
++                    let (recipients_ref, subject_ref, content_ref) = match args.get(0).map(|d| player.get_datum(d)) {
++                        Some(Datum::PropList(pairs, _)) if args.len() == 1 => {
++                            let mut recipients = DatumRef::Void;
++                            let mut subject = DatumRef::Void;
++                            let mut content = DatumRef::Void;
++                            for (k, v) in pairs.iter() {
++                                let key = player.get_datum(k).string_value().unwrap_or_default();
++                                match key.to_lowercase().as_str() {
++                                    "recipients" => recipients = v.clone(),
++                                    "subject" => subject = v.clone(),
++                                    "content" => content = v.clone(),
++                                    _ => {} // #udp: no UDP over a WebSocket
++                                }
+                             }
+-                        };
+-                        tx.try_send(msg_bytes).unwrap();
+-                        Ok(DatumRef::Void)
+-                    } else {
+-                        Err(ScriptError::new("Socket not connected".to_string()))
+-                    }
++                            (recipients, subject, content)
++                        }
++                        _ => (
++                            args.get(0).cloned().unwrap_or(DatumRef::Void),
++                            args.get(1).cloned().unwrap_or(DatumRef::Void),
++                            args.get(2).cloned().unwrap_or(DatumRef::Void),
++                        ),
++                    };
++                    let Some(tx) = &instance.socket_tx else {
++                        return Err(ScriptError::new("Socket not connected".to_string()));
++                    };
++                    let msg_bytes = match instance.connection_mode {
++                        MultiuserConnectionMode::Text => {
++                            let s = player.get_datum(&content_ref).string_value()?;
++                            // Mirror of the receive side: a Unicode Director's
++                            // Multiuser Xtra puts UTF-8 on the wire. Truncating
++                            // each char to a byte (`c as u8`) silently mangled
++                            // anything outside Latin-1 and disagreed with what the
++                            // server sends back.
++                            s.into_bytes()
++                        }
++                        MultiuserConnectionMode::Binary => {
++                            let subject = match player.get_datum(&subject_ref) {
++                                Datum::Void => String::new(),
++                                d => d.string_value()?,
++                            };
++                            let content = StaticDatum::from(&content_ref);
++                            let recipients_list = match player.get_datum(&recipients_ref) {
++                                Datum::List(_, list, ..) => list.iter().map(|d| player.get_datum(d).string_value().unwrap_or_default()).collect_vec(),
++                                Datum::String(s) => vec![s.clone()],
++                                Datum::Int(0) | Datum::Void => vec![],
++                                _ => return Err(ScriptError::new("Invalid recipients argument, expected list or string".to_string())),
++                            };
++
++                            let message = MultiuserMessage {
++                                error_code: 0,
++                                recipients: recipients_list,
++                                sender_id: instance.sender_id.clone(),
++                                subject,
++                                content,
++                                time_stamp: 0,
++                            };
++                            message.to_bytes(None)
++                        }
++                    };
++                    let _ = tx.try_send(msg_bytes);
++                    Ok(DatumRef::Void)
+                 })
+             }
+             "getnetaddresscookie" => {
+@@ -626,8 +782,28 @@ impl MultiuserXtraManager {
                  Ok(DatumRef::Void)
              }
              "breakconnection" => {
@@ -1212,7 +1840,7 @@ index 9bc0ebe..ef055fe 100644
                  if let Some(instance) = multiusr_manager.instances.get_mut(&instance_id) {
                      // Drop the sender to close the send loop; the WebSocket
                      // close is handled by the browser when the socket is dropped
-@@ -660,11 +707,46 @@ impl MultiuserXtraManager {
+@@ -660,11 +836,46 @@ impl MultiuserXtraManager {
                  })
              }
              "waitfornetconnection" => {
@@ -1264,11 +1892,198 @@ index 9bc0ebe..ef055fe 100644
              }
              _ => Err(ScriptError::new(format!(
                  "No handler {} found for Multiuser xtra instance #{}",
+diff --git a/vm-rust/src/player/xtra/multiuser/reader.rs b/vm-rust/src/player/xtra/multiuser/reader.rs
+index 623bbb2..a8df0d9 100644
+--- a/vm-rust/src/player/xtra/multiuser/reader.rs
++++ b/vm-rust/src/player/xtra/multiuser/reader.rs
+@@ -12,6 +12,7 @@ pub trait MusReader {
+     fn read_mus_message(&mut self, cipher: Option<&mut MUSBlowfish>) -> Result<MultiuserMessage, std::io::Error>;
+     fn read_mus_message_payload(payload: &[u8], cipher: Option<&mut MUSBlowfish>) -> Result<MultiuserMessage, std::io::Error>;
+     fn read_mus_lingo_value(&mut self) -> Result<StaticDatum, std::io::Error>;
++    fn read_mus_coord(&mut self) -> Result<i32, std::io::Error>;
+ }
+ 
+ impl MusReader for BinaryReader {
+@@ -25,6 +26,18 @@ impl MusReader for BinaryReader {
+         Ok(result_string)
+     }
+ 
++    /// One component of a point/rect: a tagged int or float.
++    fn read_mus_coord(&mut self) -> Result<i32, std::io::Error> {
++        match self.read_mus_lingo_value()? {
++            StaticDatum::Int(i) => Ok(i),
++            StaticDatum::Float(f) => Ok(f.round() as i32),
++            other => Err(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                format!("Invalid point/rect component: {:?}", other),
++            )),
++        }
++    }
++
+     fn read_mus_lingo_value(&mut self) -> Result<StaticDatum, std::io::Error> {
+         let tag = self.read_u16()?;
+         match MusLingoValueTag::from_u16(tag) {
+@@ -59,6 +72,27 @@ impl MusReader for BinaryReader {
+                 }
+                 Ok(StaticDatum::PropList(pairs))
+             }
++            Some(MusLingoValueTag::Float) => {
++                // 8-byte big-endian IEEE-754 double.
++                let bytes = self.read_bytes(8)?;
++                let mut buf = [0u8; 8];
++                buf.copy_from_slice(bytes);
++                Ok(StaticDatum::Float(f64::from_be_bytes(buf)))
++            }
++            Some(MusLingoValueTag::Point) => {
++                // Component values, each tagged: x, y.
++                let x = self.read_mus_coord()?;
++                let y = self.read_mus_coord()?;
++                Ok(StaticDatum::IntPoint(x, y))
++            }
++            Some(MusLingoValueTag::Rect) => {
++                // Component values, each tagged: left, top, right, bottom.
++                let l = self.read_mus_coord()?;
++                let t = self.read_mus_coord()?;
++                let r = self.read_mus_coord()?;
++                let b = self.read_mus_coord()?;
++                Ok(StaticDatum::IntRect(l, t, r, b))
++            }
+             Some(MusLingoValueTag::Media) => {
+                 let len = self.read_u32()? as usize;
+                 let data = self.read_bytes(len)?.to_vec();
+@@ -132,4 +166,67 @@ impl MusReader for BinaryReader {
+             time_stamp: timestamp,
+         })
+     }
+-}
+\ No newline at end of file
++}
++
++#[cfg(test)]
++mod tests {
++    use binary_reader::BinaryReader;
++
++    use super::MusReader;
++    use crate::{director::static_datum::StaticDatum, player::xtra::multiuser::MultiuserMessage};
++
++    #[test]
++    fn mus_message_round_trips_lingo_values() {
++        let content = StaticDatum::PropList(vec![
++            (StaticDatum::Symbol("pos".into()), StaticDatum::IntPoint(-12, 340)),
++            (StaticDatum::Symbol("box".into()), StaticDatum::IntRect(1, 2, 300, 400)),
++            (StaticDatum::Symbol("speed".into()), StaticDatum::Float(-3.25)),
++            (StaticDatum::Symbol("tiny".into()), StaticDatum::Float(1e-300)),
++            (StaticDatum::String("name".into()), StaticDatum::String("odd".into())),
++            (
++                StaticDatum::Symbol("list".into()),
++                StaticDatum::List(vec![
++                    StaticDatum::Int(i32::MIN),
++                    StaticDatum::Void,
++                    StaticDatum::Symbol("ab".into()),
++                    StaticDatum::Media(vec![1, 2, 3]),
++                    StaticDatum::List(vec![]),
++                ]),
++            ),
++        ]);
++        let message = MultiuserMessage {
++            error_code: -7,
++            recipients: vec!["peer1".into(), "@All".into()],
++            sender_id: "me".into(),
++            subject: "Move".into(),
++            content: content.clone(),
++            time_stamp: 1234,
++        };
++        let bytes = message.to_bytes(None);
++        let mut reader = BinaryReader::from_u8(&bytes);
++        let read = reader.read_mus_message(None).unwrap();
++        assert_eq!(read.content, content);
++        assert_eq!(read.subject, "Move");
++        assert_eq!(read.sender_id, "me");
++        assert_eq!(read.recipients, vec!["peer1".to_string(), "@All".to_string()]);
++        assert_eq!(read.error_code, -7);
++        assert_eq!(read.time_stamp, 1234);
++    }
++
++    #[test]
++    fn mus_float_is_big_endian_double() {
++        let message = MultiuserMessage {
++            error_code: 0,
++            recipients: vec![],
++            sender_id: String::new(),
++            subject: String::new(),
++            content: StaticDatum::Float(1.5),
++            time_stamp: 0,
++        };
++        let bytes = message.to_bytes(None);
++        // frame header 6, error 4, time 4, subject 4, sender 4, recipients 4
++        let content = &bytes[26..];
++        assert_eq!(&content[..2], &[0, 6]);
++        assert_eq!(&content[2..10], &1.5f64.to_be_bytes());
++    }
++}
+diff --git a/vm-rust/src/player/xtra/multiuser/writer.rs b/vm-rust/src/player/xtra/multiuser/writer.rs
+index 3df208d..832f639 100644
+--- a/vm-rust/src/player/xtra/multiuser/writer.rs
++++ b/vm-rust/src/player/xtra/multiuser/writer.rs
+@@ -57,18 +57,25 @@ impl MusWriter for BinaryWriter<'_> {
+                 }
+                 Ok(written)
+             }
++            StaticDatum::Float(f) => {
++                // SMUS float: 8-byte big-endian IEEE-754 double.
++                let mut written = self.write_u16(MusLingoValueTag::Float as u16)?;
++                written += self.write_bytes(f.to_be_bytes())?;
++                Ok(written)
++            }
++            // SMUS encodes a point/rect as its component values, each one a
++            // tagged Lingo value: point = x, y; rect = left, top, right, bottom.
+             StaticDatum::IntPoint(x, y) => {
+                 let mut written = self.write_u16(MusLingoValueTag::Point as u16)?;
+-                written += self.write_i32(*x)?;
+-                written += self.write_i32(*y)?;
++                written += self.write_mus_lingo_value(&StaticDatum::Int(*x))?;
++                written += self.write_mus_lingo_value(&StaticDatum::Int(*y))?;
+                 Ok(written)
+             }
+             StaticDatum::IntRect(l, t, r, b) => {
+                 let mut written = self.write_u16(MusLingoValueTag::Rect as u16)?;
+-                written += self.write_i32(*t)?;
+-                written += self.write_i32(*l)?;
+-                written += self.write_i32(*b)?;
+-                written += self.write_i32(*r)?;
++                for v in [l, t, r, b] {
++                    written += self.write_mus_lingo_value(&StaticDatum::Int(*v))?;
++                }
+                 Ok(written)
+             }
+             StaticDatum::Media(media_data) => {
+@@ -80,7 +87,6 @@ impl MusWriter for BinaryWriter<'_> {
+                 }
+                 Ok(written)
+             }
+-            _ => self.write_u16(MusLingoValueTag::Void as u16),
+         }
+     }
+ }
 diff --git a/vm-rust/src/rendering_gpu/webgl2/mod.rs b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-index dffbb65..d1881d2 100644
+index dffbb65..fb8617c 100644
 --- a/vm-rust/src/rendering_gpu/webgl2/mod.rs
 +++ b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-@@ -865,10 +865,13 @@ impl WebGL2Renderer {
+@@ -763,8 +763,12 @@ impl WebGL2Renderer {
+             Some(m) => m.clone(),
+             None => return false,
+         };
++        // Every 3D sprite composites on top, whatever the member's flag: Robot
++        // Rage's garage preview member has directToStage off, yet sits under a
++        // fully opaque frame bitmap that a locZ behavior raises above it, and
++        // the robot still has to show (and take drags) through the window.
+         player.movie.cast_manager.find_member_by_ref(&member_ref)
+-            .map(|m| matches!(&m.member_type, CastMemberType::Shockwave3d(w3d) if w3d.info.direct_to_stage))
++            .map(|m| matches!(&m.member_type, CastMemberType::Shockwave3d(_)))
+             .unwrap_or(false)
+     }
+ 
+@@ -865,10 +869,13 @@ impl WebGL2Renderer {
          // HUD into the stage image, freezing the maze view). Defer such sprites
          // until after the overlay so the live 3D shows through; the HUD (drawn
          // into a non-overlapping region) still composites underneath.
@@ -1284,12 +2099,58 @@ index dffbb65..d1881d2 100644
                  deferred_dts_3d.push(*channel_num);
                  continue;
              }
+@@ -1529,7 +1536,7 @@ impl WebGL2Renderer {
+     /// Render a single sprite
+     fn render_sprite(&mut self, player: &mut DirPlayer, channel_num: i16) {
+         // Get sprite and member info
+-        let (member_ref, mut sprite_rect, ink, mut blend, flip_h, flip_v, rotation, skew, bg_color, fg_color, has_fore_color, has_back_color, is_puppet, raw_loc, sprite_width, sprite_height, w3d_camera, w3d_extra_cams) = {
++        let (member_ref, mut sprite_rect, mut ink, mut blend, flip_h, flip_v, rotation, skew, bg_color, fg_color, has_fore_color, has_back_color, is_puppet, raw_loc, sprite_width, sprite_height, w3d_camera, w3d_extra_cams) = {
+             let score = &player.movie.score;
+             let sprite = match score.get_sprite(channel_num) {
+                 Some(s) => s,
+@@ -1625,6 +1632,14 @@ impl WebGL2Renderer {
+                 // these special composited members).
+                 blend = 100;
+             }
++            // directToStage 3D is composited straight onto the stage; Director ignores
++            // the sprite's ink and blend for it.
++            if let CastMemberType::Shockwave3d(w3d) = &member.member_type {
++                if w3d.info.direct_to_stage {
++                    ink = 0;
++                    blend = 100;
++                }
++            }
+         }
+ 
+         // Determine what kind of texture we need based on member type
+diff --git a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
+index 34b6191..300081d 100644
+--- a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
++++ b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
+@@ -407,7 +407,11 @@ void main() {
+ "#;
+ 
+         let fs_source = r#"#version 300 es
+-precision mediump float;
++// highp: lighting works in world space, and mediump may be fp16 (max 65504).
++// In a scene thousands of units across, normalize(u_camera_pos - v_position)
++// squares past that, so V and every light vector became zero and lighting went
++// black (Robot Rage's arena). WebGL2 guarantees highp in fragment shaders.
++precision highp float;
+ // Fragment shaders default `int` to mediump, but vertex shaders default it to
+ // highp. A uniform shared across both stages must match precision or GLSL ES
+ // linking fails ("Uniform `u_texcoord2_direct` is not linkable between attached
+@@ -6037,4 +6041,3 @@ fn mat4_multiply_col_major(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+     }
+     r
+ }
+-
 diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
 new file mode 100644
-index 0000000..1bb7a72
+index 0000000..7381b69
 --- /dev/null
 +++ b/vm-rust/tests/rr_score.rs
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,116 @@
 +// Diagnostic: dump how dirplayer reads a movie's score.
 +//   RR_DCR=/path/movie.dcr RR_FRAME=5 RR_CHANNELS=8-15 cargo test --test rr_score -- --nocapture
 +
@@ -1326,9 +2187,83 @@ index 0000000..1bb7a72
 +    for (frame_idx, channel, data) in &score.channel_initialization_data {
 +        if *frame_idx + 1 == frame && (lo as u16..=hi as u16).contains(channel) {
 +            println!(
-+                "frame {} ch {}: member {}/{} pos {},{} size {}x{} type {}",
-+                frame, channel, data.cast_lib, data.cast_member, data.pos_x, data.pos_y, data.width, data.height, data.sprite_type
++                "frame {} ch {}: member {}/{} pos {},{} size {}x{} type {} ink {} blend {} trails {} stretch {} color_flag {}",
++                frame, channel, data.cast_lib, data.cast_member, data.pos_x, data.pos_y, data.width, data.height, data.sprite_type,
++                data.ink, data.blend, data.trails, data.stretch, data.color_flag
 +            );
++        }
++    }
++}
++
++// Dump each Shockwave 3D member's raw 3DPR info block and how it parses.
++//   RR_DCR=/path/movie.dcr cargo test --test rr_score dump_w3d_info -- --nocapture
++#[test]
++fn dump_w3d_info() {
++    let Ok(path) = std::env::var("RR_DCR") else { return };
++    let bytes = std::fs::read(&path).expect("read movie");
++    let file = read_director_file_bytes(&bytes, "movie.dcr", "http://local/").expect("parse movie");
++    for cast in &file.casts {
++        let mut nums: Vec<_> = cast.members.keys().copied().collect();
++        nums.sort();
++        for num in nums {
++            let raw = &cast.members[&num].chunk.specific_data_raw;
++            if !raw.windows(4).any(|w| w == b"3DPR") {
++                continue;
++            }
++            let hex: Vec<String> = raw.iter().take(128).map(|b| format!("{:02x}", b)).collect();
++            println!("cast {} member {} len {}", cast.id, num, raw.len());
++            for row in hex.chunks(16) {
++                println!("  {}", row.join(" "));
++            }
++            println!("  parsed: {:?}", vm_rust::director::enums::Shockwave3dInfo::from(raw));
++        }
++    }
++}
++
++// Decode one bitmap member and summarise its alpha channel.
++//   RR_DCR=/path/movie.dcr RR_MEMBER=140 cargo test --test rr_score dump_bitmap_alpha -- --nocapture
++#[test]
++fn dump_bitmap_alpha() {
++    use vm_rust::director::chunks::cast_member::CastMemberSpecificData;
++    let (Ok(path), Ok(member)) = (std::env::var("RR_DCR"), std::env::var("RR_MEMBER")) else { return };
++    let member: u32 = member.parse().unwrap();
++    let bytes = std::fs::read(&path).expect("read movie");
++    let file = read_director_file_bytes(&bytes, "movie.dcr", "http://local/").expect("parse movie");
++    for cast in &file.casts {
++        let Some(def) = cast.members.get(&member) else { continue };
++        let CastMemberSpecificData::Bitmap(info) = &def.chunk.specific_data else { continue };
++        println!("cast {} member {}: {}x{} depth {} use_alpha {}", cast.id, member, info.width, info.height, info.bit_depth, info.use_alpha);
++        for (i, c) in def.children.iter().enumerate() {
++            let kind = match c {
++                Some(vm_rust::director::chunks::Chunk::Bitmap(b)) => format!("BITD {} bytes v{} head {:02x?}", b.data.len(), b.version, &b.data[..b.data.len().min(8)]),
++                Some(vm_rust::director::chunks::Chunk::Raw(d)) => format!("raw {} bytes", d.len()),
++                Some(_) => "other".into(),
++                None => "none".into(),
++            };
++            println!("  child {}: {}", i, kind);
++        }
++        let Some(bitd) = def.children.iter().find_map(|c| c.as_ref().and_then(|c| c.as_bitmap())) else { continue };
++        if let Ok(out) = std::env::var("RR_BITD_OUT") {
++            std::fs::write(&out, &bitd.data).expect("write BITD");
++        }
++        let bmp = vm_rust::player::bitmap::bitmap::decompress_bitmap(&bitd.data, info, 1, bitd.version).expect("decode");
++        println!("  decoded {}x{} bit_depth {} data {} bytes", bmp.width, bmp.height, bmp.bit_depth, bmp.data.len());
++        if bmp.bit_depth == 32 {
++            let mut hist = [0usize; 4];
++            for px in bmp.data.chunks(4) {
++                let a = px[3];
++                hist[if a == 0 { 0 } else if a < 128 { 1 } else if a < 255 { 2 } else { 3 }] += 1;
++            }
++            println!("  byte3 histogram 0/<128/<255/255: {:?}", hist);
++            let mut hist0 = [0usize; 4];
++            for px in bmp.data.chunks(4) {
++                let a = px[0];
++                hist0[if a == 0 { 0 } else if a < 128 { 1 } else if a < 255 { 2 } else { 3 }] += 1;
++            }
++            println!("  byte0 histogram 0/<128/<255/255: {:?}", hist0);
++            let w = bmp.width as usize;
++            let at = |x: usize, y: usize| &bmp.data[(y * w + x) * 4..(y * w + x) * 4 + 4];
++            println!("  px(5,5)={:?} px(200,300)={:?}", at(5, 5), at(200, 300));
 +        }
 +    }
 +}

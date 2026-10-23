@@ -42,9 +42,31 @@ Form POSTs with an `action` field; replies are Lingo property-list literals pars
 
 ## Lobby (IRC)
 
-The client speaks raw IRC through the Multiuser Xtra in `#text` mode. It reads its own
-address from the last `@host` of the `001` reply, the online count from `265`, and shows
-the lobby after `376`. Challenges and P2P negotiation travel as `PRIVMSG`s between players.
+The client speaks raw IRC through the Multiuser Xtra in `#text` mode (`connectToNetServer`
+form B, `ircip1`/`ircports` from `main.ini`). Lines it sends end in LF CR.
+
+- Registration: `PASS `, `NICK _R<rank><name><ipcode>`, `USER Shockplay 0 * <name>`.
+  `<ipcode>` is the last four characters of every nick and drives everything below.
+- It reads its own address from the last `@host` of `001` (unused afterwards), the online
+  count from word 7 of `265` (also sent after `LUSERS`), and shows the lobby after `376`.
+- Rooms are `#rw<n><room>` (`#rw1e`, `#rw11`...). The room list is polled with
+  `LIST #r*` (a mask) and read from `322` (word 4 minus `#`, word 5 count) up to `323`.
+  `353` users start at word 6, the room at word 5. `JOIN`/`PART`/`QUIT` update the list.
+- Everything between players is `PRIVMSG <nick> :<type> <subject> <payload>`:
+  `SMUS_SendIP` (asks for address and robot id), `SMUS_GetIP 0 <ip>_<hex robot id>`,
+  `Challenge 0 [#id:, #server:, #ip:, #rank:]`, `SMUS_AcceptChallenge`,
+  `SMUS_DeclineChallenge`, `SMUS_AddChallenge_Busy`, `SMUS_ConnectToMe`,
+  `SMUS_ReverseP2P`, `SMUS_AbortP2P`. Chat-style room messages (`G`) are not sent.
+- The address the game shares is `getMyIP()`, built from `getNetAddressCookie()`, which
+  the emulator answers with "" (so the game's IP is `0`). The server substitutes the
+  sender's relay address in `SMUS_GetIP` and `Challenge`.
+- `<ipcode>` is `0000` when a cookie looks public, else a checksum of `sw1` ("behind a
+  router"). The lobby only lists players with the same ipcode (or `0000`), and when both
+  are `0000` neither side becomes host. So every tab gets the same `sw1`: everyone is
+  "behind one router", sees everyone, and the challenged player hosts.
+- The emulator never closes the socket of a dropped Multiuser instance, so after a match
+  the old IRC connection still holds the nick. A new registration from the same tab
+  address takes the nick over.
 
 ## Matches (port 1626)
 
@@ -53,6 +75,25 @@ connected straight to their IP. Here both sides open WebSockets to `server/relay
 the patched emulator turns `waitForNetConnection` into a "listen" socket keyed by the
 tab's address, and `connectToNetServer(ip, 1626)` into a "connect" socket. The relay
 reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
+
+- Every player listens from lobby entry on (`userID` = robot name). Clicking a robot
+  connects to it and pings (`P2P_Ping`/`P2P_Pong` x4, `P2P_Ping_Exit`, then the host
+  `breakConnection`s). A challenge connects again and sends `P2P_Connected`; the host
+  answers `P2P_ConnectedOK`, then both load the arena. The host posts `setrwgames`.
+- If the client cannot connect within 5 s the roles swap once (`SMUS_ReverseP2P`).
+- Arena messages use `sendNetMessage([#recipients:, #subject:, #content:, #udp: 0])`,
+  addressed to the opponent's robot name; the host sends chat to
+  `getPeerConnectionList()`. Start sync: the host repeats `ready`, the client answers
+  `ready ok`. Lag is estimated from message time stamps, so the relay stamps them.
+- Any message with a non-zero `errorCode` during a round makes the arena `PING`
+  `main.asp`; if that works the player wins by walkover. So does 20 s of silence.
+- Only the winner reports `setrobotscore` (`user1id` = own robot, `user2id` = opponent,
+  `winner`), and only for ranked games; a tie is reported by the host with winner 0.
+  The abuse button posts `reportabuse` to `abuse.asp`.
+- `main.ini` has no `fallbackip`: the fan lobby wrapper would otherwise log on to a fan
+  relay server first, using scripts it compiles at runtime.
+
+`scripts/test-multiplayer.mjs` (`npm test`) plays this through with two simulated clients.
 
 ## dirplayer patches (`patches/dirplayer.patch`)
 
@@ -79,7 +120,23 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   stepped the playhead five frames on, past the workshop into "load backyard".
 - Setting a property on a list of 3D objects (`model.shaderList.blend = 50`) sets it on
   each object.
-- directToStage 3D sprites always draw above the 2D sprites. The arena keeps a full-stage
-  frame bitmap (copy ink) in a channel above its 3D sprite, which hid the 3D view.
+- 3D sprites always draw above the 2D sprites and take clicks first, whatever the
+  member's directToStage flag. The arena keeps a full-stage frame bitmap (copy ink) above
+  its 3D sprite. The garage preview member has directToStage off, yet a `locz` behavior
+  raises an opaque frame bitmap (`preview2`) over it, and the robot still has to show and
+  be draggable through the window.
+- `beginSprite` reaches the frame script exactly once per span, after the sprite
+  behaviors, and never falls through to the frame/movie scripts. A behavior without a
+  `beginSprite` handler used to pass the event on to the frame script, so the arena's frame
+  script built and scaled the robot once per such sprite (scale 8 instead of 2, which put
+  the follow camera inside the chassis).
+- The frame script has one instance: begin_sprites adopts channel 0's instance instead of
+  creating a second. With two, `prepareFrame` went to one and `sendAllSprites` to the
+  other, so the garage frame script stuck in `#update` and ignored "Use this part".
+- The 3D fragment shader uses highp floats. With mediump (fp16 on some GPUs),
+  `normalize(camera - position)` overflowed in the arena, which spans thousands of units,
+  and all lighting came out black.
 - `length(vector)` / `vector.length()` as a method, not just a property.
-- `tests/rr_score.rs`: native diagnostic that prints how a movie's score is decoded.
+- `tests/rr_score.rs`: native diagnostics: how a movie's score is decoded (`dump_score`),
+  each 3D member's raw info block (`dump_w3d_info`), and a bitmap's alpha
+  (`dump_bitmap_alpha`, `RR_MEMBER=n`).
