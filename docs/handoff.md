@@ -38,11 +38,10 @@ is an agreed scenario matrix with tolerances, not "every feature checked once".
 ## Plan
 
 1. Done: controls, upstream rebase, pinned build (`docs/upstream.md`, `docs/game-build.md`).
-2. Inventory: every Director feature the game's Lingo uses (`tools/lingo-inventory.py`
-   over the decompile), each classified works / wrong / unclear against dirplayer's code,
-   Director's documentation, ScummVM's Director engine (2D cross-check) and Adobe's code.
-   Committed as `docs/inventory.md`; its counts answer "how many issues are left?".
-3. Invisible walls first. The arena does collision in a hidden 2D map: the robot is a
+2. Done: inventory (`docs/inventory.md`, regenerate with `tools/inventory-report.py`).
+   410 Director features: 300 match the docs on code reading, 66 wrong (8 high impact),
+   42 unclear (9 high), 44 open items need Adobe's code. Update it as items are fixed.
+3. Done: invisible walls (`docs/collision.md`), awaiting the maintainer's drive. The arena does collision in a hidden 2D map: the robot is a
    rotated off-stage sprite, the walls are sprites, and the robot behavior tests
    `sprite sp intersects N`. dirplayer's `intersects`
    (`vm-rust/src/player/bytecode/sprite_compare.rs`) compares bounding rects and samples
