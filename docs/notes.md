@@ -79,4 +79,7 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   stepped the playhead five frames on, past the workshop into "load backyard".
 - Setting a property on a list of 3D objects (`model.shaderList.blend = 50`) sets it on
   each object.
+- directToStage 3D sprites always draw above the 2D sprites. The arena keeps a full-stage
+  frame bitmap (copy ink) in a channel above its 3D sprite, which hid the 3D view.
+- `length(vector)` / `vector.length()` as a method, not just a property.
 - `tests/rr_score.rs`: native diagnostic that prints how a movie's score is decoded.

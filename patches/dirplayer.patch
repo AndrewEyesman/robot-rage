@@ -200,6 +200,21 @@ index 112ca86..635f68e 100644
          let timeout = player.timeout_manager.get_timeout_mut(&timeout_name);
          match prop.into_builtin() {
              Some(BuiltInSymbol::Target) => {
+diff --git a/vm-rust/src/player/handlers/datum_handlers/vector.rs b/vm-rust/src/player/handlers/datum_handlers/vector.rs
+index 2135311..6b58d5e 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/vector.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/vector.rs
+@@ -46,6 +46,10 @@ impl VectorDatumHandlers {
+                 let dz = a[2] - b[2];
+                 Ok(player.alloc_datum(Datum::Float((dx*dx + dy*dy + dz*dz).sqrt())))
+             }),
++            Some(BuiltInSymbol::Magnitude | BuiltInSymbol::Length) => reserve_player_mut(|player| {
++                let [x, y, z] = Self::datum_to_vec(player, player.get_datum(datum))?;
++                Ok(player.alloc_datum(Datum::Float((x*x + y*y + z*z).sqrt())))
++            }),
+             Some(BuiltInSymbol::GetNormalized) => reserve_player_mut(|player| {
+                 let [x, y, z] = Self::datum_to_vec(player, player.get_datum(datum))?;
+                 let len = (x*x + y*y + z*z).sqrt();
 diff --git a/vm-rust/src/player/handlers/manager.rs b/vm-rust/src/player/handlers/manager.rs
 index 8bcc917..609827e 100644
 --- a/vm-rust/src/player/handlers/manager.rs
@@ -1249,6 +1264,26 @@ index 9bc0ebe..ef055fe 100644
              }
              _ => Err(ScriptError::new(format!(
                  "No handler {} found for Multiuser xtra instance #{}",
+diff --git a/vm-rust/src/rendering_gpu/webgl2/mod.rs b/vm-rust/src/rendering_gpu/webgl2/mod.rs
+index dffbb65..d1881d2 100644
+--- a/vm-rust/src/rendering_gpu/webgl2/mod.rs
++++ b/vm-rust/src/rendering_gpu/webgl2/mod.rs
+@@ -865,10 +865,13 @@ impl WebGL2Renderer {
+         // HUD into the stage image, freezing the maze view). Defer such sprites
+         // until after the overlay so the live 3D shows through; the HUD (drawn
+         // into a non-overlapping region) still composites underneath.
+-        let overlay_active = player.stage_image_dirty && player.stage_image.is_some();
++        //
++        // They are deferred even without that overlay: directToStage 3D draws over
++        // every 2D sprite whatever its channel. Robot Rage's arena puts a full-stage
++        // frame bitmap (copy ink) in a channel above the 3D sprite.
+         let mut deferred_dts_3d: Vec<i16> = Vec::new();
+         for (channel_num, _) in &sorted_channels {
+-            if overlay_active && self.is_direct_to_stage_3d(player, *channel_num) {
++            if self.is_direct_to_stage_3d(player, *channel_num) {
+                 deferred_dts_3d.push(*channel_num);
+                 continue;
+             }
 diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
 new file mode 100644
 index 0000000..1bb7a72
