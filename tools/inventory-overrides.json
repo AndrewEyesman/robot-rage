@@ -154,5 +154,17 @@
   "needs_adobe": true,
   "evidence": "Fixed 2026-10-23: float coordinates are accepted (truncated) and reversed rects are normalised, so the pen tool's dots (x - linewidth/2.0) and the mirrored eraser work. Tested by tools/paint-tests.js and in the Paintshop. Rounding vs truncation of floats is still unconfirmed against Adobe.",
   "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs (fill)"
+ },
+ "machinery:machinery:text-line-placement": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": true,
+  "uses": 1,
+  "movies": [
+   "factory0604.dcr"
+  ],
+  "game_usage": "Buy parts category dropdown and part lists: Verdana 10 text members with fixedLineSpace 15, with per-row click boxes and the dropdown header placed around the text.",
+  "evidence": "Fixed 2026-10-23: system-font text drew each glyph at the top of its line, so with fixedLineSpace 15 the Buy parts lists sat 6px high: the first item hid under the dropdown header and the selection box straddled two items. Lines taller than their glyphs now put the extra space above the text (baseline one font descent above the line's bottom); the game's header and click boxes then centre on the text exactly. Tested by tools/buy-list-shot.js + tools/buy-list-check.py (fails before, passes after); robot list unchanged pixel for pixel. Not yet confirmed in Adobe's TextXtra code.",
+  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/cast_member/font.rs (render_native_text_to_bitmap_with_caret)"
  }
 }

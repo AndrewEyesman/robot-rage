@@ -13,13 +13,13 @@ code reading can tell", not "proven against Adobe's player". Items marked
 
 ## Counts
 
-412 Director features (114 call, 20 event, 16 machinery, 78 method, 5 operator, 133 prop, 46 the).
+413 Director features (114 call, 20 event, 17 machinery, 78 method, 5 operator, 133 prop, 46 the).
 
 | verdict | high | medium | low | total |
 | --- | ---: | ---: | ---: | ---: |
 | wrong | 1 | 7 | 44 | 52 |
 | unclear | 8 | 14 | 19 | 41 |
-| fixed | 11 | 7 | 1 | 19 |
+| fixed | 12 | 7 | 1 | 20 |
 | works | 66 | 82 | 152 | 300 |
 
 Impact is impact on play: high blocks or visibly breaks single-player (driving,
@@ -130,7 +130,7 @@ Adobe's code to settle.
 | low | `stopMovie` | event | Sent on movie switch and when playback stops: timeouts are cleared, then stopMovie (broadcast to globals' instances first, see prepareMovie), then endSprite for all sprites. The documented stop order lists endSprite before stopMovie, so the order may be reversed. Nothing in the game depends on the order. Clearing every timeout, including persistent ones, may also differ from Director, but the game only uses timeou... **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/mod.rs:5720-5755 |
 | low | `urlEncode` | call | Escapes ASCII punctuation (space -> %20) and passes non-ASCII through unescaped. Director's exact output (space as + or %20, cp1252 escaping of accented letters) is not documented. **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:180-258 |
 
-## Fixed (19)
+## Fixed (20)
 
 | impact | feature | kind | what's wrong / open | where |
 | --- | --- | --- | --- | --- |
@@ -141,6 +141,7 @@ Adobe's code to settle.
 | high | `keypressed` | call | Fixed 2026-10-23: a plain call no longer reaches a sprite behavior's handler of the same name (the robot behavior has its own keyPressed), and punctuation maps to Mac key codes. Verified by driving. | player/mod.rs (player_call_global_handler), player/keyboard_map.rs |
 | high | `machinery:mouse-hit-test` | machinery | Fixed 2026-10-23. Clicks go to the highest CHANNEL under the point (locZ changes drawing only), and 32-bit alpha bitmaps honour their authored alphaThreshold (byte 10 of the D7+ bitmap header, as ScummVM reads it). Inferred from the garage: four tab-bar headers are raised over the Paintshop/Buy/Sell hotspots by locZ, each opaque over its own tab with alphaThreshold 1, and the tabs work in Director. Verified: all f... **needs Adobe** | player/score.rs (get_sprite_at, alpha_threshold_hit_test), director/enums.rs |
 | high | `machinery:tempo-timing` | machinery | Fixed 2026-10-23. The busy-wait pacing in checkTempo reads (the systemDate).seconds, now seconds since midnight. | player/handlers/datum_handlers/date.rs |
+| high | `machinery:text-line-placement` | machinery | Fixed 2026-10-23: system-font text drew each glyph at the top of its line, so with fixedLineSpace 15 the Buy parts lists sat 6px high: the first item hid under the dropdown header and the selection box straddled two items. Lines taller than their glyphs now put the extra space above the text (baseline one font descent above the line's bottom); the game's header and click boxes then centre on the text exactly. Test... **needs Adobe** | vm-rust/src/player/handlers/datum_handlers/cast_member/font.rs (render_native_text_to_b... |
 | high | `rgb` | call | Fixed 2026-10-23. rgb("0xRRGGBB") parses as hex like "#RRGGBB"; the garage's 'grey' preview shader and paint fills were teal. Verified: the garage robot renders grey. | player/handlers/types.rs, player/sprite.rs (ColorRef::from_hex) |
 | high | `scriptInstanceList` | prop | Fixed 2026-10-23. Non-instance entries are ignored instead of raising; the garage assigns [new(...), 31] to its weapon popups and runs on in Director. | player/score.rs |
 | high | `setPixel` | method | Fixed 2026-10-23. An integer on an indexed image is written as the palette index (the dictionary's raw pixel value), not matched as a grey. The robot paint maps are decoded this way. | player/handlers/datum_handlers/bitmap.rs |

@@ -172,6 +172,8 @@ see `docs/upstream.md` for why.
 - Image `draw()` / `fill()` take float coordinates (truncated) and normalise reversed
   corners; an unknown `#shapeType` (the Paintshop pen passes `#pen`) draws a `#line`, and
   `#rect` honours `#lineSize` (Paintshop tools).
+- System-font text on lines taller than its glyphs (fixedLineSpace) puts the extra space
+  above the text, baseline one descent above the line's bottom (Buy parts lists).
 - `rr_intersect_sweep(...)` (debug export) sweeps a sprite over a grid and reports
   `intersects` results, for the collision checks in `tools/`.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back
