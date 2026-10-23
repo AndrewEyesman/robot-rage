@@ -36,3 +36,29 @@ the real player is the reference it is compared against.
 - The robot name in the list is yellow in the real player, white in dirplayer.
 - Verdana text: a Chrome without Verdana falls back to a serif font; the real
   game (on any Windows) used Verdana. Line breaks and bold runs differ as a result.
+
+## Paired tour
+
+    tools/reference/ref-start.sh 8091
+    node tools/reference/tour.mjs /tmp/rrwork/tour/<run> 8091     # both players, same steps
+    tools/reference/tour-report.py /tmp/rrwork/tour/<run>         # index.html: reference | dirplayer | diff
+
+dirplayer runs in Chrome with the GPU at device scale 1.25 (a common display scaling).
+The arena checkpoints aren't synchronised yet: the reference loads the arena more slowly,
+so its drive/turn steps start later.
+
+## Backlog from the first tour (2026-10-23), most visible first
+
+1. Arena: the player's car top is see-through (solid and lit in the reference).
+2. Text at device scale 1.25: Verdana lists with fixedLineSpace 15 step 12px (Buy lists,
+   category dropdown). Correct at scale 1.
+3. Verdana is missing in Chrome on Linux; the fallback is a serif font.
+4. Text colour: robot name yellow in the robot list and green in the arena (reference),
+   white in dirplayer.
+5. Tab stops ignored: Stats ("Won/Lost/Ties" values column) and Highscore rows.
+6. Ink 6 robot-list highlight: the reference shows a lighter olive row, not navy.
+7. Garage preview robot: different view and wheel placement.
+8. Buy parts: the part's 3D wireframe preview is blank.
+9. The "- Zoom +" bar under the workshop/paintshop preview is missing.
+10. Smaller: Ranking dash missing, Impact tab labels 1-3px low, battery cap blue, stray
+    "SE" text at the login screen's bottom left.
