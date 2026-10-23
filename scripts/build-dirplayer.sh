@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 
 UPSTREAM=https://github.com/igorlira/dirplayer-rs.git
-COMMIT=68376fbb4494a6bbad4c70081ecdcb99814a74c9
+COMMIT=b9b9466628721d810a0bd5fde8e3228ab04b73ed  # head of upstream PR #244 (branch cham/w3d-fullscreen)
 RELEASE=v0.8.1   # prebuilt Xtras + Ruffle shipped next to the polyfill
 SRC=vendor/dirplayer-rs
 IMAGE=robotrage-dirplayer-builder

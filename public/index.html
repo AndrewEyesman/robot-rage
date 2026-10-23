@@ -57,7 +57,26 @@
   embed.setAttribute("type", "application/x-director");
   embed.setAttribute("sw1", SHARED_EXTERNAL_IP);
   document.getElementById("stage").append(embed);
+
+  // The player takes keys only while its stage element has focus. If focus has
+  // fallen back to the page (nothing focused), give it back to the stage and
+  // hand it the key, so driving never needs an extra click.
+  for (const type of ["keydown", "keyup"]) {
+    window.addEventListener(type, (e) => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const stage = document.querySelector("#stage [tabindex]");
+      if (!stage) return;
+      stage.focus();
+      const copy = new KeyboardEvent(type, e);
+      Object.defineProperty(copy, "keyCode", { value: e.keyCode });
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      stage.dispatchEvent(copy);
+    }, true);
+  }
 </script>
-<script src="dirplayer/dirplayer-polyfill.js"></script>
+<!-- No fullscreen button over the stage: the game never had one. -->
+<script src="dirplayer/dirplayer-polyfill.js" data-disable-fullscreen-button></script>
 </body>
 </html>

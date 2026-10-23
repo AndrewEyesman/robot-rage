@@ -97,6 +97,9 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
 
 ## dirplayer patches (`patches/dirplayer.patch`)
 
+The patch applies to upstream PR #244 (`cham/w3d-fullscreen`, b9b94666), not to `main`;
+see `docs/upstream.md` for why.
+
 - `new(timeout(), name, ...)` (Director 10 function form) and `timeout.persistent`.
 - `clearCache()` / `cacheSize()` as no-ops.
 - Multiuser: `#text` / `#smus` mode given as a symbol; `waitForNetConnection` via
@@ -106,7 +109,6 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   range is plausible (behavior initializer strings can have the same length).
 - Movie switches reset every sprite channel, not just puppets.
 - `sendSprite(0, ...)` reaches the frame script.
-- Chunk edits (`delete char ... of member`) work on text members, not just fields.
 - `the selStart` / `the selEnd` read the focused field's live selection (clicks and the
   built-in editor move it), and setting them moves the caret. The login fields use a
   behavior that does its own editing based on these.
@@ -121,7 +123,8 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
 - Setting a property on a list of 3D objects (`model.shaderList.blend = 50`) sets it on
   each object.
 - 3D sprites always draw above the 2D sprites and take clicks first, whatever the
-  member's directToStage flag. The arena keeps a full-stage frame bitmap (copy ink) above
+  member's directToStage flag (PR #244 already defers directToStage 3D; the patch extends
+  it to every 3D sprite). The arena keeps a full-stage frame bitmap (copy ink) above
   its 3D sprite. The garage preview member has directToStage off, yet a `locz` behavior
   raises an opaque frame bitmap (`preview2`) over it, and the robot still has to show and
   be draggable through the window.
@@ -141,6 +144,8 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   builtin has that name (Director only searches movie scripts, then builtins). The arena's
   robot behavior has its own `on keyPressed me, map, tdelay`, so the frame script's
   `keyPressed(123)` got VOID and the robot never drove.
+- Text renders through the "auto" glyph path by default, not PR #244's new "hinted" path,
+  which fills the counters of the 14px "Impact *" button labels.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back
   to code 0, the `a` key.
 - `tests/rr_score.rs`: native diagnostics: how a movie's score is decoded (`dump_score`),

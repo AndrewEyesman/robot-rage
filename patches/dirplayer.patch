@@ -1,8 +1,8 @@
 diff --git a/vm-rust/src/director/chunks/score.rs b/vm-rust/src/director/chunks/score.rs
-index 6d1186d..3bf677e 100644
+index 3048ea00..44f377d2 100644
 --- a/vm-rust/src/director/chunks/score.rs
 +++ b/vm-rust/src/director/chunks/score.rs
-@@ -1458,7 +1458,7 @@ impl ScoreChunk {
+@@ -1463,7 +1463,7 @@ impl ScoreChunk {
              // keyframe indices.
              let looks_like_span = entries
                  .get(idx)
@@ -11,7 +11,7 @@ index 6d1186d..3bf677e 100644
              let name = if looks_like_span {
                  entries
                      .get(idx + 2)
-@@ -1833,6 +1833,18 @@ impl ScoreChunk {
+@@ -1838,6 +1838,18 @@ impl ScoreChunk {
      }
  
      /// Analyze score entries beyond Entry[0] for behavior attachment data
@@ -30,7 +30,7 @@ index 6d1186d..3bf677e 100644
      fn analyze_behavior_attachment_entries(
          entries: &Vec<Vec<u8>>,
          _dir_version: u16,
-@@ -1885,7 +1897,7 @@ impl ScoreChunk {
+@@ -1890,7 +1902,7 @@ impl ScoreChunk {
              // — which reliably rejects the behavior/initializer chunks (their
              // first u32s are cast ids or ASCII, far outside these ranges).
              let n = entry_bytes.len();
@@ -40,7 +40,7 @@ index 6d1186d..3bf677e 100644
                      let b = entry_bytes;
                      let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
 diff --git a/vm-rust/src/player/events.rs b/vm-rust/src/player/events.rs
-index 5acf223..b7ec0bf 100644
+index 184a4962..799437b5 100644
 --- a/vm-rust/src/player/events.rs
 +++ b/vm-rust/src/player/events.rs
 @@ -373,7 +373,7 @@ async fn player_invoke_frame_and_movie_scripts_inner(
@@ -52,7 +52,7 @@ index 5acf223..b7ec0bf 100644
          let result = player_call_script_handler(
              receiver,  // Changed from None to receiver
              (script_member_ref.clone(), Symbol::from_str(handler_name)),
-@@ -1600,28 +1600,46 @@ pub async fn player_dispatch_event_beginsprite(
+@@ -1779,28 +1779,46 @@ pub async fn player_dispatch_event_beginsprite(
              (sprite_instances, frame_instances, all_channels)
          });
      
@@ -109,7 +109,7 @@ index 5acf223..b7ec0bf 100644
              if err.code == ScriptErrorCode::Abort {
                  reserve_player_mut(|player| {
                      player.current_score_context = ScoreRef::Stage;
-@@ -1637,6 +1655,28 @@ pub async fn player_dispatch_event_beginsprite(
+@@ -1816,6 +1834,28 @@ pub async fn player_dispatch_event_beginsprite(
          }
      }
  
@@ -138,7 +138,7 @@ index 5acf223..b7ec0bf 100644
      // Reset the score context to Stage after each invocation
      reserve_player_mut(|player| {
          player.current_score_context = ScoreRef::Stage;
-@@ -1891,7 +1931,17 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -2070,7 +2110,17 @@ pub async fn dispatch_event_to_all_behaviors(
      // Dispatch to sprite behaviors first (channel order)
      // Set the score context before invoking each event so sprite property access works correctly
      let mount_gen = reserve_player_ref(|player| player.movie_mount_generation);
@@ -156,7 +156,7 @@ index 5acf223..b7ec0bf 100644
          // An eager go(frame, movie) swapped the movie under this dispatch
          // (the Miniclip wrapper does exactly this from an exitFrame behavior).
          // The remaining receivers belong to the OLD movie — their script refs
-@@ -1909,6 +1959,9 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -2088,6 +2138,9 @@ pub async fn dispatch_event_to_all_behaviors(
          });
  
          for behavior in behaviors {
@@ -166,7 +166,7 @@ index 5acf223..b7ec0bf 100644
              // Same mid-dispatch movie-swap stop, for sibling behaviors on the
              // sprite whose earlier behavior called go(frame, movie).
              if reserve_player_ref(|player| player.movie_mount_generation) != mount_gen {
-@@ -1959,7 +2012,7 @@ pub async fn dispatch_event_to_all_behaviors(
+@@ -2138,7 +2191,7 @@ pub async fn dispatch_event_to_all_behaviors(
          // order, after the behaviors and before the frame/movie scripts below.
          // (Skipped if a behavior above swapped the movie via eager go().)
          let swapped = reserve_player_ref(|player| player.movie_mount_generation) != mount_gen;
@@ -175,72 +175,24 @@ index 5acf223..b7ec0bf 100644
              reserve_player_mut(|player| {
                  player.member_script_sprite_num = sprite_number as i16;
              });
-diff --git a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs b/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
-index f7f81be..de61047 100644
---- a/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
-+++ b/vm-rust/src/player/handlers/datum_handlers/string_chunk.rs
-@@ -43,6 +43,23 @@ pub(crate) fn char_range_to_byte_range(s: &str, char_start: usize, char_end: usi
+diff --git a/vm-rust/src/player/font/mod.rs b/vm-rust/src/player/font/mod.rs
+index a6ac50b8..471fc7db 100644
+--- a/vm-rust/src/player/font/mod.rs
++++ b/vm-rust/src/player/font/mod.rs
+@@ -41,7 +41,10 @@ pub enum GlyphPreference {
  }
  
- impl StringChunkUtils {
-+    /// Text of the field or text member a chunk expression edits, e.g.
-+    /// `delete char 1 of member("password_box")` on a #text member.
-+    fn member_text(player: &DirPlayer, member_ref: &CastMemberRef) -> Result<String, ScriptError> {
-+        let member = player
-+            .movie
-+            .cast_manager
-+            .find_member_by_ref(member_ref)
-+            .ok_or_else(|| ScriptError::new("Chunk source member not found".to_string()))?;
-+        if let Some(field) = member.member_type.as_field() {
-+            return Ok(field.text.clone());
-+        }
-+        if let Some(text) = member.member_type.as_text() {
-+            return Ok(text.text.clone());
-+        }
-+        Err(ScriptError::new("Chunk source member is not a field or text member".to_string()))
-+    }
-+
-     pub fn delete(
-         player: &mut DirPlayer,
-         original_str_src: &StringChunkSource,
-@@ -53,16 +70,7 @@ impl StringChunkUtils {
-                 StringChunkSource::Datum(original_str_ref) => {
-                     player.get_datum(original_str_ref).string_value()?
-                 }
--                StringChunkSource::Member(member_ref) => player
--                    .movie
--                    .cast_manager
--                    .find_member_by_ref(&member_ref)
--                    .unwrap()
--                    .member_type
--                    .as_field()
--                    .unwrap()
--                    .text
--                    .clone(),
-+                StringChunkSource::Member(member_ref) => Self::member_text(player, member_ref)?,
-             };
-             Self::string_by_deleting_chunk(&original_str, &chunk_expr)
-         }?;
-@@ -81,16 +89,7 @@ impl StringChunkUtils {
-                 StringChunkSource::Datum(original_str_ref) => {
-                     player.get_datum(original_str_ref).string_value()?
-                 }
--                StringChunkSource::Member(member_ref) => player
--                    .movie
--                    .cast_manager
--                    .find_member_by_ref(&member_ref)
--                    .unwrap()
--                    .member_type
--                    .as_field()
--                    .unwrap()
--                    .text
--                    .clone(),
-+                StringChunkSource::Member(member_ref) => Self::member_text(player, member_ref)?,
-             };
-             Self::string_by_putting_into_chunk(&original_str, &chunk_expr, &new_string)
-         }?;
+ thread_local! {
+-    static GLYPH_PREFERENCE: Cell<GlyphPreference> = Cell::new(GlyphPreference::Hinted);
++    // Auto, not Hinted: the hinted path fills the counters of Robot Rage's
++    // 14px "Impact *" PFR button labels (A, R, N, H turn into blocks), while
++    // Auto matches the real player's open glyphs.
++    static GLYPH_PREFERENCE: Cell<GlyphPreference> = Cell::new(GlyphPreference::Auto);
+ }
+ 
+ pub fn get_glyph_preference() -> GlyphPreference {
 diff --git a/vm-rust/src/player/handlers/datum_handlers/timeout.rs b/vm-rust/src/player/handlers/datum_handlers/timeout.rs
-index 112ca86..635f68e 100644
+index 112ca86d..635f68eb 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/timeout.rs
 +++ b/vm-rust/src/player/handlers/datum_handlers/timeout.rs
 @@ -213,6 +213,7 @@ impl TimeoutDatumHandlers {
@@ -296,7 +248,7 @@ index 112ca86..635f68e 100644
          match prop.into_builtin() {
              Some(BuiltInSymbol::Target) => {
 diff --git a/vm-rust/src/player/handlers/datum_handlers/vector.rs b/vm-rust/src/player/handlers/datum_handlers/vector.rs
-index 2135311..6b58d5e 100644
+index 756a2494..1fd07e29 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/vector.rs
 +++ b/vm-rust/src/player/handlers/datum_handlers/vector.rs
 @@ -46,6 +46,10 @@ impl VectorDatumHandlers {
@@ -311,10 +263,10 @@ index 2135311..6b58d5e 100644
                  let [x, y, z] = Self::datum_to_vec(player, player.get_datum(datum))?;
                  let len = (x*x + y*y + z*z).sqrt();
 diff --git a/vm-rust/src/player/handlers/manager.rs b/vm-rust/src/player/handlers/manager.rs
-index 8bcc917..609827e 100644
+index a4d15155..2619c79d 100644
 --- a/vm-rust/src/player/handlers/manager.rs
 +++ b/vm-rust/src/player/handlers/manager.rs
-@@ -2519,6 +2519,15 @@ impl BuiltInHandlerManager {
+@@ -2730,6 +2730,15 @@ impl BuiltInHandlerManager {
                          return res;
                      }
                  }
@@ -331,7 +283,7 @@ index 8bcc917..609827e 100644
                  if let Some(res) =
                      crate::player::xtra::manager::try_call_xtra_static_handler(name.into(), args)
 diff --git a/vm-rust/src/player/handlers/movie.rs b/vm-rust/src/player/handlers/movie.rs
-index f5f820c..d31efb9 100644
+index 10722341..aba14990 100644
 --- a/vm-rust/src/player/handlers/movie.rs
 +++ b/vm-rust/src/player/handlers/movie.rs
 @@ -3,7 +3,7 @@ use crate::{
@@ -381,7 +333,7 @@ index f5f820c..d31efb9 100644
                      ).await;
                  }
  
-@@ -758,6 +765,13 @@ impl MovieHandlers {
+@@ -761,6 +768,13 @@ impl MovieHandlers {
              let message = player.get_datum(&args[1]).symbol_value()
                  .map_err(|e| ScriptError::new(format!("sendSprite: invalid message: {:?}", e)))?;
              let remaining_args = &args[2..].to_vec();
@@ -396,10 +348,10 @@ index f5f820c..d31efb9 100644
                  .ok_or_else(|| ScriptError::new(format!("sendSprite: sprite {} not found", sprite_num)))?;
              let fallback = sprite.script_instance_list.clone();
 diff --git a/vm-rust/src/player/handlers/types.rs b/vm-rust/src/player/handlers/types.rs
-index ad5a8a0..fc8e82e 100644
+index c3ecce13..d08a30d8 100644
 --- a/vm-rust/src/player/handlers/types.rs
 +++ b/vm-rust/src/player/handlers/types.rs
-@@ -1007,6 +1007,13 @@ impl TypeHandlers {
+@@ -1120,6 +1120,13 @@ impl TypeHandlers {
                          .await?,
                  )
              }
@@ -414,7 +366,7 @@ index ad5a8a0..fc8e82e 100644
                  let xtra_name = reserve_player_ref(|player| {
                      player
 diff --git a/vm-rust/src/player/keyboard.rs b/vm-rust/src/player/keyboard.rs
-index ea4974c..ed2eaaa 100644
+index ea4974c2..ed2eaaa5 100644
 --- a/vm-rust/src/player/keyboard.rs
 +++ b/vm-rust/src/player/keyboard.rs
 @@ -29,9 +29,8 @@ impl KeyboardManager {
@@ -469,7 +421,7 @@ index ea4974c..ed2eaaa 100644
  }
 -
 diff --git a/vm-rust/src/player/keyboard_events.rs b/vm-rust/src/player/keyboard_events.rs
-index cce1bce..cbbab13 100644
+index cce1bce8..cbbab13d 100644
 --- a/vm-rust/src/player/keyboard_events.rs
 +++ b/vm-rust/src/player/keyboard_events.rs
 @@ -343,6 +343,58 @@ pub(crate) enum CaretAtMode {
@@ -574,7 +526,7 @@ index cce1bce..cbbab13 100644
              MemberSnapshot::Text { text, font, font_size, fixed_line_space, top_spacing } => {
                  // Same stage-scaled font lookup + coord scaling as the
 diff --git a/vm-rust/src/player/keyboard_map.rs b/vm-rust/src/player/keyboard_map.rs
-index b926194..f9e17bb 100644
+index b9261949..f9e17bb6 100644
 --- a/vm-rust/src/player/keyboard_map.rs
 +++ b/vm-rust/src/player/keyboard_map.rs
 @@ -152,6 +152,20 @@ pub fn get_char_to_keycode_map() -> &'static HashMap<char, u16> {
@@ -599,7 +551,7 @@ index b926194..f9e17bb 100644
      })
  }
 diff --git a/vm-rust/src/player/mod.rs b/vm-rust/src/player/mod.rs
-index 8fef74e..6bdcaa2 100644
+index 1c4a69a3..99cced5a 100644
 --- a/vm-rust/src/player/mod.rs
 +++ b/vm-rust/src/player/mod.rs
 @@ -110,7 +110,7 @@ use crate::{
@@ -611,7 +563,7 @@ index 8fef74e..6bdcaa2 100644
      }, rendering::with_renderer_mut, utils::{get_base_url, get_elapsed_ticks}
  };
  use url::Url;
-@@ -478,6 +478,11 @@ pub struct DirPlayer {
+@@ -563,6 +563,11 @@ pub struct DirPlayer {
      pub in_prepare_frame: bool,
      pub in_step_frame: bool,
      pub in_event_dispatch: bool,
@@ -623,7 +575,7 @@ index 8fef74e..6bdcaa2 100644
      /// Set by `stopEvent()` (Director 11.5 Scripting Dictionary, Movie method):
      /// "prevents scripts from passing an event message to subsequent locations
      /// in the message hierarchy… Neither subsequent scripts nor other behaviors
-@@ -832,6 +837,7 @@ impl DirPlayer {
+@@ -961,6 +966,7 @@ impl DirPlayer {
              in_prepare_frame: false,
              in_step_frame: false,
              in_event_dispatch: false,
@@ -631,7 +583,7 @@ index 8fef74e..6bdcaa2 100644
              event_stopped: false,
              command_handler_yielding: false,
              active_static_event_handlers: Vec::new(),
-@@ -2785,6 +2791,63 @@ impl DirPlayer {
+@@ -3035,6 +3041,63 @@ impl DirPlayer {
              .map(|(_, v)| v.clone())
      }
  
@@ -695,7 +647,7 @@ index 8fef74e..6bdcaa2 100644
      /// `the runMode` / `the environment.runMode` / `_player.runMode`.
      /// LeechProtectionRemovalHelp's `setTheRunMode` outranks the `_runMode`
      /// external param, which in turn outranks the "Plugin" default.
-@@ -3538,8 +3601,12 @@ impl DirPlayer {
+@@ -3827,8 +3890,12 @@ impl DirPlayer {
              }
              BuiltInSymbol::MultiSound => Ok(Datum::Int(1)),
              BuiltInSymbol::PauseState => Ok(datum_bool(self.is_script_paused)),
@@ -710,7 +662,7 @@ index 8fef74e..6bdcaa2 100644
              // `the safePlayer` is 0 (unsafe / full trust) unless
              // LeechProtectionRemovalHelp's `forceTheSafePlayer` pins it —
              // movies test it to decide whether local file access is allowed.
-@@ -3630,11 +3697,13 @@ impl DirPlayer {
+@@ -3919,11 +3986,13 @@ impl DirPlayer {
                  Ok(())
              },
              Some(BuiltInSymbol::SelStart) => {
@@ -726,7 +678,7 @@ index 8fef74e..6bdcaa2 100644
                  Ok(())
              },
              Some(BuiltInSymbol::ClipBoard) => {
-@@ -4121,6 +4190,14 @@ pub async fn player_call_global_handler(
+@@ -4433,6 +4502,14 @@ pub async fn player_call_global_handler(
                  }
              }
  
@@ -741,7 +693,7 @@ index 8fef74e..6bdcaa2 100644
              // Remaining static scripts (frame script + global script vars) — only
              // reached for names a movie script doesn't define.
              if receiver_handler.is_none() {
-@@ -4143,7 +4220,7 @@ pub async fn player_call_global_handler(
+@@ -4455,7 +4532,7 @@ pub async fn player_call_global_handler(
                      .and_then(|script| script.get_own_handler_ref(handler_name))
                      .map(|handler_pair| (None, handler_pair));
  
@@ -750,7 +702,7 @@ index 8fef74e..6bdcaa2 100644
                      if let Some(frame_script) = player
                          .movie
                          .score
-@@ -4162,7 +4239,7 @@ pub async fn player_call_global_handler(
+@@ -4474,7 +4551,7 @@ pub async fn player_call_global_handler(
                      }
                  }
  
@@ -759,7 +711,7 @@ index 8fef74e..6bdcaa2 100644
                      receiver_handler = player.globals.values().find_map(|datum_ref| {
                          match player.get_datum(datum_ref) {
                              Datum::VarRef(VarRef::Script(script_ref)) => player
-@@ -4177,7 +4254,7 @@ pub async fn player_call_global_handler(
+@@ -4489,7 +4566,7 @@ pub async fn player_call_global_handler(
                  }
              }
  
@@ -768,7 +720,7 @@ index 8fef74e..6bdcaa2 100644
                  receiver_handler = player
                      .active_stage_script_instance_ids()
                      .iter()
-@@ -5525,10 +5602,12 @@ async fn run_movie_init_sequence() {
+@@ -5837,10 +5914,12 @@ async fn run_movie_init_sequence() {
          player.is_in_frame_update = true;
      });
  
@@ -781,7 +733,7 @@ index 8fef74e..6bdcaa2 100644
  
      player_wait_available().await;
  
-@@ -5565,10 +5644,10 @@ async fn run_movie_init_sequence() {
+@@ -5877,10 +5956,10 @@ async fn run_movie_init_sequence() {
  
      for behavior_ref in &remaining_behaviors {
          let receivers = vec![behavior_ref.clone()];
@@ -794,7 +746,7 @@ index 8fef74e..6bdcaa2 100644
          ).await;
      }
  
-@@ -5810,7 +5889,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
+@@ -6122,7 +6201,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
      // 3. Load the new movie data (preserving globals and allocator)
      reserve_player_mut(|player| {
          player.is_dispatching_events = prev_dispatching;
@@ -803,7 +755,7 @@ index 8fef74e..6bdcaa2 100644
          player.clear_script_instance_list_caches();
          player.movie.frame_script_instance = None;
          player.movie.frame_script_member = None;
-@@ -6406,10 +6485,12 @@ pub async fn run_single_frame() -> (bool, bool) {
+@@ -6718,10 +6797,12 @@ pub async fn run_single_frame() -> (bool, bool) {
          player.is_in_frame_update = true;
      });
  
@@ -817,10 +769,10 @@ index 8fef74e..6bdcaa2 100644
      player_wait_available().await;
  
 diff --git a/vm-rust/src/player/score.rs b/vm-rust/src/player/score.rs
-index 25330f7..7303baa 100644
+index 2499fe7e..2080ba9d 100644
 --- a/vm-rust/src/player/score.rs
 +++ b/vm-rust/src/player/score.rs
-@@ -2400,10 +2400,37 @@ impl Score {
+@@ -2544,10 +2544,37 @@ impl Score {
              .filter(|_| is_stage)
          {
              // Only create when no instance is cached (covers initial entry and post-discard).
@@ -859,7 +811,7 @@ index 25330f7..7303baa 100644
              if needs_creation {
                  debug!(
                      "🔧 Creating frame script instance from cast {}/{} with {} parameters",
-@@ -3483,6 +3510,19 @@ impl Score {
+@@ -3628,6 +3655,19 @@ impl Score {
          JsApi::dispatch_score_changed();
      }
  
@@ -879,7 +831,7 @@ index 25330f7..7303baa 100644
      pub fn get_sorted_channels(&self, frame_num: u32) -> Vec<&SpriteChannel> {
          let generation = self.render_channel_cache_generation;
          if let Some((cached_frame, cached_generation, cached_indices)) =
-@@ -5703,7 +5743,17 @@ pub fn get_sprites_at(player: &DirPlayer, x: i32, y: i32) -> Vec<u32> {
+@@ -5937,7 +5977,17 @@ pub fn get_sprites_at(player: &DirPlayer, x: i32, y: i32) -> Vec<u32> {
  }
  
  pub fn get_sprite_at(player: &DirPlayer, x: i32, y: i32, scripted: bool) -> Option<u32> {
@@ -899,10 +851,10 @@ index 25330f7..7303baa 100644
              && (!scripted || is_active_sprite(player, &channel.sprite))
              && !is_click_transparent_sprite(player, &channel.sprite)
 diff --git a/vm-rust/src/player/script.rs b/vm-rust/src/player/script.rs
-index 10b920b..ac785f5 100644
+index 0d5b27db..1f602311 100644
 --- a/vm-rust/src/player/script.rs
 +++ b/vm-rust/src/player/script.rs
-@@ -613,6 +613,21 @@ pub async fn player_set_obj_prop(
+@@ -639,6 +639,21 @@ pub async fn player_set_obj_prop(
          Datum::Transform3d(_) => reserve_player_mut(|player| {
              crate::player::handlers::datum_handlers::transform3d::Transform3dDatumHandlers::set_prop(player, obj_ref, prop_name, value_ref)
          }),
@@ -925,7 +877,7 @@ index 10b920b..ac785f5 100644
              crate::player::handlers::datum_handlers::havok_object::HavokObjectDatumHandlers::set_prop(obj_ref, prop_name.as_str(), value_ref.clone())
          }
 diff --git a/vm-rust/src/player/timeout.rs b/vm-rust/src/player/timeout.rs
-index 3574d9e..2925929 100644
+index 3574d9e6..29259296 100644
 --- a/vm-rust/src/player/timeout.rs
 +++ b/vm-rust/src/player/timeout.rs
 @@ -14,6 +14,9 @@ pub struct Timeout {
@@ -939,7 +891,7 @@ index 3574d9e..2925929 100644
      pub next_fire_ms: f64,
  }
 diff --git a/vm-rust/src/player/xtra/multiuser/mod.rs b/vm-rust/src/player/xtra/multiuser/mod.rs
-index 9bc0ebe..3d4356e 100644
+index 9bc0ebec..3d4356e3 100644
 --- a/vm-rust/src/player/xtra/multiuser/mod.rs
 +++ b/vm-rust/src/player/xtra/multiuser/mod.rs
 @@ -23,7 +23,7 @@ macro_rules! multiuser_log {
@@ -1960,7 +1912,7 @@ index 9bc0ebe..3d4356e 100644
              _ => Err(ScriptError::new(format!(
                  "No handler {} found for Multiuser xtra instance #{}",
 diff --git a/vm-rust/src/player/xtra/multiuser/reader.rs b/vm-rust/src/player/xtra/multiuser/reader.rs
-index 623bbb2..a8df0d9 100644
+index 623bbb20..a8df0d94 100644
 --- a/vm-rust/src/player/xtra/multiuser/reader.rs
 +++ b/vm-rust/src/player/xtra/multiuser/reader.rs
 @@ -12,6 +12,7 @@ pub trait MusReader {
@@ -2089,7 +2041,7 @@ index 623bbb2..a8df0d9 100644
 +    }
 +}
 diff --git a/vm-rust/src/player/xtra/multiuser/writer.rs b/vm-rust/src/player/xtra/multiuser/writer.rs
-index 3df208d..832f639 100644
+index 3df208d0..832f6391 100644
 --- a/vm-rust/src/player/xtra/multiuser/writer.rs
 +++ b/vm-rust/src/player/xtra/multiuser/writer.rs
 @@ -57,18 +57,25 @@ impl MusWriter for BinaryWriter<'_> {
@@ -2133,10 +2085,10 @@ index 3df208d..832f639 100644
      }
  }
 diff --git a/vm-rust/src/rendering_gpu/webgl2/mod.rs b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-index dffbb65..fb8617c 100644
+index 6ae8c20e..c488ccab 100644
 --- a/vm-rust/src/rendering_gpu/webgl2/mod.rs
 +++ b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-@@ -763,8 +763,12 @@ impl WebGL2Renderer {
+@@ -844,8 +844,12 @@ impl WebGL2Renderer {
              Some(m) => m.clone(),
              None => return false,
          };
@@ -2150,23 +2102,7 @@ index dffbb65..fb8617c 100644
              .unwrap_or(false)
      }
  
-@@ -865,10 +869,13 @@ impl WebGL2Renderer {
-         // HUD into the stage image, freezing the maze view). Defer such sprites
-         // until after the overlay so the live 3D shows through; the HUD (drawn
-         // into a non-overlapping region) still composites underneath.
--        let overlay_active = player.stage_image_dirty && player.stage_image.is_some();
-+        //
-+        // They are deferred even without that overlay: directToStage 3D draws over
-+        // every 2D sprite whatever its channel. Robot Rage's arena puts a full-stage
-+        // frame bitmap (copy ink) in a channel above the 3D sprite.
-         let mut deferred_dts_3d: Vec<i16> = Vec::new();
-         for (channel_num, _) in &sorted_channels {
--            if overlay_active && self.is_direct_to_stage_3d(player, *channel_num) {
-+            if self.is_direct_to_stage_3d(player, *channel_num) {
-                 deferred_dts_3d.push(*channel_num);
-                 continue;
-             }
-@@ -1529,7 +1536,7 @@ impl WebGL2Renderer {
+@@ -1685,7 +1689,7 @@ impl WebGL2Renderer {
      /// Render a single sprite
      fn render_sprite(&mut self, player: &mut DirPlayer, channel_num: i16) {
          // Get sprite and member info
@@ -2175,7 +2111,7 @@ index dffbb65..fb8617c 100644
              let score = &player.movie.score;
              let sprite = match score.get_sprite(channel_num) {
                  Some(s) => s,
-@@ -1625,6 +1632,14 @@ impl WebGL2Renderer {
+@@ -1781,6 +1785,14 @@ impl WebGL2Renderer {
                  // these special composited members).
                  blend = 100;
              }
@@ -2191,10 +2127,10 @@ index dffbb65..fb8617c 100644
  
          // Determine what kind of texture we need based on member type
 diff --git a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
-index 34b6191..300081d 100644
+index 1880c1df..0b4960a9 100644
 --- a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
 +++ b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
-@@ -407,7 +407,11 @@ void main() {
+@@ -532,7 +532,11 @@ void main() {
  "#;
  
          let fs_source = r#"#version 300 es
@@ -2207,14 +2143,9 @@ index 34b6191..300081d 100644
  // Fragment shaders default `int` to mediump, but vertex shaders default it to
  // highp. A uniform shared across both stages must match precision or GLSL ES
  // linking fails ("Uniform `u_texcoord2_direct` is not linkable between attached
-@@ -6037,4 +6041,3 @@ fn mat4_multiply_col_major(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
-     }
-     r
- }
--
 diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
 new file mode 100644
-index 0000000..7381b69
+index 00000000..7381b691
 --- /dev/null
 +++ b/vm-rust/tests/rr_score.rs
 @@ -0,0 +1,116 @@
