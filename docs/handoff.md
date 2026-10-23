@@ -10,34 +10,54 @@ Read `docs/notes.md` first: protocol findings, the emulator patch list, and how 
 - Lobby/relay server work is done and covered by `npm test` (two simulated clients), but
   has not been tried in the real game.
 - Known bugs the maintainer reported (not yet investigated unless noted):
-  - Can't drive the car. The arena polls `keyPressed(123..126)` (Mac arrow key codes);
-    dirplayer probably doesn't map browser arrow keys to those.
+  - Can't drive the car: fixed (the frame script's `keyPressed()` calls reached the robot
+    behavior's own `keyPressed` handler; see `docs/notes.md`).
   - Robot list ("Choose a robot"): the selected row is a grey bar with no robot name.
   - Garage preview: the robot model looks wrong (wheel placement/orientation).
   - Workshop tabs (Paintshop, Buy parts, Sell parts) don't respond.
   - Stats tab shows "Ranking: □" (missing glyph).
 
-## Agreed direction
+## Agreed direction (revised 2026-10-23 after an independent review)
 
-Single-player must match the original before any multiplayer work.
+Keep running the original files in dirplayer (no rewrite or transpile). Single-player must
+work before visual polish; a real two-player match comes early, not last.
 
-The maintainer doesn't want to hand-list every difference. Plan proposed (awaiting his go-ahead):
+1. Controls: make the Training arena drivable (keyPressed with Mac key codes 123..126 etc.).
+2. Upstream check: compare our pinned dirplayer (68376fb + patches/dirplayer.patch) with
+   current upstream github.com/igorlira/dirplayer-rs. Pull in relevant fixes (especially 3D,
+   text, input, events) before fixing more ourselves; re-base the patch if worthwhile.
+3. Pin the reference build: record hashes and version strings of the game files we serve.
+   robotrage.pro mixes v60 files with the v55 arena and modified multiplayer, so state
+   which build we target. robotrage.pro screenshots and archived material are a cheap
+   visual reference, but not for timing or physics.
+4. Reference player (needs the maintainer's go-ahead; LAN server): use the Adobe Shockwave
+   debug projector setup Flashpoint uses (Lingo console, script injection, trace logging;
+   https://flashpointarchive.org/datahub/Shockwave_Curation) rather than building
+   instrumentation from scratch. Match the plugin runtime/Xtra versions. Timebox Wine;
+   fall back to a Windows VM with working 3D. Adobe's Multiuser Xtra uses native TCP
+   sockets, while our lobby and relay speak WebSockets, so multiplayer comparison needs a
+   TCP-to-WebSocket adapter.
+5. Comparison, small first: targeted probes for key polling, event order, layering, text
+   encoding, 3D parenting, rotation and transforms. Then checkpointed gameplay replays with
+   fixed robot/database fixtures and controlled network replies. Pitfalls: the arena reads
+   systemDate/milliSeconds and has a busy-wait loop (don't freeze time naively), random
+   numbers, input sampling, and font/renderer differences in screenshots. Compare numbers
+   with tolerances. An empty diff only covers what was tested.
+6. Re-check two of our own patches against the reference; they may be game-specific
+   rather than true Director semantics: "all 3D sprites draw above 2D and take clicks
+   first", and "stop delivering an event to the old frame's remaining behaviors once go()
+   moves the playhead".
+7. A real two-client match in the browser soon after controls work. The simulated
+   npm test doesn't prove in-game sync.
+8. Then work through the comparison diffs: workshop tabs, robot list text, robot model
+   transforms, collisions and weapons, then visual polish.
+9. Use LibreShockwave (github.com/LibreShockwave/LibreShockwave) only for a bounded look at
+   its debugger and input recording; nothing shows it plays this game's 3D. Intel U3D/IFX
+   code and DLL disassembly are for isolated unresolved questions only.
 
-1. Run Adobe's real Shockwave 12 player as a reference on the LAN server (Wine first, a
-   Windows VM if Wine can't do Shockwave 3D), pointed at our own server.
-2. Build a comparison harness: drive the same inputs through the real player and our
-   browser build, capture screenshots plus a Lingo-side state dump (sprites, text, layers,
-   3D node transforms, event order), and diff automatically. The diff is the bug list.
-3. Fix in order of what blocks play (controls, tabs, robot list, preview), re-run until the
-   diff is empty for every single-player screen and a scripted training match.
-4. For subtle behaviour (lighting, event order), consult the real runtime: disassembly of
-   the Shockwave player, and possibly Intel's U3D reference code (said to derive from the
-   IFX engine behind Shockwave 3D; verify before relying on it).
-
-Estimates given: reference player half a day to 2 days, harness about half a day,
-single-player parity about a week of agent work, multiplayer 1–3 days after.
-Subagents help about 1.5–2x (shared Docker build, one Playwright browser, shared emulator
-code); use worktrees per area.
+Estimates: reference 0.5–2 days; harness prototype about half a day. Single-player and
+multiplayer parity estimates are withdrawn until the reference works and one real match
+has been played.
 
 ## Testing gotchas
 
