@@ -137,6 +137,12 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
   `normalize(camera - position)` overflowed in the arena, which spans thousands of units,
   and all lighting came out black.
 - `length(vector)` / `vector.length()` as a method, not just a property.
+- A plain function call no longer reaches a frame script or sprite behavior handler when a
+  builtin has that name (Director only searches movie scripts, then builtins). The arena's
+  robot behavior has its own `on keyPressed me, map, tdelay`, so the frame script's
+  `keyPressed(123)` got VOID and the robot never drove.
+- `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back
+  to code 0, the `a` key.
 - `tests/rr_score.rs`: native diagnostics: how a movie's score is decoded (`dump_score`),
   each 3D member's raw info block (`dump_w3d_info`), and a bitmap's alpha
   (`dump_bitmap_alpha`, `RR_MEMBER=n`).

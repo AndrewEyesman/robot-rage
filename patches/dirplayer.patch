@@ -573,8 +573,33 @@ index cce1bce..cbbab13 100644
              }
              MemberSnapshot::Text { text, font, font_size, fixed_line_space, top_spacing } => {
                  // Same stage-scaled font lookup + coord scaling as the
+diff --git a/vm-rust/src/player/keyboard_map.rs b/vm-rust/src/player/keyboard_map.rs
+index b926194..f9e17bb 100644
+--- a/vm-rust/src/player/keyboard_map.rs
++++ b/vm-rust/src/player/keyboard_map.rs
+@@ -152,6 +152,20 @@ pub fn get_char_to_keycode_map() -> &'static HashMap<char, u16> {
+             ('7', 26),
+             ('8', 28),
+             ('9', 25),
++            // Punctuation, as in the JS map above. Without these,
++            // keyPressed(",") looked up code 0, the `a` key.
++            ('`', 50),
++            ('-', 27),
++            ('=', 24),
++            ('[', 33),
++            (']', 30),
++            (';', 41),
++            ('\'', 39),
++            ('\\', 42),
++            (',', 43),
++            ('.', 47),
++            ('/', 44),
++            (' ', 49),
+         ])
+     })
+ }
 diff --git a/vm-rust/src/player/mod.rs b/vm-rust/src/player/mod.rs
-index 8fef74e..d4c54bb 100644
+index 8fef74e..6bdcaa2 100644
 --- a/vm-rust/src/player/mod.rs
 +++ b/vm-rust/src/player/mod.rs
 @@ -110,7 +110,7 @@ use crate::{
@@ -701,7 +726,49 @@ index 8fef74e..d4c54bb 100644
                  Ok(())
              },
              Some(BuiltInSymbol::ClipBoard) => {
-@@ -5525,10 +5594,12 @@ async fn run_movie_init_sequence() {
+@@ -4121,6 +4190,14 @@ pub async fn player_call_global_handler(
+                 }
+             }
+ 
++            // In Director a plain call reaches movie scripts and then the
++            // builtins; frame scripts and sprite behaviors are not searched.
++            // The fallbacks below must not shadow a builtin: Robot Rage's robot
++            // behavior has `on keyPressed me, map, tdelay`, and the arena frame
++            // script's `keyPressed(123)` reached it and got VOID instead of the
++            // key state, so the robot never drove.
++            let shadows_builtin = handler_name.into_builtin().is_some();
++
+             // Remaining static scripts (frame script + global script vars) — only
+             // reached for names a movie script doesn't define.
+             if receiver_handler.is_none() {
+@@ -4143,7 +4220,7 @@ pub async fn player_call_global_handler(
+                     .and_then(|script| script.get_own_handler_ref(handler_name))
+                     .map(|handler_pair| (None, handler_pair));
+ 
+-                if receiver_handler.is_none() {
++                if receiver_handler.is_none() && !shadows_builtin {
+                     if let Some(frame_script) = player
+                         .movie
+                         .score
+@@ -4162,7 +4239,7 @@ pub async fn player_call_global_handler(
+                     }
+                 }
+ 
+-                if receiver_handler.is_none() {
++                if receiver_handler.is_none() && !shadows_builtin {
+                     receiver_handler = player.globals.values().find_map(|datum_ref| {
+                         match player.get_datum(datum_ref) {
+                             Datum::VarRef(VarRef::Script(script_ref)) => player
+@@ -4177,7 +4254,7 @@ pub async fn player_call_global_handler(
+                 }
+             }
+ 
+-            if receiver_handler.is_none() {
++            if receiver_handler.is_none() && !shadows_builtin {
+                 receiver_handler = player
+                     .active_stage_script_instance_ids()
+                     .iter()
+@@ -5525,10 +5602,12 @@ async fn run_movie_init_sequence() {
          player.is_in_frame_update = true;
      });
  
@@ -714,7 +781,7 @@ index 8fef74e..d4c54bb 100644
  
      player_wait_available().await;
  
-@@ -5565,10 +5636,10 @@ async fn run_movie_init_sequence() {
+@@ -5565,10 +5644,10 @@ async fn run_movie_init_sequence() {
  
      for behavior_ref in &remaining_behaviors {
          let receivers = vec![behavior_ref.clone()];
@@ -727,7 +794,7 @@ index 8fef74e..d4c54bb 100644
          ).await;
      }
  
-@@ -5810,7 +5881,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
+@@ -5810,7 +5889,7 @@ pub(crate) async fn mount_net_movie(task_id: u32, target: MovieFrameTarget, eage
      // 3. Load the new movie data (preserving globals and allocator)
      reserve_player_mut(|player| {
          player.is_dispatching_events = prev_dispatching;
@@ -736,7 +803,7 @@ index 8fef74e..d4c54bb 100644
          player.clear_script_instance_list_caches();
          player.movie.frame_script_instance = None;
          player.movie.frame_script_member = None;
-@@ -6406,10 +6477,12 @@ pub async fn run_single_frame() -> (bool, bool) {
+@@ -6406,10 +6485,12 @@ pub async fn run_single_frame() -> (bool, bool) {
          player.is_in_frame_update = true;
      });
  

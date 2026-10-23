@@ -6,3 +6,5 @@ data/
 public/game/
 # Build output of scripts/build-dirplayer.sh.
 public/dirplayer/
+# Playwright MCP scratch output (test scripts, screenshots).
+.playwright-mcp/
