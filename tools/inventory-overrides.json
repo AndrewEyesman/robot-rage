@@ -142,5 +142,17 @@
   "game_usage": "The arena's bottom panel is a shape filled with built-in tile 57; it shows through the battery as it drains.",
   "evidence": "Fixed 2026-10-23: compared against Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll, 8-bit with the Mac system palette). Tiles are now drawn through that palette (the arena palette made them red-speckled) and ScummVM's row-rotated data is rotated back (96% of tile 1's pixels match; the rest were lost in ScummVM's copy).",
   "dirplayer": "player/bitmap/builtin_tiles.rs, rendering_gpu/webgl2/mod.rs, player/bitmap/drawing.rs (fill_rect_tiled)"
+ },
+ "method:draw": {
+  "verdict": "fixed",
+  "needs_adobe": true,
+  "evidence": "Fixed 2026-10-23: float coordinates are accepted (truncated, like other int coordinates), an unknown #shapeType such as the pen tool's #pen draws a #line (the documented default), #rect/#oval/#roundRect normalise reversed corners, and #rect draws #lineSize inset outlines. Tested by tools/paint-tests.js (6/6; the old build 0/6) and by drawing with every Paintshop tool. Still unconfirmed in Adobe's code: whether floats round or truncate, and whether #lineSize on #rect is inset or centred (Dirapi's image methods were not located).",
+  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs (draw)"
+ },
+ "method:fill": {
+  "verdict": "fixed",
+  "needs_adobe": true,
+  "evidence": "Fixed 2026-10-23: float coordinates are accepted (truncated) and reversed rects are normalised, so the pen tool's dots (x - linewidth/2.0) and the mirrored eraser work. Tested by tools/paint-tests.js and in the Paintshop. Rounding vs truncation of floats is still unconfirmed against Adobe.",
+  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs (fill)"
  }
 }

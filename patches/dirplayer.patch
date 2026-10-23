@@ -878,10 +878,76 @@ index 0fdca5a1..a6727590 100644
  }
  
 diff --git a/vm-rust/src/player/handlers/datum_handlers/bitmap.rs b/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
-index 74b37469..17f0413d 100644
+index 74b37469..5f76c840 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
 +++ b/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
-@@ -808,10 +808,13 @@ impl BitmapDatumHandlers {
+@@ -569,7 +569,11 @@ impl BitmapDatumHandlers {
+             let first_arg = player.get_datum(&args[0]);
+             let mut arg_pos = 1;
+             let (x1, y1, x2, y2) = match first_arg {
+-                Datum::Int(x1) => {
++                // Coordinates may be floats: Robot Rage's paint editor draws from
++                // `x - linewidth / 2.0`. They truncate like every other
++                // int_value coordinate.
++                Datum::Int(_) | Datum::Float(_) => {
++                    let x1 = first_arg.int_value()?;
+                     if args.len() < 4 {
+                         return Err(ScriptError::new(
+                             "draw(x1, y1, x2, y2, ...) requires at least 4 arguments"
+@@ -582,7 +586,7 @@ impl BitmapDatumHandlers {
+                     arg_pos += 1;
+                     let y2 = player.get_datum(&args[arg_pos]).int_value()?;
+                     arg_pos += 1;
+-                    (*x1, y1, x2, y2)
++                    (x1, y1, x2, y2)
+                 }
+                 Datum::Point(point_vals, _flags) => {
+                     let x1 = point_vals[0] as i32;
+@@ -738,26 +742,31 @@ impl BitmapDatumHandlers {
+             let alpha = blend as f32 / 100.0;
+             // `#roundRect` arrives as its display spelling, so compare
+             // case-insensitively as Director does.
++            // The shapes take a bounding rect, which may come with its corners
++            // reversed: Robot Rage's rect and oval tools pass the drag's start and
++            // end corners as they are, so a drag up or left gives right < left.
++            let (l, t, r, b) = (x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2));
+             match_ci!(shape_type, {
+                 "rect" => {
+-                    bitmap.stroke_rect(x1, y1, x2, y2, color, &palettes, alpha);
++                    // #lineSize draws inside the rect, one inset outline per pixel.
++                    for i in 0..thickness {
++                        if r - l - 2 * i <= 0 || b - t - 2 * i <= 0 {
++                            break;
++                        }
++                        bitmap.stroke_rect(l + i, t + i, r - i, b - i, color, &palettes, alpha);
++                    }
+                 },
+                 "oval" => {
+-                    bitmap.stroke_ellipse(x1, y1, x2, y2, color, &palettes, alpha, thickness);
++                    bitmap.stroke_ellipse(l, t, r, b, color, &palettes, alpha, thickness);
+                 },
+                 "roundRect" => {
+-                    bitmap.stroke_round_rect(x1, y1, x2, y2, radius, color, &palettes, alpha, thickness);
+-                },
+-                "line" => {
+-                    // For #line, (x1,y1) and (x2,y2) are the line endpoints
+-                    // (rather than a bounding rect like the other shapes).
+-                    bitmap.draw_line_thick(x1, y1, x2, y2, color, &palettes, alpha, thickness);
++                    bitmap.stroke_round_rect(l, t, r, b, radius, color, &palettes, alpha, thickness);
+                 },
+                 _ => {
+-                    return Err(ScriptError::new(format!(
+-                        "Invalid shapeType '#{}' for draw (expected #rect, #oval, #roundRect, #line)",
+-                        shape_type
+-                    )));
++                    // #line, the documented default, and any other shapeType:
++                    // the paint editor's default tool passes #pen. (x1,y1) and
++                    // (x2,y2) are the line's endpoints, in order.
++                    bitmap.draw_line_thick(x1, y1, x2, y2, color, &palettes, alpha, thickness);
+                 }
+             });
+             Ok(datum.clone())
+@@ -808,10 +817,13 @@ impl BitmapDatumHandlers {
  
              if color_obj_or_int.is_int() {
                  let int_value = color_obj_or_int.int_value()?;
@@ -899,6 +965,37 @@ index 74b37469..17f0413d 100644
                  } else if bit_depth == 32 {
                      // 32-bit: the integer is the FULL AARRGGBB value, alpha
                      // included -- the same encoding `getPixel(pt, #integer)`
+@@ -870,7 +882,9 @@ impl BitmapDatumHandlers {
+             let first = player.get_datum(&args[0]);
+             let mut arg_pos = 1;
+             let (x1, y1, x2, y2) = match first {
+-                Datum::Int(x1) => {
++                // Float coordinates truncate, as in draw().
++                Datum::Int(_) | Datum::Float(_) => {
++                    let x1 = first.int_value()?;
+                     if args.len() < 5 {
+                         return Err(ScriptError::new(
+                             "fill(left, top, right, bottom, ...) requires at least 5 arguments"
+@@ -881,7 +895,7 @@ impl BitmapDatumHandlers {
+                     let x2 = player.get_datum(&args[2]).int_value()?;
+                     let y2 = player.get_datum(&args[3]).int_value()?;
+                     arg_pos = 4;
+-                    (*x1, y1, x2, y2)
++                    (x1, y1, x2, y2)
+                 }
+                 Datum::Point(p1, _flags) => {
+                     let x1 = p1[0] as i32;
+@@ -974,7 +988,10 @@ impl BitmapDatumHandlers {
+                 Datum::BitmapRef(bitmap) => Ok(bitmap),
+                 _ => Err(ScriptError::new("Cannot fill non-bitmap".to_string())),
+             }?;
++            // Reversed corners fill the same rect (the paint editor's mirrored
++            // eraser passes right < left).
+             let (x1, y1, x2, y2) = rect_i32;
++            let (x1, y1, x2, y2) = (x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2));
+             let bitmap = player.bitmap_manager.get_bitmap(*bitmap_ref).unwrap();
+             let palettes = player.movie.cast_manager.palettes();
+             let color = resolve_color_ref(
 diff --git a/vm-rust/src/player/handlers/datum_handlers/date.rs b/vm-rust/src/player/handlers/datum_handlers/date.rs
 index bc7374c0..b657a7d2 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/date.rs

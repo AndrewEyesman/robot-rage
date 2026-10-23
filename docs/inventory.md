@@ -17,22 +17,20 @@ code reading can tell", not "proven against Adobe's player". Items marked
 
 | verdict | high | medium | low | total |
 | --- | ---: | ---: | ---: | ---: |
-| wrong | 3 | 7 | 44 | 54 |
+| wrong | 1 | 7 | 44 | 52 |
 | unclear | 8 | 14 | 19 | 41 |
-| fixed | 9 | 7 | 1 | 17 |
+| fixed | 11 | 7 | 1 | 19 |
 | works | 66 | 82 | 152 | 300 |
 
 Impact is impact on play: high blocks or visibly breaks single-player (driving,
 collisions, weapons, garage, robot list, workshop tabs), medium is visible but not
-blocking, low is cosmetic, rare or outside single-player. 41 open items need
+blocking, low is cosmetic, rare or outside single-player. 39 open items need
 Adobe's code to settle.
 
-## Wrong (54)
+## Wrong (52)
 
 | impact | feature | kind | what's wrong / open | where |
 | --- | --- | --- | --- | --- |
-| high | `draw` | method | Four divergences, all on the paint editor path. (1) shapeType #pen raises "Invalid shapeType" (bitmap.rs:758). #pen is the default tool, so in Director it must draw something, presumably a #line; exact handling needs Adobe. Every pen stroke after the first dot errors. (2) A Float first argument (line tool: x2 - linewidth/2.0) hits the "First argument to draw must be coordinates" error at bitmap.rs:605, so the line... **needs Adobe** | vm-rust/src/player/handlers/datum_handlers/bitmap.rs:557-765 (first arg must be Int/Poi... |
-| high | `fill` | method | Rect, point, 4-int, colour, int and proplist forms with #shapeType rect/oval are all handled. Wrong: a Float first coordinate errors (bitmap.rs:898). The pen tool mouseDown computes b = linewidth/2.0, so fill(x - b, ...) raises before the handler sets state = #down, and the pen never starts drawing. The line tool single-dot path does the same. Director accepts floats; whether it rounds or truncates them needs Adob... **needs Adobe** | vm-rust/src/player/handlers/datum_handlers/bitmap.rs:859-1012 (first arg only Int/Point... |
 | high | `machinery:go-navigation` | machinery | Label, marker and frame resolution matches the docs: case-insensitive labels, an unknown label stays put, and next/previous/loop are markers. Wrong in mechanism: go() to another frame immediately sends endSprite, moves the playhead, creates the new sprites and sends beginSprite, nested inside the calling handler. The rest of that handler then sees the new frame's sprites and `the frame`. Director (per the docs and... **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/handlers/movie.rs:156-560 (go: inline end/advanc... |
 | medium | `alertHook` | event | Never invoked on a script error. dirplayer stops the movie instead, so any remaining unimplemented builtin halts the game where Director would log and continue. Same finding as the `the alertHook` entry. The return-value contract (1 = suppress) needs Adobe's code to match exactly. **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/mod.rs:4094-4114 (on_script_error -> stop()); ve... |
 | medium | `alertHook` | the | The hook is stored but never called when a script error occurs. Instead on_script_error logs it and calls stop(), which halts playback for the whole movie. In Director the hook would swallow the error, the failing handler would abort, and the game would keep running. So under dirplayer any remaining unimplemented-feature error stops the game outright, where the real player would carry on (possibly with a glitch). ... **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/movie.rs:212-218, 522-539 (stored); vendor/dirpl... |
@@ -132,10 +130,12 @@ Adobe's code to settle.
 | low | `stopMovie` | event | Sent on movie switch and when playback stops: timeouts are cleared, then stopMovie (broadcast to globals' instances first, see prepareMovie), then endSprite for all sprites. The documented stop order lists endSprite before stopMovie, so the order may be reversed. Nothing in the game depends on the order. Clearing every timeout, including persistent ones, may also differ from Director, but the game only uses timeou... **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/mod.rs:5720-5755 |
 | low | `urlEncode` | call | Escapes ASCII punctuation (space -> %20) and passes non-ASCII through unescaped. Director's exact output (space as + or %20, cp1252 escaping of accented letters) is not documented. **needs Adobe** | vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:180-258 |
 
-## Fixed (17)
+## Fixed (19)
 
 | impact | feature | kind | what's wrong / open | where |
 | --- | --- | --- | --- | --- |
+| high | `draw` | method | Fixed 2026-10-23: float coordinates are accepted (truncated, like other int coordinates), an unknown #shapeType such as the pen tool's #pen draws a #line (the documented default), #rect/#oval/#roundRect normalise reversed corners, and #rect draws #lineSize inset outlines. Tested by tools/paint-tests.js (6/6; the old build 0/6) and by drawing with every Paintshop tool. Still unconfirmed in Adobe's code: whether flo... **needs Adobe** | vm-rust/src/player/handlers/datum_handlers/bitmap.rs (draw) |
+| high | `fill` | method | Fixed 2026-10-23: float coordinates are accepted (truncated) and reversed rects are normalised, so the pen tool's dots (x - linewidth/2.0) and the mirrored eraser work. Tested by tools/paint-tests.js and in the Paintshop. Rounding vs truncation of floats is still unconfirmed against Adobe. **needs Adobe** | vm-rust/src/player/handlers/datum_handlers/bitmap.rs (fill) |
 | high | `ink 6 (not reverse)` | prop | Fixed 2026-10-23: ink 6 XORs the source into the framebuffer (the RGB form of Not Reverse; ScummVM's 32-bit path does the same). Was drawn as a solid grey bar hiding the name; now an inverse-video highlight with the name readable. **needs Adobe** | rendering_gpu/webgl2/shaders.rs, mod.rs (capture_ink_dest) |
 | high | `intersects` | operator | Fixed 2026-10-23 (docs/collision.md): mattes of 32-bit alpha images come from alpha, and both sprites are placed with rotation and flips. Driving sweep: 0 of 342 clear paths blocked (was 124); real walls stop within 2 px. Rotation rule and alpha threshold still to confirm in Dirapi.dll. **needs Adobe** | player/bytecode/sprite_compare.rs, player/bitmap/mask.rs |
 | high | `keypressed` | call | Fixed 2026-10-23: a plain call no longer reaches a sprite behavior's handler of the same name (the robot behavior has its own keyPressed), and punctuation maps to Mac key codes. Verified by driving. | player/mod.rs (player_call_global_handler), player/keyboard_map.rs |

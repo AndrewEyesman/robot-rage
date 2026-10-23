@@ -2891,12 +2891,12 @@
   "movies": [
    "factory0604.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": true,
   "game_usage": "Garage Paintshop editor: pen, line, rect and oval tools call image.draw(x1,y1,x2,y2,[#shapeType: <tool>, #color, #lineSize]) on the member image. The pen tool passes its own tool symbol #pen as shapeType. The line tool computes coordinates with a float half-width (linewidth/2.0). Rect/oval drags pass corners in reversed order when dragging left/up.",
-  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs:557-765 (first arg must be Int/Point/Rect at :572-611; unknown shapeType errors at :756-761; #rect calls stroke_rect without thickness at :743); vm-rust/src/player/bitmap/drawing.rs:854-885 stroke_rect (1px, no normalisation); vm-rust/src/player/bitmap/drawing.rs:1150 stroke_ellipse (no normalisation)",
-  "evidence": "Four divergences, all on the paint editor path. (1) shapeType #pen raises \"Invalid shapeType\" (bitmap.rs:758). #pen is the default tool, so in Director it must draw something, presumably a #line; exact handling needs Adobe. Every pen stroke after the first dot errors. (2) A Float first argument (line tool: x2 - linewidth/2.0) hits the \"First argument to draw must be coordinates\" error at bitmap.rs:605, so the line tool never draws. (3) #rect ignores #lineSize: stroke_rect has no thickness parameter (bitmap.rs:743, drawing.rs:854), so thick rectangles come out 1px. (4) Reversed corners: stroke_rect/stroke_ellipse loop x1..x2 and y1..y2 and draw nothing or a partial outline when x1>x2 or y1>y2. The game relies on reversed corners for left/up drags, so Director presumably normalises (needs Adobe). Reached only once the workshop tabs work (known bug), and then it breaks Paintshop."
+  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs (draw)",
+  "evidence": "Fixed 2026-10-23: float coordinates are accepted (truncated, like other int coordinates), an unknown #shapeType such as the pen tool's #pen draws a #line (the documented default), #rect/#oval/#roundRect normalise reversed corners, and #rect draws #lineSize inset outlines. Tested by tools/paint-tests.js (6/6; the old build 0/6) and by drawing with every Paintshop tool. Still unconfirmed in Adobe's code: whether floats round or truncate, and whether #lineSize on #rect is inset or centred (Dirapi's image methods were not located)."
  },
  {
   "name": "duplicate",
@@ -2948,12 +2948,12 @@
    "factory0604.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": true,
   "game_usage": "Paint editor: fill(l,t,r,b,[#color]) for pen dots and brushes, fill(rect(...), rgb) for the eraser (mirror mode passes left>right), fill(l,t,r,b,[#shapeType:#rect/#oval,#color,#lineSize:0]) for filled shapes, bucket fill of the whole image. Also: fill(rect, rgb grey) to blank robot maps (robotwars), fill of a palette swatch with a getPixel colour, background fills of new images.",
-  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs:859-1012 (first arg only Int/Point/Rect at :873-899; shapes at :993-997); vm-rust/src/player/bitmap/drawing.rs:948-978 fill_rect (no normalisation)",
-  "evidence": "Rect, point, 4-int, colour, int and proplist forms with #shapeType rect/oval are all handled. Wrong: a Float first coordinate errors (bitmap.rs:898). The pen tool mouseDown computes b = linewidth/2.0, so fill(x - b, ...) raises before the handler sets state = #down, and the pen never starts drawing. The line tool single-dot path does the same. Director accepts floats; whether it rounds or truncates them needs Adobe (int_value truncates, datum.rs:533). Unclear: an inverted rect (mirror-mode eraser) fills nothing (fill_rect loops x1..x2). Director may normalise it."
+  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs (fill)",
+  "evidence": "Fixed 2026-10-23: float coordinates are accepted (truncated) and reversed rects are normalised, so the pen tool's dots (x - linewidth/2.0) and the mirrored eraser work. Tested by tools/paint-tests.js and in the Paintshop. Rounding vs truncation of floats is still unconfirmed against Adobe."
  },
  {
   "name": "floodFill",

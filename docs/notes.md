@@ -169,6 +169,9 @@ see `docs/upstream.md` for why.
   palette of Director's own tile bitmaps (RT_BITMAP 20-27 in Dirapi.dll), and ScummVM's
   row-rotated pixel arrays are rotated back (about 96% of pixels now match Adobe's). The
   arena's battery shows tile 57 when it drains.
+- Image `draw()` / `fill()` take float coordinates (truncated) and normalise reversed
+  corners; an unknown `#shapeType` (the Paintshop pen passes `#pen`) draws a `#line`, and
+  `#rect` honours `#lineSize` (Paintshop tools).
 - `rr_intersect_sweep(...)` (debug export) sweeps a sprite over a grid and reports
   `intersects` results, for the collision checks in `tools/`.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back
