@@ -39,6 +39,92 @@ index 3048ea00..44f377d2 100644
                  || (n >= 52 && n % 4 == 0 && {
                      let b = entry_bytes;
                      let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+diff --git a/vm-rust/src/director/chunks/w3d/types.rs b/vm-rust/src/director/chunks/w3d/types.rs
+index fff7c114..2031cc51 100644
+--- a/vm-rust/src/director/chunks/w3d/types.rs
++++ b/vm-rust/src/director/chunks/w3d/types.rs
+@@ -385,7 +385,9 @@ impl Default for W3dLight {
+             attenuation: [1.0, 0.0, 0.0],
+             spot_angle: 90.0,
+             enabled: true,
+-            specular: false,
++            // Director's default for light.specular is TRUE; the renderer now
++            // honours the flag, so lights built in code must start with it on.
++            specular: true,
+             spot_decay: false,
+         }
+     }
+diff --git a/vm-rust/src/director/enums.rs b/vm-rust/src/director/enums.rs
+index 94e58a1d..582cb875 100644
+--- a/vm-rust/src/director/enums.rs
++++ b/vm-rust/src/director/enums.rs
+@@ -71,6 +71,9 @@ pub struct BitmapInfo {
+     pub use_alpha: bool,
+     pub trim_white_space: bool,
+     pub center_reg_point: bool,
++    /// Director 7+: a pixel of a 32-bit alpha image takes clicks only if its
++    /// alpha is at least this (0 = every pixel does).
++    pub alpha_threshold: u8,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -303,6 +306,7 @@ impl BitmapInfo {
+         let mut use_alpha = false;
+         let mut trim_white_space = false;
+         let mut center_reg_point = false;
++        let mut alpha_threshold = 0u8;
+ 
+         // Bytes 0-1: pitch (u16) — common to all versions
+         if let Ok(val) = reader.read_u16() {
+@@ -363,9 +367,13 @@ impl BitmapInfo {
+             // The center_reg_point flag for D4 is bit 0 of flags1 (kFlagCenterRegPointD4).
+             // We don't have flags1 here, so leave center_reg_point = false.
+         } else {
+-            // D6+: bytes 10-11 = alphaThreshold(1)+padding(1) or padding(2)
++            // D6+: bytes 10-11 = alphaThreshold(1)+padding(1) (D7+) or padding(2)
+             // bytes 12-13 = editVersion, bytes 14-17 = scrollPoint
+-            let _ = reader.read_u16();
++            if let Ok(v) = reader.read_u16() {
++                if dir_version >= 700 {
++                    alpha_threshold = (v >> 8) as u8;
++                }
++            }
+             let _ = reader.read_u16();
+             let _ = reader.read_u16();
+             let _ = reader.read_u16();
+@@ -426,6 +434,7 @@ impl BitmapInfo {
+             use_alpha,
+             trim_white_space,
+             center_reg_point,
++            alpha_threshold,
+         }
+     }
+ }
+diff --git a/vm-rust/src/director/media/reader.rs b/vm-rust/src/director/media/reader.rs
+index b1d43422..8af47045 100644
+--- a/vm-rust/src/director/media/reader.rs
++++ b/vm-rust/src/director/media/reader.rs
+@@ -84,6 +84,7 @@ impl MediaReader for BinaryReader {
+             use_alpha: false,
+             trim_white_space: false,
+             center_reg_point: false,
++            alpha_threshold: 0,
+         });
+     }
+ }
+\ No newline at end of file
+diff --git a/vm-rust/src/director/media/writer.rs b/vm-rust/src/director/media/writer.rs
+index 658dbaa4..c3130e1e 100644
+--- a/vm-rust/src/director/media/writer.rs
++++ b/vm-rust/src/director/media/writer.rs
+@@ -40,6 +40,7 @@ impl MediaWriter for BinaryWriter<'_> {
+                     use_alpha: bitmap.use_alpha,
+                     trim_white_space: bitmap.trim_white_space,
+                     center_reg_point: false,
++                    alpha_threshold: 0,
+                 };
+ 
+                 // Encode bitmap data to raw bytes
 diff --git a/vm-rust/src/lib.rs b/vm-rust/src/lib.rs
 index d447a516..8de12eda 100644
 --- a/vm-rust/src/lib.rs
@@ -515,6 +601,37 @@ index b66492b2..c2aeb775 100644
  
              // Push result (1 for true, 0 for false)
              let result = if intersects { 1 } else { 0 };
+diff --git a/vm-rust/src/player/commands.rs b/vm-rust/src/player/commands.rs
+index 33a666cf..353a9298 100644
+--- a/vm-rust/src/player/commands.rs
++++ b/vm-rust/src/player/commands.rs
+@@ -595,23 +595,9 @@ pub async fn run_player_command(command: PlayerVMCommand) -> Result<DatumRef, Sc
+             // `the doubleClick` to gate `toggleState()`, so a wrong flag silently
+             // breaks every animation-toggling action.
+             let click_now = chrono::Utc::now().timestamp_millis().abs();
+-            // Flush actorList stepFrame so cached rollover state (e.g. oMouseSquare)
+-            // is fresh before the mouseDown handler reads it. On mobile/touch there's
+-            // no prior mouse_move, so stepFrame hasn't run at the tap position yet.
+-            // mouse_loc is already set synchronously by the JS-side mouse_down() call.
+-            {
+-                let actor_snapshot = reserve_player_ref(|player| {
+-                    player.actor_list_stepframe_snapshot()
+-                });
+-                for (_idx, actor_ref) in actor_snapshot.0.iter().enumerate() {
+-                    if actor_snapshot.1.contains(&actor_ref.unwrap()) {
+-                        let _ = player_call_datum_handler(
+-                            actor_ref, Symbol::builtin(BuiltInSymbol::StepFrame), &vec![],
+-                        ).await;
+-                    }
+-                }
+-            }
+-
++            // No extra actorList stepFrame here: Director sends stepFrame once per
++            // frame only. The flush added for touch input stepped Robot Rage's
++            // arena follow camera once more on every click.
+             // `the mouseDownScript` (if set) runs at the END of the
+             // mouseDown pipeline, alongside sprite/cast/frame dispatch.
+             // We deliberately do NOT short-circuit the sprite dispatch
 diff --git a/vm-rust/src/player/events.rs b/vm-rust/src/player/events.rs
 index 184a4962..799437b5 100644
 --- a/vm-rust/src/player/events.rs
@@ -667,6 +784,99 @@ index a6ac50b8..471fc7db 100644
  }
  
  pub fn get_glyph_preference() -> GlyphPreference {
+diff --git a/vm-rust/src/player/gif.rs b/vm-rust/src/player/gif.rs
+index 0fdca5a1..a6727590 100644
+--- a/vm-rust/src/player/gif.rs
++++ b/vm-rust/src/player/gif.rs
+@@ -183,6 +183,7 @@ pub fn gif_bitmap_info(width: u16, height: u16) -> BitmapInfo {
+         use_alpha: true,
+         trim_white_space: false,
+         center_reg_point: true,
++        alpha_threshold: 0,
+     }
+ }
+ 
+diff --git a/vm-rust/src/player/handlers/datum_handlers/bitmap.rs b/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
+index 74b37469..17f0413d 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/bitmap.rs
+@@ -808,10 +808,13 @@ impl BitmapDatumHandlers {
+ 
+             if color_obj_or_int.is_int() {
+                 let int_value = color_obj_or_int.int_value()?;
+-                if bit_depth == 8 {
+-                    // 8-bit: treat as palette index → grayscale
+-                    let idx = int_value as u8;
+-                    bitmap.set_pixel(x, y, (idx, idx, idx), &palettes);
++                if bit_depth <= 8 {
++                    // An integer is the raw pixel value: on an indexed image, the
++                    // palette index itself. It used to be turned into a grey and
++                    // matched to the nearest palette entry, which garbled the robot
++                    // paint maps Robot Rage decodes pixel by pixel.
++                    bitmap.matte = None;
++                    bitmap.set_pixel_index(x, y, int_value as u8);
+                 } else if bit_depth == 32 {
+                     // 32-bit: the integer is the FULL AARRGGBB value, alpha
+                     // included -- the same encoding `getPixel(pt, #integer)`
+diff --git a/vm-rust/src/player/handlers/datum_handlers/date.rs b/vm-rust/src/player/handlers/datum_handlers/date.rs
+index bc7374c0..b657a7d2 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/date.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/date.rs
+@@ -267,7 +267,15 @@ impl DateDatumHandlers {
+             Some(BuiltInSymbol::Year) => Ok(player.alloc_datum(Datum::Int(js_date.get_full_year() as i32))),
+             Some(BuiltInSymbol::Hour | BuiltInSymbol::Hours) => Ok(player.alloc_datum(Datum::Int(js_date.get_hours() as i32))),
+             Some(BuiltInSymbol::Minute | BuiltInSymbol::Minutes) => Ok(player.alloc_datum(Datum::Int(js_date.get_minutes() as i32))),
+-            Some(BuiltInSymbol::Second | BuiltInSymbol::Seconds) => Ok(player.alloc_datum(Datum::Int(js_date.get_seconds() as i32))),
++            // Director's date `seconds` counts from midnight (a systemDate read
++            // gives e.g. 13950), not the seconds field of the minute. Robot
++            // Rage's arena paces itself and runs its walkover timer by waiting
++            // for this value to grow; read as 0-59 it stops growing at every
++            // minute boundary.
++            Some(BuiltInSymbol::Seconds) => Ok(player.alloc_datum(Datum::Int(
++                js_date.get_hours() as i32 * 3600 + js_date.get_minutes() as i32 * 60 + js_date.get_seconds() as i32,
++            ))),
++            Some(BuiltInSymbol::Second) => Ok(player.alloc_datum(Datum::Int(js_date.get_seconds() as i32))),
+             Some(BuiltInSymbol::MilliSeconds) => Ok(player.alloc_datum(Datum::Int(js_date.get_milliseconds() as i32))),
+             Some(BuiltInSymbol::WeekDay) => {
+                 // Lingo's `the weekday of date()` is 1=Sunday … 7=Saturday.
+diff --git a/vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs b/vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs
+index 9cdfd056..3a560155 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs
+@@ -1759,11 +1759,6 @@ impl Shockwave3dObjectDatumHandlers {
+                     }
+                     Ok(())
+                 },
+-                "specular" => {
+-                    // For lights: specular = 1/0 (enable/disable specular contribution)
+-                    // For shaders: handled elsewhere
+-                    Ok(())
+-                },
+                 "spotAngle" => {
+                     if s3d_ref.object_type == BuiltInSymbol::Light {
+                         let angle = match value { Datum::Float(f) => *f as f32, Datum::Int(i) => *i as f32, _ => 30.0 };
+@@ -1927,6 +1922,21 @@ impl Shockwave3dObjectDatumHandlers {
+                     Ok(())
+                 },
+                 "diffuse" | "ambient" | "emissive" | "specular" => {
++                  // light.specular: whether the light makes highlights. The
++                  // garage preview turns it off on its key light.
++                  if s3d_ref.object_type == BuiltInSymbol::Light && prop_name.eq_ignore_ascii_case("specular") {
++                      let on = value.to_bool().unwrap_or(true);
++                      if let Some(member) = player.movie.cast_manager.find_mut_member_by_ref(&member_ref) {
++                          if let Some(w3d) = member.member_type.as_shockwave3d_mut() {
++                              if let Some(scene) = w3d.scene_mut() {
++                                  if let Some(light) = scene.lights.iter_mut().find(|l| l.name == s3d_ref.name) {
++                                      light.specular = on;
++                                  }
++                              }
++                          }
++                      }
++                      return Ok(());
++                  }
+                   if s3d_ref.object_type != BuiltInSymbol::Shader { return Ok(()); }
+                     debug!(
+                         "[W3D-SET] shader(\"{}\").{}", s3d_ref.name, prop_name
 diff --git a/vm-rust/src/player/handlers/datum_handlers/timeout.rs b/vm-rust/src/player/handlers/datum_handlers/timeout.rs
 index 112ca86d..635f68eb 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/timeout.rs
@@ -739,10 +949,25 @@ index 756a2494..1fd07e29 100644
                  let [x, y, z] = Self::datum_to_vec(player, player.get_datum(datum))?;
                  let len = (x*x + y*y + z*z).sqrt();
 diff --git a/vm-rust/src/player/handlers/manager.rs b/vm-rust/src/player/handlers/manager.rs
-index a4d15155..2619c79d 100644
+index a4d15155..63b28f78 100644
 --- a/vm-rust/src/player/handlers/manager.rs
 +++ b/vm-rust/src/player/handlers/manager.rs
-@@ -2730,6 +2730,15 @@ impl BuiltInHandlerManager {
+@@ -1274,6 +1274,14 @@ impl BuiltInHandlerManager {
+             Some(BuiltInSymbol::Integerp) => TypeHandlers::integerp(args),
+             Some(BuiltInSymbol::Floatp) => TypeHandlers::floatp(args),
+             Some(BuiltInSymbol::Delete) => StringHandlers::delete_chunk_arg(args),
++            // offset(rect, h, v) is the rect form; offset(sub, str) the string
++            // search. Robot Rage places hit dents with offset(dstRect, dx, dy).
++            Some(BuiltInSymbol::Offset)
++                if args.len() == 3
++                    && reserve_player_ref(|player| matches!(player.get_datum(&args[0]), Datum::Rect(..))) =>
++            {
++                crate::player::handlers::datum_handlers::rect::RectDatumHandlers::offset(&args[0], &args[1..].to_vec())
++            }
+             Some(BuiltInSymbol::Offset) => StringHandlers::offset(args),
+             Some(BuiltInSymbol::Length) => StringHandlers::length(args),
+             Some(BuiltInSymbol::Script) => MovieHandlers::script(args),
+@@ -2730,6 +2738,15 @@ impl BuiltInHandlerManager {
                          return res;
                      }
                  }
@@ -823,8 +1048,38 @@ index 10722341..aba14990 100644
              let sprite = player.movie.score.get_sprite(sprite_num as i16)
                  .ok_or_else(|| ScriptError::new(format!("sendSprite: sprite {} not found", sprite_num)))?;
              let fallback = sprite.script_instance_list.clone();
+diff --git a/vm-rust/src/player/handlers/string.rs b/vm-rust/src/player/handlers/string.rs
+index 1981919b..bbdfee07 100644
+--- a/vm-rust/src/player/handlers/string.rs
++++ b/vm-rust/src/player/handlers/string.rs
+@@ -155,8 +155,10 @@ impl StringHandlers {
+             let str_value = player.get_datum(&args[0]).string_value()?;
+             let mut chars = str_value.chars();
+ 
++            // Director on Windows counts in the ANSI code page (Windows-1252),
++            // the same table text is decoded with, so an em dash is 151.
+             let byte_val = if let Some(c) = chars.next() {
+-                c as i32
++                crate::io::encoding::char_to_win1252_byte(c).map_or(c as i32, |b| b as i32)
+             } else {
+                 0
+             };
+@@ -168,9 +170,10 @@ impl StringHandlers {
+     pub fn num_to_char(args: &Vec<DatumRef>) -> Result<DatumRef, ScriptError> {
+         reserve_player_mut(|player| {
+             let num = player.get_datum(&args[0]).int_value()?;
+-            let byte_val = (num & 0xFF) as u8 as char;
+-
+-            // Build a single-byte string directly from raw bytes (Latin-1 1:1)
++            // Windows-1252, as Director on Windows: Robot Rage's ranking line
++            // is "Ranking: " & numToChar(151), an em dash. Read as Latin-1 it
++            // was the control character U+0097, drawn as a box.
++            let byte_val = crate::io::encoding::win1252_byte_to_char((num & 0xFF) as u8);
+             let result_string = byte_val.to_string();
+ 
+             Ok(player.alloc_datum(Datum::String(result_string)))
 diff --git a/vm-rust/src/player/handlers/types.rs b/vm-rust/src/player/handlers/types.rs
-index c3ecce13..d08a30d8 100644
+index c3ecce13..8b6ef9f9 100644
 --- a/vm-rust/src/player/handlers/types.rs
 +++ b/vm-rust/src/player/handlers/types.rs
 @@ -1120,6 +1120,13 @@ impl TypeHandlers {
@@ -841,8 +1096,26 @@ index c3ecce13..d08a30d8 100644
              DatumType::Xtra => {
                  let xtra_name = reserve_player_ref(|player| {
                      player
+@@ -1164,7 +1171,16 @@ impl TypeHandlers {
+             } else {
+                 let first_arg = player.get_datum(&args[0]);
+                 if first_arg.is_string() {
+-                    let hex_str = first_arg.string_value()?.replace("#", "");
++                    // "#RRGGBB", and also "0xRRGGBB": Robot Rage writes its greys
++                    // as rgb("0x888888") (a shader it names "grey", paint-map
++                    // fills). Reading "0x" as the red pair turned them teal.
++                    let raw = first_arg.string_value()?.replace("#", "");
++                    let trimmed = raw.trim();
++                    let hex_str = trimmed
++                        .strip_prefix("0x")
++                        .or_else(|| trimmed.strip_prefix("0X"))
++                        .unwrap_or(trimmed)
++                        .to_string();
+                     let r_str = if hex_str.len() >= 2 { &hex_str[0..2] } else { "00" };
+                     let g_str = if hex_str.len() >= 4 { &hex_str[2..4] } else { "00" };
+                     let b_str = if hex_str.len() >= 6 { &hex_str[4..6] } else { "00" };
 diff --git a/vm-rust/src/player/keyboard.rs b/vm-rust/src/player/keyboard.rs
-index ea4974c2..ed2eaaa5 100644
+index ea4974c2..99e080c0 100644
 --- a/vm-rust/src/player/keyboard.rs
 +++ b/vm-rust/src/player/keyboard.rs
 @@ -29,9 +29,8 @@ impl KeyboardManager {
@@ -857,8 +1130,20 @@ index ea4974c2..ed2eaaa5 100644
          self.last_key_time = Some(chrono::Local::now());
  
          // Map JS key names to Director key values
-@@ -62,10 +61,9 @@ impl KeyboardManager {
-         self.down_keys.last().or(self.last_key.as_ref())
+@@ -56,16 +55,18 @@ impl KeyboardManager {
+         }
+     }
+ 
+-    /// The key `the key` and `the keyCode` describe: the one most recently
+-    /// pressed among those still down, else the last one pressed.
++    /// The key `the key` and `the keyCode` describe: the last one pressed,
++    /// whether or not it is still down (ScummVM, tested against Director, sets
++    /// them on key-down only). Robot Rage switches cameras in `on keyUp` with
++    /// `the key` while an arrow is held for driving; preferring a key still down
++    /// reported the arrow there, so the camera keys did nothing while driving.
+     fn current_key(&self) -> Option<&KeyboardKey> {
+-        self.down_keys.last().or(self.last_key.as_ref())
++        self.last_key.as_ref()
      }
  
 -    pub fn key_up(&mut self, _: &str, code: u16) {
@@ -870,7 +1155,7 @@ index ea4974c2..ed2eaaa5 100644
  
          self.down_keys.retain(|x| x.code != code_to_remove);
      }
-@@ -148,6 +146,20 @@ impl KeyboardManager {
+@@ -148,6 +149,20 @@ impl KeyboardManager {
      }
  }
  
@@ -891,8 +1176,24 @@ index ea4974c2..ed2eaaa5 100644
  #[cfg(test)]
  mod tests {
      use super::KeyboardManager;
-@@ -176,4 +188,3 @@ mod tests {
-         assert_eq!(kb.key(), "a");
+@@ -168,12 +183,14 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn a_key_still_down_wins_over_the_last_release() {
++    fn the_key_is_the_last_key_pressed_even_with_another_held() {
++        // Driving with an arrow held, then tapping V for a camera change: the
++        // arena's keyUp handler must see "v".
+         let mut kb = KeyboardManager::new();
+-        kb.key_down("a".to_string(), 65);
+-        kb.key_down("b".to_string(), 66);
+-        kb.key_up("b", 66);
+-        assert_eq!(kb.key(), "a");
++        kb.key_down("ArrowUp".to_string(), 38);
++        kb.key_down("v".to_string(), 86);
++        kb.key_up("v", 86);
++        assert_eq!(kb.key(), "v");
++        assert_eq!(kb.key_pressed(), "\u{1E}", "keyPressed still reports the held arrow");
      }
  }
 -
@@ -1245,7 +1546,7 @@ index 1c4a69a3..99cced5a 100644
      player_wait_available().await;
  
 diff --git a/vm-rust/src/player/score.rs b/vm-rust/src/player/score.rs
-index 2499fe7e..2080ba9d 100644
+index 2499fe7e..a9aa3b70 100644
 --- a/vm-rust/src/player/score.rs
 +++ b/vm-rust/src/player/score.rs
 @@ -2544,10 +2544,37 @@ impl Score {
@@ -1307,12 +1608,86 @@ index 2499fe7e..2080ba9d 100644
      pub fn get_sorted_channels(&self, frame_num: u32) -> Vec<&SpriteChannel> {
          let generation = self.render_channel_cache_generation;
          if let Some((cached_frame, cached_generation, cached_indices)) =
-@@ -5937,7 +5977,17 @@ pub fn get_sprites_at(player: &DirPlayer, x: i32, y: i32) -> Vec<u32> {
+@@ -5342,20 +5382,17 @@ pub fn sprite_set_prop(sprite_id: i16, prop_name: Symbol, value: Datum) -> Resul
+                 sprite_id,
+                 |player| {
+                     let mut instance_ids = vec![];
++                    // Entries that aren't script instances are ignored, not an
++                    // error: Robot Rage's garage assigns
++                    // [new(script("popup menu behavior"), sp, part), 31] to its
++                    // weapon popups and runs on in Director. Raising here aborted
++                    // the garage's whole update from beginSprite.
+                     for ref_id in ref_list {
+-                        let datum = player.get_datum(ref_id);
+-                        match datum {
+-                            Datum::ScriptInstanceRef(instance_id) => {
+-                                instance_ids.push(instance_id.clone());
+-                            }
+-                            _ => {
+-                                return Err(ScriptError::new(
+-                                    "Cannot set non-script to scriptInstanceList".to_string(),
+-                                ))
+-                            }
++                        if let Datum::ScriptInstanceRef(instance_id) = player.get_datum(ref_id) {
++                            instance_ids.push(instance_id.clone());
+                         }
+                     }
+-                    Ok(instance_ids)
++                    Ok::<_, ScriptError>(instance_ids)
+                 },
+                 |sprite, value| {
+                     let instance_ids = value?;
+@@ -5612,7 +5649,38 @@ pub fn sprite_set_prop(sprite_id: i16, prop_name: Symbol, value: Datum) -> Resul
+ /// For matte-ink sprites, check if a point (in stage coordinates) hits an opaque pixel.
+ /// Returns true if the sprite is not matte-ink, or if the matte is not yet computed,
+ /// or if the pixel at the given point is opaque.
++/// A 32-bit bitmap with alpha and a non-zero `alphaThreshold` (authored on the
++/// member, Director 7+) takes clicks only where alpha >= the threshold, whatever
++/// the ink. Robot Rage's garage headers (`sell_head` etc.) are alpha images
++/// raised over the Paintshop/Buy/Sell hotspots and transparent there. `None`
++/// when the rule doesn't apply.
++fn alpha_threshold_hit_test(player: &DirPlayer, sprite: &Sprite, rect: &IntRect, hit_x: i32, hit_y: i32) -> Option<bool> {
++    let member = sprite.member.as_ref().and_then(|r| player.movie.cast_manager.find_member_by_ref(r))?;
++    let bmp_member = member.member_type.as_bitmap()?;
++    let threshold = bmp_member.info.alpha_threshold;
++    if threshold == 0 {
++        return None;
++    }
++    let bitmap = player.bitmap_manager.get_bitmap(bmp_member.image_ref)?;
++    if !(bitmap.bit_depth == 32 && bitmap.use_alpha) {
++        return None;
++    }
++    let rect_w = (rect.right - rect.left).max(1);
++    let rect_h = (rect.bottom - rect.top).max(1);
++    let bx = ((hit_x - rect.left) as u32 * bitmap.width as u32 / rect_w as u32) as u16;
++    let by = ((hit_y - rect.top) as u32 * bitmap.height as u32 / rect_h as u32) as u16;
++    if bx >= bitmap.width || by >= bitmap.height {
++        return Some(false);
++    }
++    let palettes = player.movie.cast_manager.palettes();
++    let (_, _, _, a) = bitmap.get_pixel_color_with_alpha(&palettes, bx, by);
++    Some(a >= threshold)
++}
++
+ fn matte_pixel_hit_test(player: &DirPlayer, sprite: &Sprite, rect: &IntRect, hit_x: i32, hit_y: i32) -> bool {
++    if let Some(hit) = alpha_threshold_hit_test(player, sprite, rect, hit_x, hit_y) {
++        return hit;
++    }
+     if !should_matte_hit_test(sprite.ink as u32) {
+         return true;
+     }
+@@ -5937,7 +6005,23 @@ pub fn get_sprites_at(player: &DirPlayer, x: i32, y: i32) -> Vec<u32> {
  }
  
  pub fn get_sprite_at(player: &DirPlayer, x: i32, y: i32, scripted: bool) -> Option<u32> {
 -    for channel in player.movie.score.get_sorted_channels(player.movie.current_frame).iter().rev() {
-+    let channels = player.movie.score.get_sorted_channels(player.movie.current_frame);
++    // Clicks go to the highest CHANNEL under the point; locZ changes drawing
++    // order only. Inferred from Robot Rage's garage: four tab-bar headers are
++    // raised above the Paintshop/Buy/Sell hotspots with locZ, each opaque over
++    // its own tab, and the tabs work in Director. (Needs confirming in
++    // Dirapi.dll.)
++    let mut channels = player.movie.score.get_sorted_channels(player.movie.current_frame);
++    channels.sort_by_key(|c| c.number);
 +    let is_3d = |sprite: &Sprite| {
 +        sprite.member.as_ref()
 +            .and_then(|r| player.movie.cast_manager.find_member_by_ref(r))
@@ -1352,6 +1727,19 @@ index 0d5b27db..1f602311 100644
          Datum::HavokObjectRef(_) => {
              crate::player::handlers::datum_handlers::havok_object::HavokObjectDatumHandlers::set_prop(obj_ref, prop_name.as_str(), value_ref.clone())
          }
+diff --git a/vm-rust/src/player/sprite.rs b/vm-rust/src/player/sprite.rs
+index 47ce8af4..a941f271 100644
+--- a/vm-rust/src/player/sprite.rs
++++ b/vm-rust/src/player/sprite.rs
+@@ -20,6 +20,8 @@ impl ColorRef {
+         // rendered red instead of black. Also guards the slicing against
+         // short/odd strings (no panic, no red fallback).
+         let hex = hex.trim().trim_start_matches('#').trim();
++        // "0xRRGGBB" too (Robot Rage's rgb("0x888888")), as the rgb() builtin.
++        let hex = hex.strip_prefix("0x").or_else(|| hex.strip_prefix("0X")).unwrap_or(hex);
+         let byte = |start: usize| -> u8 {
+             hex.get(start..start + 2)
+                 .and_then(|s| u8::from_str_radix(s, 16).ok())
 diff --git a/vm-rust/src/player/timeout.rs b/vm-rust/src/player/timeout.rs
 index 3574d9e6..29259296 100644
 --- a/vm-rust/src/player/timeout.rs
@@ -2561,10 +2949,78 @@ index 3df208d0..832f6391 100644
      }
  }
 diff --git a/vm-rust/src/rendering_gpu/webgl2/mod.rs b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-index 6ae8c20e..c488ccab 100644
+index 6ae8c20e..fd1c4753 100644
 --- a/vm-rust/src/rendering_gpu/webgl2/mod.rs
 +++ b/vm-rust/src/rendering_gpu/webgl2/mod.rs
-@@ -844,8 +844,12 @@ impl WebGL2Renderer {
+@@ -114,6 +114,9 @@ pub struct WebGL2Renderer {
+     trails_texture: Option<web_sys::WebGlTexture>,
+     /// Size of the trails FBO texture
+     trails_size: (u32, u32),
++    /// Copy of the framebuffer for inks that read the destination (Not Reverse)
++    ink_dest_texture: Option<web_sys::WebGlTexture>,
++    ink_dest_size: (u32, u32),
+     /// Reused texture for compositing the script-owned stage framebuffer
+     /// (`(the stage).image` imaging-Lingo overlay). Re-uploaded each frame.
+     stage_image_texture: Option<web_sys::WebGlTexture>,
+@@ -219,6 +222,8 @@ impl WebGL2Renderer {
+             trails_fbo: None,
+             trails_texture: None,
+             trails_size: (0, 0),
++            ink_dest_texture: None,
++            ink_dest_size: (0, 0),
+             stage_image_texture: None,
+             active_transition: None,
+             transition_texture: None,
+@@ -390,6 +395,48 @@ impl WebGL2Renderer {
+ 
+     /// Ensure the trails framebuffer exists and is the correct size.
+     /// The trails FBO accumulates images of trails sprites across frames.
++    /// Copy the current draw framebuffer into `ink_dest_texture` and leave it
++    /// bound on texture unit 2 (unit 0 is left active).
++    fn capture_ink_dest(&mut self) {
++        let gl = self.context.gl().clone();
++        let w = gl.drawing_buffer_width().max(1) as u32;
++        let h = gl.drawing_buffer_height().max(1) as u32;
++        let draw_fb = gl
++            .get_parameter(WebGl2RenderingContext::DRAW_FRAMEBUFFER_BINDING)
++            .ok()
++            .and_then(|v| wasm_bindgen::JsCast::dyn_into::<web_sys::WebGlFramebuffer>(v).ok());
++        let (w, h) = if draw_fb.is_some() { self.size } else { (w, h) };
++        gl.active_texture(WebGl2RenderingContext::TEXTURE2);
++        if self.ink_dest_texture.is_none() || self.ink_dest_size != (w, h) {
++            if let Some(old) = self.ink_dest_texture.take() {
++                gl.delete_texture(Some(&old));
++            }
++            let Some(tex) = gl.create_texture() else {
++                gl.active_texture(WebGl2RenderingContext::TEXTURE0);
++                return;
++            };
++            gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&tex));
++            let _ = gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
++                WebGl2RenderingContext::TEXTURE_2D, 0, WebGl2RenderingContext::RGBA8 as i32,
++                w as i32, h as i32, 0, WebGl2RenderingContext::RGBA, WebGl2RenderingContext::UNSIGNED_BYTE, None,
++            );
++            for (pname, v) in [
++                (WebGl2RenderingContext::TEXTURE_MIN_FILTER, WebGl2RenderingContext::NEAREST),
++                (WebGl2RenderingContext::TEXTURE_MAG_FILTER, WebGl2RenderingContext::NEAREST),
++                (WebGl2RenderingContext::TEXTURE_WRAP_S, WebGl2RenderingContext::CLAMP_TO_EDGE),
++                (WebGl2RenderingContext::TEXTURE_WRAP_T, WebGl2RenderingContext::CLAMP_TO_EDGE),
++            ] {
++                gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, pname, v as i32);
++            }
++            self.ink_dest_texture = Some(tex);
++            self.ink_dest_size = (w, h);
++        }
++        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, self.ink_dest_texture.as_ref());
++        gl.bind_framebuffer(WebGl2RenderingContext::READ_FRAMEBUFFER, draw_fb.as_ref());
++        let _ = gl.copy_tex_sub_image_2d(WebGl2RenderingContext::TEXTURE_2D, 0, 0, 0, 0, 0, w as i32, h as i32);
++        gl.active_texture(WebGl2RenderingContext::TEXTURE0);
++    }
++
+     fn ensure_trails_fbo(&mut self, width: u32, height: u32) {
+         if self.trails_fbo.is_some() && self.trails_size == (width, height) {
+             return;
+@@ -844,8 +891,12 @@ impl WebGL2Renderer {
              Some(m) => m.clone(),
              None => return false,
          };
@@ -2578,7 +3034,7 @@ index 6ae8c20e..c488ccab 100644
              .unwrap_or(false)
      }
  
-@@ -1685,7 +1689,7 @@ impl WebGL2Renderer {
+@@ -1685,7 +1736,7 @@ impl WebGL2Renderer {
      /// Render a single sprite
      fn render_sprite(&mut self, player: &mut DirPlayer, channel_num: i16) {
          // Get sprite and member info
@@ -2587,7 +3043,7 @@ index 6ae8c20e..c488ccab 100644
              let score = &player.movie.score;
              let sprite = match score.get_sprite(channel_num) {
                  Some(s) => s,
-@@ -1781,6 +1785,14 @@ impl WebGL2Renderer {
+@@ -1781,6 +1832,14 @@ impl WebGL2Renderer {
                  // these special composited members).
                  blend = 100;
              }
@@ -2602,11 +3058,38 @@ index 6ae8c20e..c488ccab 100644
          }
  
          // Determine what kind of texture we need based on member type
+@@ -4886,6 +4945,18 @@ impl WebGL2Renderer {
+         // use_program returns the effective ink mode (after fallback if needed)
+         let effective_ink = self.shader_manager.use_program(&self.context, ink_mode);
+ 
++        // Not Reverse reads the destination: copy the framebuffer as it is
++        // now into a texture on unit 2 for the shader.
++        if effective_ink == InkMode::NotReverse {
++            self.capture_ink_dest();
++            if let Some(program) = self.shader_manager.get_program(effective_ink) {
++                if let Some(loc) = program.u_dest.as_ref() {
++                    self.context.gl().uniform1i(Some(loc), 2);
++                }
++            }
++        }
++
++
+         // Get the active program's uniform locations (use effective_ink to ensure consistency)
+         let program = match self.shader_manager.get_program(effective_ink) {
+             Some(p) => p,
 diff --git a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
-index 1880c1df..0b4960a9 100644
+index 1880c1df..2fdd2616 100644
 --- a/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
 +++ b/vm-rust/src/rendering_gpu/webgl2/scene3d.rs
-@@ -532,7 +532,11 @@ void main() {
+@@ -184,6 +184,7 @@ struct Shader3d {
+     u_light_dir: Option<WebGlUniformLocation>,
+     u_light_spot_angle: Option<WebGlUniformLocation>,
+     u_light_spot_exp: Option<WebGlUniformLocation>,
++    u_light_spec: Option<WebGlUniformLocation>,
+     u_camera_pos: Option<WebGlUniformLocation>,
+     u_global_ambient: Option<WebGlUniformLocation>,
+     u_fog_enabled: Option<WebGlUniformLocation>,
+@@ -532,7 +533,11 @@ void main() {
  "#;
  
          let fs_source = r#"#version 300 es
@@ -2619,9 +3102,220 @@ index 1880c1df..0b4960a9 100644
  // Fragment shaders default `int` to mediump, but vertex shaders default it to
  // highp. A uniform shared across both stages must match precision or GLSL ES
  // linking fails ("Uniform `u_texcoord2_direct` is not linkable between attached
+@@ -595,6 +600,7 @@ uniform vec3 u_light_atten[8];   // (constant, linear, quadratic) per light
+ uniform vec3 u_light_dir[8];     // direction for directional/spot lights
+ uniform float u_light_spot_angle[8]; // spot cone angle (radians, 0 = not spot)
+ uniform float u_light_spot_exp[8];   // spot falloff exponent (0 = uniform/hard edge, SpotDecay off)
++uniform float u_light_spec[8];       // 1 = the light makes specular highlights (light.specular)
+ uniform vec3 u_camera_pos;
+ uniform vec3 u_global_ambient;
+ 
+@@ -880,7 +886,7 @@ void main() {
+                 if (u_shininess > 0.0 && diff > 0.0) {
+                     vec3 H = normalize(L + V);
+                     float spec = pow(max(dot(Nl, H), 0.0), u_shininess);
+-                    result += u_light_color[i] * u_specular_color.rgb * spec * atten;
++                    result += u_light_color[i] * u_specular_color.rgb * spec * atten * u_light_spec[i];
+                 }
+             }
+         }
+@@ -994,6 +1000,7 @@ void main() {
+             u_light_dir: u("u_light_dir[0]"),
+             u_light_spot_angle: u("u_light_spot_angle[0]"),
+             u_light_spot_exp: u("u_light_spot_exp[0]"),
++            u_light_spec: u("u_light_spec[0]"),
+             u_camera_pos: u("u_camera_pos"),
+             u_global_ambient: u("u_global_ambient"),
+             u_fog_enabled: u("u_fog_enabled"),
+@@ -6230,6 +6237,7 @@ void main() {
+         let mut directions = [0.0f32; 24];   // 8 * 3 (direction for spot/directional)
+         let mut spot_angles = [0.0f32; 8];   // cone angle in radians
+         let mut spot_exps = [0.0f32; 8];     // GL_SPOT_EXPONENT (0 = SpotDecay off, uniform)
++        let mut specs = [1.0f32; 8];         // light.specular
+         let mut global_ambient = [0.0f32, 0.0, 0.0];
+         let mut num_lights = 0i32;
+ 
+@@ -6360,6 +6368,7 @@ void main() {
+                 // SpotDecay ON → GL_SPOT_EXPONENT so the beam reaches 0.04 at the outer
+                 // cone edge (exp = log10(.04)/log10(cos(outer))); OFF → 0 (uniform + hard
+                 // cutoff). Clamp the log to avoid a blow-up for near-0° cones.
++                specs[li] = if light.specular { 1.0 } else { 0.0 };
+                 spot_exps[li] = if lt == 3 && light.spot_decay {
+                     let cone_cos = spot_angles[li].cos().min(0.9999).max(1e-4);
+                     (0.04f32.ln() / cone_cos.ln()).clamp(0.0, 128.0)
+@@ -6418,6 +6427,7 @@ void main() {
+         gl.uniform3fv_with_f32_array(shader.u_light_dir.as_ref(), &directions[..n * 3]);
+         gl.uniform1fv_with_f32_array(shader.u_light_spot_angle.as_ref(), &spot_angles[..n]);
+         gl.uniform1fv_with_f32_array(shader.u_light_spot_exp.as_ref(), &spot_exps[..n]);
++        gl.uniform1fv_with_f32_array(shader.u_light_spec.as_ref(), &specs[..n]);
+         gl.uniform3f(shader.u_global_ambient.as_ref(), global_ambient[0], global_ambient[1], global_ambient[2]);
+     }
+ 
+diff --git a/vm-rust/src/rendering_gpu/webgl2/shaders.rs b/vm-rust/src/rendering_gpu/webgl2/shaders.rs
+index 43b15781..8e429cf9 100644
+--- a/vm-rust/src/rendering_gpu/webgl2/shaders.rs
++++ b/vm-rust/src/rendering_gpu/webgl2/shaders.rs
+@@ -38,6 +38,8 @@ pub enum InkMode {
+     Reverse,
+     /// Ink 3: Ghost - background transparent, foreground inverted
+     Ghost,
++    /// Ink 6: Not Reverse - destination XOR source (reads the framebuffer)
++    NotReverse,
+ }
+ 
+ impl InkMode {
+@@ -66,6 +68,7 @@ impl InkMode {
+                 | InkMode::SubPin
+                 | InkMode::Lighten
+                 | InkMode::Reverse
++                | InkMode::NotReverse
+         )
+     }
+ 
+@@ -84,12 +87,12 @@ impl InkMode {
+             40 => InkMode::Lighten,
+             41 => InkMode::Darken,
+             2 => InkMode::Reverse,
+-            // Ink 6 (Not Reverse): like Reverse, the background color is
+-            // transparent. dirplayer has no distinct "not reverse" compositing
+-            // (the CPU path falls through to a normal blend), so render it as a
+-            // background-transparent copy — the visible fix Director users
+-            // expect is the transparent background, not a colour inversion.
+-            6 => InkMode::BackgroundTransparent,
++            // Ink 6 (Not Reverse): XORs the source into what is already on
++            // the stage (in RGB, the inverse of Reverse's palette-index XOR;
++            // ScummVM's 32-bit path does the same). Robot Rage highlights the
++            // selected robot in its list with a grey Not Reverse shape over the
++            // name; drawn as a plain copy it hid the name under a grey bar.
++            6 => InkMode::NotReverse,
+             // Ink 38 (Subtract): dst - src with the background color transparent.
+             // Visually identical to Sub Pin (35) on the GPU — both clamp to 0 via
+             // GL_FUNC_REVERSE_SUBTRACT — so reuse it (SubPin already color-keys
+@@ -135,6 +138,8 @@ pub struct ShaderProgram {
+     /// separately because tan(180°) = 0 wouldn't preserve Director's
+     /// vertical-flip behaviour at that exact value.
+     pub u_skew: Option<WebGlUniformLocation>,
++    /// Copy of the framebuffer under the sprite, for inks that read it (Not Reverse).
++    pub u_dest: Option<WebGlUniformLocation>,
+ }
+ 
+ /// Manages shader programs for different ink modes
+@@ -161,6 +166,7 @@ impl ShaderManager {
+         programs.insert(InkMode::Light, Self::compile_ink_light(context)?);
+         programs.insert(InkMode::Dark, Self::compile_ink_dark(context)?);
+         programs.insert(InkMode::Ghost, Self::compile_ink_ghost(context)?);
++        programs.insert(InkMode::NotReverse, Self::compile_ink_not_reverse(context)?);
+ 
+         Ok(Self {
+             programs,
+@@ -980,6 +986,88 @@ void main() {
+     float alpha = src.a * u_blend;
+     fragColor = vec4(1.0 - src.r, 1.0 - src.g, 1.0 - src.b, alpha);
+ }
++"#;
++
++        Self::compile_program(context, Self::vertex_shader_source(), frag_source)
++    }
++
++    /// Compile Ink 6 (Not Reverse): destination XOR source. Needs `u_dest`, a
++    /// copy of the framebuffer, bound by the caller.
++    fn compile_ink_not_reverse(context: &WebGL2Context) -> Result<ShaderProgram, JsValue> {
++        let frag_source = r#"#version 300 es
++precision highp float;
++
++in vec2 v_texcoord;
++
++uniform sampler2D u_texture;
++uniform sampler2D u_dest;
++uniform float u_blend;
++uniform vec4 u_bg_color;
++uniform float u_color_tolerance;
++
++out vec4 fragColor;
++
++// Director picks the source texel of a scaled sprite as floor(d * src / dst),
++// the top-left corner of the destination pixel, where GPU nearest sampling
++// picks the texel under the pixel CENTRE. Measured on klods.dcr's ruler
++// (239x46 drawn at 166x32): the floor rule reproduces the projector's
++// pixels 100%, the centre rule 88%, and the difference is the digit rows
++// the centre rule skips. At 1:1 both rules pick the same texel.
++//
++// src and dst sizes come from the same uniforms the vertex shader placed
++// the quad with, so they are exact. A first version derived the step from
++// texcoord derivatives; those carry about 1e-5 relative error, which at
++// row 196 of a 1024x768 backdrop already rounded to the texel above.
++// A rotated or skewed sprite keeps the centre rule so its resampling
++// stays symmetric.
++uniform vec4 u_sprite_rect;
++uniform vec4 u_tex_rect;
++uniform float u_rotation;
++uniform float u_skew_flip;
++uniform float u_skew;
++uniform float u_floor_rule;
++vec4 sampleSprite(vec2 tc) {
++    if (abs(u_rotation) > 0.001 || u_skew_flip > 0.5 || abs(u_skew) > 0.001) {
++        return texture(u_texture, tc);
++    }
++    vec2 ts = vec2(textureSize(u_texture, 0));
++    vec2 srcSize = abs(u_tex_rect.zw) * ts;
++    vec2 dstSize = max(abs(u_sprite_rect.zw), vec2(1.0));
++    // The floor rule is measured for an authored bitmap scaling DOWN
++    // (u_floor_rule). Text, field and shape textures keep the pixel-centre
++    // rule, and so does scaling up: unmeasured, and the floor rule there
++    // shifts a sprite by up to half a source pixel.
++    if (u_floor_rule < 0.5 || dstSize.x > srcSize.x || dstSize.y > srcSize.y) {
++        return texture(u_texture, tc);
++    }
++    // Position within the sprite, 0..1; a pixel centre sits at (d + 0.5) / dst,
++    // so floor has half a pixel of margin when recovering d.
++    vec2 rel = (tc - u_tex_rect.xy) / u_tex_rect.zw;
++    vec2 d = floor(rel * dstSize);
++    vec2 src = floor(d * srcSize / dstSize + 1e-3);
++    ivec2 texel = ivec2(floor(u_tex_rect.xy * ts + 1e-3)) + ivec2(src);
++    texel = clamp(texel, ivec2(0), ivec2(ts) - ivec2(1));
++    return texelFetch(u_texture, texel, 0);
++}
++
++void main() {
++    vec4 src = sampleSprite(v_texcoord);
++
++    if (src.a < 0.01) discard;
++
++    // Color-key transparency: discard pixels matching the sprite's bgColor.
++    vec3 diff = abs(src.rgb - u_bg_color.rgb);
++    float dist = max(max(diff.r, diff.g), diff.b);
++    if (dist < u_color_tolerance) discard;
++
++    // Destination XOR source, per RGB byte; u_dest holds the framebuffer as it
++    // was before this sprite. Blend mixes towards the unchanged destination.
++    vec4 dst = texelFetch(u_dest, ivec2(gl_FragCoord.xy), 0);
++    uvec3 s8 = uvec3(clamp(src.rgb, 0.0, 1.0) * 255.0 + 0.5);
++    uvec3 d8 = uvec3(clamp(dst.rgb, 0.0, 1.0) * 255.0 + 0.5);
++    vec3 x = vec3(d8 ^ s8) / 255.0;
++    fragColor = vec4(mix(dst.rgb, x, src.a * u_blend), 1.0);
++}
+ "#;
+ 
+         Self::compile_program(context, Self::vertex_shader_source(), frag_source)
+@@ -1264,6 +1352,7 @@ void main() {
+         let u_skew_flip = gl.get_uniform_location(&program, "u_skew_flip");
+         let u_floor_rule = gl.get_uniform_location(&program, "u_floor_rule");
+         let u_skew = gl.get_uniform_location(&program, "u_skew");
++        let u_dest = gl.get_uniform_location(&program, "u_dest");
+ 
+         Ok(ShaderProgram {
+             program,
+@@ -1283,6 +1372,7 @@ void main() {
+             u_skew_flip,
+             u_floor_rule,
+             u_skew,
++            u_dest,
+         })
+     }
+ }
 diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
 new file mode 100644
-index 00000000..55e82964
+index 00000000..2abe7a90
 --- /dev/null
 +++ b/vm-rust/tests/rr_score.rs
 @@ -0,0 +1,169 @@
@@ -2784,8 +3478,8 @@ index 00000000..55e82964
 +            }
 +            let a_opaque = alpha.pixels().filter(|p| p.0[0] >= 128).count();
 +            println!(
-+                "cast {} member {}: {}x{} depth {} use_alpha {} | matte opaque {:.1}% | alpha>=128 {:.1}%",
-+                cast.id, member, w, h, info.bit_depth, info.use_alpha,
++                "cast {} member {}: {}x{} depth {} use_alpha {} alpha_threshold {} | matte opaque {:.1}% | alpha>=128 {:.1}%",
++                cast.id, member, w, h, info.bit_depth, info.use_alpha, info.alpha_threshold,
 +                100.0 * opaque as f64 / (w * h) as f64, 100.0 * a_opaque as f64 / (w * h) as f64
 +            );
 +            rgba.save(format!("{}/m{}-image.png", out, member)).unwrap();

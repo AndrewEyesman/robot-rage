@@ -1,5 +1,134 @@
 {
- "operator:intersects": {"verdict": "fixed", "impact": "high", "needs_adobe": true, "evidence": "Fixed 2026-10-23 (docs/collision.md): mattes of 32-bit alpha images come from alpha, and both sprites are placed with rotation and flips. Driving sweep: 0 of 342 clear paths blocked (was 124); real walls stop within 2 px. Rotation rule and alpha threshold still to confirm in Dirapi.dll.", "dirplayer": "player/bytecode/sprite_compare.rs, player/bitmap/mask.rs"},
- "call:keypressed": {"verdict": "fixed", "impact": "high", "uses": 31, "movies": ["arena104"], "game_usage": "The arena polls the arrow keys (Mac codes 123-126) and letters/punctuation every frame to build the robot's key map.", "evidence": "Fixed 2026-10-23: a plain call no longer reaches a sprite behavior's handler of the same name (the robot behavior has its own keyPressed), and punctuation maps to Mac key codes. Verified by driving.", "dirplayer": "player/mod.rs (player_call_global_handler), player/keyboard_map.rs"},
- "method:fadeout": {"verdict": "works", "impact": "low", "uses": 3, "movies": ["robotwars"], "game_usage": "Fades a sound channel out over 400-1200 ms.", "evidence": "Implemented; upstream stops the channel when the fade reaches silence.", "dirplayer": "player/handlers/datum_handlers/sound_channel.rs:234"}
+ "operator:intersects": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": true,
+  "evidence": "Fixed 2026-10-23 (docs/collision.md): mattes of 32-bit alpha images come from alpha, and both sprites are placed with rotation and flips. Driving sweep: 0 of 342 clear paths blocked (was 124); real walls stop within 2 px. Rotation rule and alpha threshold still to confirm in Dirapi.dll.",
+  "dirplayer": "player/bytecode/sprite_compare.rs, player/bitmap/mask.rs"
+ },
+ "call:keypressed": {
+  "verdict": "fixed",
+  "impact": "high",
+  "uses": 31,
+  "movies": [
+   "arena104"
+  ],
+  "game_usage": "The arena polls the arrow keys (Mac codes 123-126) and letters/punctuation every frame to build the robot's key map.",
+  "evidence": "Fixed 2026-10-23: a plain call no longer reaches a sprite behavior's handler of the same name (the robot behavior has its own keyPressed), and punctuation maps to Mac key codes. Verified by driving.",
+  "dirplayer": "player/mod.rs (player_call_global_handler), player/keyboard_map.rs"
+ },
+ "method:fadeout": {
+  "verdict": "works",
+  "impact": "low",
+  "uses": 3,
+  "movies": [
+   "robotwars"
+  ],
+  "game_usage": "Fades a sound channel out over 400-1200 ms.",
+  "evidence": "Implemented; upstream stops the channel when the fade reaches silence.",
+  "dirplayer": "player/handlers/datum_handlers/sound_channel.rs:234"
+ },
+ "the:systemdate": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. date .seconds now counts from midnight (Director's documented value; a read gave 48006 at 13:20). The arena's pacing and walkover timer only act when it grows, so it stalled at each minute.",
+  "dirplayer": "player/handlers/datum_handlers/date.rs"
+ },
+ "prop:seconds": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. See systemDate: seconds since midnight.",
+  "dirplayer": "player/handlers/datum_handlers/date.rs"
+ },
+ "machinery:machinery:tempo-timing": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. The busy-wait pacing in checkTempo reads (the systemDate).seconds, now seconds since midnight.",
+  "dirplayer": "player/handlers/datum_handlers/date.rs"
+ },
+ "the:key": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. the key / the keyCode are the last key pressed (ScummVM, tested against Director, sets them on key-down only). Verified in game: with Up held, pressing 2/3/1 changes the follow camera distance 500->1000->1500->500.",
+  "dirplayer": "player/keyboard.rs"
+ },
+ "call:numtochar": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. Windows-1252, as Director on Windows: numToChar(151) is the em dash. The Stats line now reads 'Ranking: <tab>\u2014'; the em dash isn't drawn, apparently missing from the embedded Impact subset (font coverage not yet checked).",
+  "dirplayer": "player/handlers/string.rs"
+ },
+ "call:chartonum": {
+  "verdict": "fixed",
+  "impact": "low",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. Windows-1252, the inverse of numToChar.",
+  "dirplayer": "player/handlers/string.rs"
+ },
+ "call:rgb": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. rgb(\"0xRRGGBB\") parses as hex like \"#RRGGBB\"; the garage's 'grey' preview shader and paint fills were teal. Verified: the garage robot renders grey.",
+  "dirplayer": "player/handlers/types.rs, player/sprite.rs (ColorRef::from_hex)"
+ },
+ "prop:specular": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. shader.specular writes reach the shader (an earlier no-op arm caught them), and light.specular is honoured by the renderer (default TRUE, from the file flag or Lingo). Arena render unchanged apart from the robot's shine (mean difference 3.5/255).",
+  "dirplayer": "player/handlers/datum_handlers/shockwave3d_object.rs, rendering_gpu/webgl2/scene3d.rs"
+ },
+ "method:setpixel": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. An integer on an indexed image is written as the palette index (the dictionary's raw pixel value), not matched as a grey. The robot paint maps are decoded this way.",
+  "dirplayer": "player/handlers/datum_handlers/bitmap.rs"
+ },
+ "prop:scriptinstancelist": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. Non-instance entries are ignored instead of raising; the garage assigns [new(...), 31] to its weapon popups and runs on in Director.",
+  "dirplayer": "player/score.rs"
+ },
+ "event:stepframe": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. No extra actorList stepFrame on mouseDown (Director sends stepFrame once per frame); it nudged the arena camera on every click.",
+  "dirplayer": "player/commands.rs"
+ },
+ "call:offset": {
+  "verdict": "fixed",
+  "impact": "medium",
+  "needs_adobe": false,
+  "evidence": "Fixed 2026-10-23. offset(rect, h, v) is the rect form; robot hit dents now get a valid rect.",
+  "dirplayer": "player/handlers/manager.rs"
+ },
+ "machinery:machinery:mouse-hit-test": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": true,
+  "evidence": "Fixed 2026-10-23. Clicks go to the highest CHANNEL under the point (locZ changes drawing only), and 32-bit alpha bitmaps honour their authored alphaThreshold (byte 10 of the D7+ bitmap header, as ScummVM reads it). Inferred from the garage: four tab-bar headers are raised over the Paintshop/Buy/Sell hotspots by locZ, each opaque over its own tab with alphaThreshold 1, and the tabs work in Director. Verified: all four workshop tabs switch section.",
+  "dirplayer": "player/score.rs (get_sprite_at, alpha_threshold_hit_test), director/enums.rs"
+ },
+ "prop:ink 6 (not reverse)": {
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": true,
+  "uses": 1,
+  "movies": [
+   "login013_"
+  ],
+  "game_usage": "The robot list highlights the selected row with a grey filled shape in ink 6 over the name.",
+  "evidence": "Fixed 2026-10-23: ink 6 XORs the source into the framebuffer (the RGB form of Not Reverse; ScummVM's 32-bit path does the same). Was drawn as a solid grey bar hiding the name; now an inverse-video highlight with the name readable.",
+  "dirplayer": "rendering_gpu/webgl2/shaders.rs, mod.rs (capture_ink_dest)"
+ }
 }

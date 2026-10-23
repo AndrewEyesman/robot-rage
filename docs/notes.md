@@ -149,6 +149,20 @@ see `docs/upstream.md` for why.
 - Mattes of 32-bit images with alpha come from the alpha channel, and `intersects` places
   both sprites with their rotation and flips before comparing mattes. The arena's hidden
   collision maps are alpha images and the robot sprite rotates; see `docs/collision.md`.
+- `(the systemDate).seconds` counts from midnight; the arena paces itself by waiting for it
+  to grow.
+- `the key` / `the keyCode` are the last key pressed, so the camera keys work while an arrow
+  is held.
+- `numToChar` / `charToNum` use Windows-1252 (the Stats "Ranking" em dash).
+- `rgb("0xRRGGBB")` parses like `"#RRGGBB"`.
+- `shader.specular` writes take effect, and `light.specular` gates highlights (default on).
+- `setPixel(x, y, integer)` on an indexed image writes the palette index (paint maps).
+- `scriptInstanceList` assignments skip entries that aren't script instances.
+- No extra `stepFrame` on mouseDown.
+- `offset(rect, h, v)` is the rect form.
+- Ink 6 (Not Reverse) XORs into the framebuffer (robot list highlight).
+- Clicks go to the highest channel under the point (locZ only changes drawing), and 32-bit
+  alpha bitmaps honour their authored `alphaThreshold` (workshop tabs).
 - `rr_intersect_sweep(...)` (debug export) sweeps a sprite over a grid and reports
   `intersects` results, for the collision checks in `tools/`.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back

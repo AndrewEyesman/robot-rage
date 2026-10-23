@@ -265,12 +265,12 @@
    "login013_.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "low",
   "needs_adobe": false,
   "game_usage": "Character codes in the MD5/encryption helpers and text parsing (rocket_encrypt for prefs, checksums).",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:153-166",
-  "evidence": "Returns the Unicode code point. Text is decoded as cp1252, so characters from 0x80-0x9F (euro, curly quotes, dashes) report 8364/8217/8212... instead of 128-159 that Director returns. ASCII and 0xA0-0xFF are correct, so only unusual input diverges. Fix: char_to_win1252_byte."
+  "dirplayer": "player/handlers/string.rs",
+  "evidence": "Fixed 2026-10-23. Windows-1252, the inverse of numToChar."
  },
  {
   "name": "clearCache",
@@ -1099,12 +1099,12 @@
    "login013_.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
   "needs_adobe": false,
   "game_usage": "Builds characters from codes: ASCII letters, accented Latin-1 letters (192-196 etc.), newline, and code 151 (Windows em dash) for the \"no ranking\" mark in the lobby and the garage Stats tab (Getranking chooses 151 when machineType is 256, 209 on Mac).",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:168-178; glyph lookup vendor/dirplayer-rs/vm-rust/src/io/encoding.rs:62-80",
-  "evidence": "Maps the byte straight to U+0000-U+00FF (Latin-1). Director on Windows uses the system code page (cp1252), so 151 is the em dash U+2014; ScummVM's b_numToChar also maps through the movie platform encoding. dirplayer returns U+0097, a C1 control char; char_to_win1252_byte has no mapping for 0x80-0x9F Latin-1 code points (only 0xA0-0xFF pass through), so the glyph is missing and shows as a box. This is the cause of the Stats tab \"Ranking: [box]\" bug. Fix: decode num&0xFF with win1252_byte_to_char (io/encoding.rs:43)."
+  "dirplayer": "player/handlers/string.rs",
+  "evidence": "Fixed 2026-10-23. Windows-1252, as Director on Windows: numToChar(151) is the em dash. The Stats line now reads 'Ranking: <tab>\u2014'; the em dash isn't drawn, apparently missing from the embedded Impact subset (font coverage not yet checked)."
  },
  {
   "name": "objectp",
@@ -1133,12 +1133,12 @@
    "login013_.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
   "needs_adobe": false,
   "game_usage": "Two forms: string search (find a substring/QUOTE/RETURN/tags in text) and RECT offset (offset(rect, dh, dv)) used in the arena to place damage dents/tears/dirt on the robot texture maps every time a robot is hit, plus a lobby text blit and an unused garage pattern-fill helper.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/handlers/string.rs:57-86; dispatch vendor/dirplayer-rs/vm-rust/src/player/handlers/manager.rs:1277",
-  "evidence": "The global offset builtin always runs the string search. offset(rect, h, v) stringifies the rect and searches for it inside the number string, returning an Int (0), so the dent destination rect becomes 0 and the following copyPixels raises \"Invalid destRect for copyPixels\" (player/handlers/datum_handlers/bitmap.rs:1170-1174); the damage handler never reaches updateRobotTexture, so robots never show hit damage. The string form is fine (case-insensitive, 1-based). Fix: dispatch Rect first arg to the rect offset method."
+  "dirplayer": "player/handlers/manager.rs",
+  "evidence": "Fixed 2026-10-23. offset(rect, h, v) is the rect form; robot hit dents now get a valid rect."
  },
  {
   "name": "openFile",
@@ -1397,12 +1397,12 @@
    "login013_.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": false,
   "game_usage": "Colours from 3 ints (some with float components like 2.55 used as a per-unit multiplier for shader emissive/specular), and from hex strings written with a 0x prefix: the default gray fill of robot paint maps (map1a/1b/2a/2b reset, text2image fallback), the paint editor background colour, and a garage shader explicitly named \"grey\" (ambient/diffuse/specular).",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/handlers/types.rs:1164-1191",
-  "evidence": "String form strips \"#\" and reads chars 0-1, 2-3, 4-5 as R,G,B. For a 0x-prefixed string R is parsed from \"0x\" (fails -> 0) and G/B from the first two hex pairs, so gray 888888 becomes rgb(0,136,136) (teal) and the \"grey\" shader's CCCCCC becomes rgb(0,204,204) (cyan). The shader name proves Director read these as gray, so robot textures, the paint background and the garage preview shader are tinted cyan in dirplayer; likely a contributor to \"garage robot model looks wrong\". Fix: also strip a leading 0x/0X. Separate unclear point: float components (rgb(0,2.55,0)) are truncated by int_value() to 2; Director may round to 3 or keep more precision before the colour is multiplied by an int (weapon v22/v33 glow) - needs Adobe to settle."
+  "dirplayer": "player/handlers/types.rs, player/sprite.rs (ColorRef::from_hex)",
+  "evidence": "Fixed 2026-10-23. rgb(\"0xRRGGBB\") parses as hex like \"#RRGGBB\"; the garage's 'grey' preview shader and paint fills were teal. Verified: the garage robot renders grey."
  },
  {
   "name": "rollover",
@@ -2247,12 +2247,12 @@
   "movies": [
    "arena104.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
   "needs_adobe": false,
   "game_usage": "1 handler: the arena follow camera (camera script), added to the actorList each match, moves the 3D camera behind the robot every frame.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/handlers/movie.rs:1171-1224 (per tick, before prepareFrame); vendor/dirplayer-rs/vm-rust/src/player/commands.rs:598-614 (extra on every mouseDown)",
-  "evidence": "The per-frame delivery is right: once per tick, before prepareFrame, to a snapshot of the actorList that tolerates mid-dispatch changes. Wrong: dirplayer also sends stepFrame to every actor on each mouseDown (commands.rs:598-614, a fix for another movie's rollover cache). Director sends it only when the playhead enters a frame or the stage is updated. In the arena each click (abuse/menu/chat) steps the camera an extra time, a small visible jump. Remove or gate that flush."
+  "dirplayer": "player/commands.rs",
+  "evidence": "Fixed 2026-10-23. No extra actorList stepFrame on mouseDown (Director sends stepFrame once per frame); it nudged the arena camera on every click."
  },
  {
   "name": "stopMovie",
@@ -2395,12 +2395,12 @@
   "category": "machinery",
   "uses": null,
   "movies": [],
-  "verdict": "unclear",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": true,
   "game_usage": "Clicks go to scripted sprites: buttons, invisible shape hotspots (workshop tabs 1/97 with Jump), labels with locz behaviors on top of buttons, the garage 3D preview (drag to rotate) under an alpha frame bitmap raised by locz, and arena overlay buttons. Several handlers compare the clickOn with their own sprite.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/score.rs:5979-6000 (get_sprite_at, 3D first), 5690-5750 (rect/rotation/matte), 5777-5845 (click-transparent heuristics); vendor/dirplayer-rs/vm-rust/src/player/commands.rs:676-760 (clickOn, mouse_down_sprite)",
-  "evidence": "The click target is the front-most sprite with a script (behavior or member script) whose rect, rotation and matte contain the point, which matches Director's 'active sprite' rule (and ScummVM's respondsToMouse). Not Director-documented, all needing Adobe's check: (a) patch: every 3D sprite is tested before all 2D sprites; (b) heuristics that make non-editable text/field, blend 0 and blend<50 shape sprites click-through unless they have mouse/rollover handlers; (c) the clickOn uses the front-most sprite of any kind (fork note: Director says the last active sprite clicked). At garage frame 5 nothing found covers the tab hotspots (preview2 is 387x417 unstretched at x>=413, the 3D sprite 6 is at x 486-776), so these rules don't explain the tabs bug on reading alone."
+  "dirplayer": "player/score.rs (get_sprite_at, alpha_threshold_hit_test), director/enums.rs",
+  "evidence": "Fixed 2026-10-23. Clicks go to the highest CHANNEL under the point (locZ changes drawing only), and 32-bit alpha bitmaps honour their authored alphaThreshold (byte 10 of the D7+ bitmap header, as ScummVM reads it). Inferred from the garage: four tab-bar headers are raised over the Paintshop/Buy/Sell hotspots by locZ, each opaque over its own tab with alphaThreshold 1, and the tabs work in Director. Verified: all four workshop tabs switch section."
  },
  {
   "name": "machinery:movie-switching",
@@ -2443,12 +2443,12 @@
   "category": "machinery",
   "uses": null,
   "movies": [],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": false,
   "game_usage": "Score tempo channel: factory 60 fps from frame 1; arena 20 fps from frame 10 (tempo byte 246, fps in cue field), movie default before that; login/lobby default. The arena's checkTempo (backyard and main frame scripts) reads systemDate.seconds every 5 frames and busy-waits `repeat while the milliSeconds <= t` for pwait ms per prepareFrame. The backyard starts with pwait = 60 until the first seconds tick.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/score.rs:3741-3790 (tempo 246 decode, persists until next change); vendor/dirplayer-rs/vm-rust/src/player/mod.rs:7484-7586 (deadline pacing); vendor/dirplayer-rs/vm-rust/src/player/mod.rs:5505-5590 (busy-wait yield)",
-  "evidence": "Tempo decode and persistence are right. Pacing is max(1000/tempo, work) with an absolute deadline, matching Director's measured model. The busy-wait reads the real clock, and the cooperative yield (1 ms every >=16 ms of spinning) only slows such loops slightly. Wrong for the game: because systemDate.seconds is 0-59 in dirplayer (date.rs:270), the backyard's initial 60 ms per frame wait never ends if Training starts at second 59. The arena then runs at ~14 fps or less for the whole session (about a 1-in-60 chance). After that, the speed-hack check freezes at the next minute wrap. Fixing systemDate.seconds fixes both. Not checked: the movie-default tempo of the arena's frames 1-9 (DRCF)."
+  "dirplayer": "player/handlers/datum_handlers/date.rs",
+  "evidence": "Fixed 2026-10-23. The busy-wait pacing in checkTempo reads (the systemDate).seconds, now seconds since midnight."
  },
  {
   "name": "add",
@@ -3664,12 +3664,12 @@
    "factory0604.dcr",
    "robotwars.cct"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": false,
   "game_usage": "text2image (robotwars movie script) decodes a robot paint map received from the server: it makes image(w,h,8), sets paletteRef to member \"map palette\", writes every pixel with setPixel(x,y,<integer palette index>), then copyPixels into the map member. The paint editor spray and single-pixel tools use setPixel(x,y,<paletteIndex colour>) with float coordinates.",
-  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/bitmap.rs:767-857 (integer on 8-bit at :811-815); vm-rust/src/player/bitmap/drawing.rs:459-556 set_pixel (8-bit nearest-palette search); vm-rust/src/player/bitmap/drawing.rs:587 set_pixel_index (exists, unused here)",
-  "evidence": "For an integer on an 8-bit image, dirplayer builds the grey (idx,idx,idx) and stores the nearest \"map palette\" entry to that grey (bitmap.rs:811-815, comment \"treat as palette index -> grayscale\"). Director writes the raw pixel value, i.e. the palette index. That is the documented getPixel(#integer)/setPixel(int) round trip, and dirplayer's own getPixel(#integer) returns the raw index for 8-bit (bitmap.rs:247-253), so the two disagree. Unless the map palette is an identity grey ramp, every robot paint map loaded from the server gets the wrong colours (garage, lobby and arena textures). image2text then re-encodes the corrupted pixels when the map is saved. Fix: call set_pixel_index for int on <=8-bit. The colour-object form and float coordinates work (int_value truncates)."
+  "dirplayer": "player/handlers/datum_handlers/bitmap.rs",
+  "evidence": "Fixed 2026-10-23. An integer on an indexed image is written as the palette index (the dictionary's raw pixel value), not matched as a grey. The robot paint maps are decoded this way."
  },
  {
   "name": "setPlayList",
@@ -4644,6 +4644,20 @@
   "evidence": "Ink 8 and 36 are handled. Ink 34 is rendered as Add Pin (clamped sum, bgColor keyed); Director documents Add as wrapping (subtract 256 when the sum exceeds 255) and does not key the background. The robot-list highlight bar is a full-row Add shape over the name text, so its look depends entirely on this: likely cause (or part) of \"selected row shows a bar with no name\". Ink 4 (Not Copy) is drawn as an inverted copy with background transparent; Director's Not Copy is an inverted opaque copy (login indicator only, low). Settle the robot list by comparing pixels of the selected row with a real-vm-rust/src/player screenshot after implementing wrap."
  },
  {
+  "category": "prop",
+  "name": "ink 6 (not reverse)",
+  "verdict": "fixed",
+  "impact": "high",
+  "needs_adobe": true,
+  "uses": 1,
+  "movies": [
+   "login013_"
+  ],
+  "game_usage": "The robot list highlights the selected row with a grey filled shape in ink 6 over the name.",
+  "evidence": "Fixed 2026-10-23: ink 6 XORs the source into the framebuffer (the RGB form of Not Reverse; ScummVM's 32-bit path does the same). Was drawn as a solid grey bar hiding the name; now an inverse-video highlight with the name readable.",
+  "dirplayer": "rendering_gpu/webgl2/shaders.rs, mod.rs (capture_ink_dest)"
+ },
+ {
   "name": "ircip1",
   "category": "prop",
   "uses": 1,
@@ -5601,12 +5615,12 @@
    "lobby060_.dcr",
    "login013_.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
-  "needs_adobe": true,
+  "needs_adobe": false,
   "game_usage": "Garage and arena attach behaviors at runtime by assigning a list of new script instances to puppet sprites (inventory icons, use/remove buttons, popup menus, robot and wheel behaviors); cleanup assigns []. In the garage Use tab, the popup sprites for weapons that can mount front or back are given a list holding one instance followed by an integer. Lobby reads it.",
-  "dirplayer": "vm-rust/src/player/score.rs:5379-5420 (setter rejects any non-ScriptInstanceRef element with ScriptError \"Cannot set non-script to scriptInstanceList\"); vm-rust/src/player/mod.rs:4094-4110 (on_script_error calls self.stop())",
-  "evidence": "Plain instance lists work (spriteNum set on each instance, cache invalidated). But the list containing an integer raises a script error, which stops the whole movie in the middle of the Use tab framescript UpdateAll (called from beginSprite): remaining part rows, remove buttons and the inventory row are never created and state never reaches #update. The shipped game ran this path, so Director accepts the list; whether Director skips the integer at event dispatch needs Adobe code. Likely hit for any robot with a front/back mountable weapon and may be related to the garage/workshop tab problems."
+  "dirplayer": "player/score.rs",
+  "evidence": "Fixed 2026-10-23. Non-instance entries are ignored instead of raising; the garage assigns [new(...), 31] to its weapon popups and runs on in Director."
  },
  {
   "name": "scriptsEnabled",
@@ -5671,12 +5685,12 @@
   "movies": [
    "arena104.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
   "needs_adobe": false,
   "game_usage": "(the systemDate).seconds in the arena and Training frame scripts: a once-a-second tempo check recomputes a per-frame busy-wait (frame pacing) and a speed-hack counter only when the value increases; the match frame script also uses it as the clock for the 20-second no-message walkover check.",
-  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/date.rs:270 (get), :307 (set); mod.rs:3176-3180",
-  "evidence": "Director's date .seconds is seconds since midnight (a systemDate read gives values like 13950). dirplayer returns js Date getSeconds(), 0-59. After the first time it reads 59, the value never goes higher again, so the tempo check stops updating for the rest of the round: the busy-wait stays at whatever it last was (Training starts at 60 ms per frame, the match at 0, so a round that starts at second 59 runs with the wrong pacing all round), and in multiplayer the 20 s silence walkover check (and the ping time) freeze after about a minute. Fix: return hours*3600+minutes*60+seconds."
+  "dirplayer": "player/handlers/datum_handlers/date.rs",
+  "evidence": "Fixed 2026-10-23. See systemDate: seconds since midnight."
  },
  {
   "name": "selection",
@@ -5803,12 +5817,12 @@
    "lobby060_",
    "robotwars"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
   "needs_adobe": false,
   "game_usage": "Shader specular: robot paint shaders rgb(150,100,0), effect shaders black, wheels shaderList.specular = rgb(0,0,0) (every \"hjul\" part), factory store shader. Light specular: whitelight.specular = 0 in the garage/lobby preview.",
-  "dirplayer": "vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs:1762-1766 shadows vm-rust/src/player/handlers/datum_handlers/shockwave3d_object.rs:1929-1990",
-  "evidence": "In set_prop's match_ci!, an earlier \"specular\" arm (meant for lights) returns Ok(()) without doing anything, so the shader arm further down is unreachable: EVERY shader.specular write is dropped and new shaders keep the default WHITE specular (types.rs W3dMaterial default). The light form is a no-op as well. Result: robot bodies and wheels get white highlights where the game asked for orange or none, and the garage spot light still adds highlights. Likely part of \"garage robot/wheels look wrong\"."
+  "dirplayer": "player/handlers/datum_handlers/shockwave3d_object.rs, rendering_gpu/webgl2/scene3d.rs",
+  "evidence": "Fixed 2026-10-23. shader.specular writes reach the shader (an earlier no-op arm caught them), and light.specular is honoured by the renderer (default TRUE, from the file flag or Lingo). Arena render unchanged apart from the robot's shine (mean difference 3.5/255)."
  },
  {
   "name": "spriteNum",
@@ -6579,12 +6593,12 @@
    "lobby060_.dcr",
    "login013_.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "medium",
-  "needs_adobe": true,
+  "needs_adobe": false,
   "game_usage": "Read in keyDown/keyUp handlers. In the arena (backyard and main frame scripts) keyUp switches the camera with 0-3/v/b and starts chat with T. In the factory, 'z' means undo. The login and chat fields test RETURN, TAB, BACKSPACE and QUOTE, and insert the typed character into the field text.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/keyboard.rs:58-62 (current_key), :123-135 (key), :31-56 (key_down mapping)",
-  "evidence": "Character mapping is right: Enter becomes CR, Tab TAB, Backspace 8, arrows chars 28-31, and printable keys come from e.key. The bug is in current_key(): it returns the most recently pressed key that is STILL DOWN, and only uses the last pressed key when nothing is held (the test at keyboard.rs:181-188 locks this in). In the arena the player usually holds an arrow while tapping 'v'. In on keyUp for 'v' the arrow is still down, so `the key` reads the arrow (char 30), the case statement matches nothing, and the camera-view and chat keys are ignored while driving. Director reports the key of the latest key event, which is the released 'v' (Windows auto-repeat does not resume for the held arrow). Settle the exact rule, last keyDown vs. the keyUp's own key, in Adobe's code."
+  "dirplayer": "player/keyboard.rs",
+  "evidence": "Fixed 2026-10-23. the key / the keyCode are the last key pressed (ScummVM, tested against Director, sets them on key-down only). Verified in game: with Up held, pressing 2/3/1 changes the follow camera distance 500->1000->1500->500."
  },
  {
   "name": "keyboardFocusSprite",
@@ -6997,11 +7011,11 @@
   "movies": [
    "arena104.dcr"
   ],
-  "verdict": "wrong",
+  "verdict": "fixed",
   "impact": "high",
   "needs_adobe": false,
   "game_usage": "Arena (Training and multiplayer frame scripts): the date object's .seconds is read at start and every 5 frames by checkTempo. Each time it increases the game measures ms elapsed and flags a speed hack if over 15 s. The multiplayer frame script also uses this seconds value for the 20 s opponent-silence walkover and ping time.",
-  "dirplayer": "vendor/dirplayer-rs/vm-rust/src/player/mod.rs:3176-3181 (new DateObject per read, never freed); vendor/dirplayer-rs/vm-rust/src/player/handlers/datum_handlers/date.rs:270 (seconds -> js get_seconds(), 0-59)",
-  "evidence": "Director documents date.seconds as seconds since midnight (e.g. 13950). dirplayer returns the seconds field of the minute (0-59). In the game's \"has seconds increased\" test the value then wraps every minute: pSeconds reaches 59, nothing is ever greater, and the check freezes after the first minute boundary. Single player: the speed-hack detector silently stops, which is harmless for honest play. Multiplayer: pSeconds stops advancing, so the 20 s silence walkover never fires and the ping time freezes. Separately, each read allocates a DateObject that is never removed from player.date_objects (a small leak, about 6 per second in the arena). Fix: seconds = h*3600+m*60+s. Training-arena consequence missed above: the backyard frame script starts with pwait = 60, so every prepareFrame busy-waits 60 ms until the first time checkTempo sees .seconds increase (in Director that is under a second, then pwait drops to 0). With dirplayer's 0-59 value, entering Training when the clock reads second 59 means .seconds never exceeds 59, pwait stays 60 for the whole session and the arena is throttled to ~14 fps or less (about a 1-in-60 chance per session). That would show up as intermittent sluggish driving."
+  "dirplayer": "player/handlers/datum_handlers/date.rs",
+  "evidence": "Fixed 2026-10-23. date .seconds now counts from midnight (Director's documented value; a read gave 48006 at 13:20). The arena's pacing and walkover timer only act when it grows, so it stalled at each minute."
  }
 ]

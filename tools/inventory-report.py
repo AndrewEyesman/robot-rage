@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Merge the inventory slices into docs/inventory.json and render docs/inventory.md.
 
-  tools/inventory-report.py <slice.json>... --overrides tools/inventory-overrides.json
+  tools/inventory-report.py [<slice.json>...] --overrides tools/inventory-overrides.json
+
+Without slices, docs/inventory.json itself is the base (the usual case: record a fix
+in the overrides file and re-run).
 
 Each slice is a list of {name, category, uses, movies, verdict, impact, needs_adobe,
 game_usage, dirplayer, evidence}. Overrides change verdict/evidence for items fixed or
@@ -22,11 +25,11 @@ def key(r):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("slices", nargs="+")
+    ap.add_argument("slices", nargs="*")
     ap.add_argument("--overrides")
     a = ap.parse_args()
     rows = []
-    for path in a.slices:
+    for path in a.slices or [os.path.join(ROOT, "docs", "inventory.json")]:
         rows += json.load(open(path))
     overrides = json.load(open(a.overrides)) if a.overrides else {}
     seen = set()
