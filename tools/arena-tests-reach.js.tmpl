@@ -1,0 +1,27 @@
+async (page) => {
+  // Log in, open Crusher in the garage, then go to Training (arena "backyard").
+  const logs = [];
+  page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') logs.push(m.type() + ' ' + m.text().slice(0, 250)); });
+  page.on('dialog', d => { logs.push('DIALOG ' + d.message()); d.accept().catch(() => {}); });
+  await page.setViewportSize({ width: 1800, height: 1100 });
+  await page.goto('http://127.0.0.1:__PORT__/');
+  await page.waitForTimeout(2000);
+  const box = await page.locator('canvas').first().boundingBox();
+  const sx = box.width / 800, sy = box.height / 600;
+  const click = async (x, y) => { await page.mouse.move(box.x + x * sx, box.y + y * sy); await page.mouse.down(); await page.waitForTimeout(150); await page.mouse.up(); await page.waitForTimeout(300); };
+  await page.mouse.click(box.x + 400, box.y + 300);
+  await page.waitForTimeout(15000);
+  await click(480, 222);
+  for (let i = 0; i < 30; i++) await page.keyboard.press('Backspace');
+  await page.keyboard.type('tester@home.lan', { delay: 30 });
+  await click(400, 260);
+  await page.keyboard.type('rage2005', { delay: 30 });
+  await click(475, 309);
+  await page.waitForTimeout(5000);
+  await click(395, 235);
+  await click(480, 375);
+  await page.waitForTimeout(12000);
+  await click(731, 501);
+  await page.waitForTimeout(12000);
+  return logs.slice(0, 20).join('\n');
+}

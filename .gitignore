@@ -8,3 +8,4 @@ public/game/
 public/dirplayer/
 # Playwright MCP scratch output (test scripts, screenshots).
 .playwright-mcp/
+__pycache__/

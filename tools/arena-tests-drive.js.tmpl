@@ -1,0 +1,39 @@
+async (page) => {
+  const PLAN = __PLAN__;
+  const PORT = __PORT__;
+  const ev = async (code) => page.evaluate(async (c) => { const r = JSON.parse(String(await window.__vm.mcp_eval_lingo(c))); return String(r.success ? r.result_value : 'ERR ' + r.error); }, code);
+  const locOf = async () => { const s = await ev('string(sprite(10).loc)'); const m = s.match(/point\((-?\d+), (-?\d+)\)/); return m ? [+m[1], +m[2]] : null; };
+  const out = [];
+  for (const p of PLAN) {
+    const x = 4 * (p.mx - 1200), y = 4 * (p.my - 200);
+    await ev('sprite(10).damageStatus.energy = 100.0');
+    await ev('sprite(10).state = #move');
+    await ev(`sendSprite(10, #setrob, point(${x}, ${y}), ${p.heading})`);
+    for (const k of ['dx', 'dy', 'speed', 'torque', 'dangle', 'dz']) await ev(`sprite(10).${k} = 0.0`);
+    for (const [k, v] of [['lastx', x], ['lasty', y], ['lastangle', p.heading]]) await ev(`sprite(10).${k} = ${v}`);
+    await page.waitForTimeout(120);
+    const start = await locOf();
+    const rad = p.heading * Math.PI / 180;
+    let best = 0, last = 0, reversed = false;
+    await page.keyboard.down('ArrowUp');
+    for (let i = 0; i < __STEPS__; i++) {
+      await page.waitForTimeout(90);
+      const l = await locOf(); if (!l) continue;
+      const prog = (l[0] - start[0]) * Math.cos(rad) + (l[1] - start[1]) * Math.sin(rad);
+      if (prog < last - 2) reversed = true;
+      best = Math.max(best, prog); last = prog;
+    }
+    await page.keyboard.up('ArrowUp');
+    out.push({ ...p, start, best: Math.round(best), last: Math.round(last), reversed });
+  }
+  await page.evaluate(async ([o, port]) => fetch(`http://127.0.0.1:8099/__NAME__-${port}.json`, { method: 'POST', body: JSON.stringify(o) }), [out, PORT]);
+  const free = out.filter(o => o.clear >= 20).map(o => o.best).sort((a, b) => a - b); const med = free[free.length >> 1] || 0;
+  return JSON.stringify({
+    samples: out.length,
+    // sweep: paths the reference calls clear (>= 20 map px) on which the robot bounced or stalled
+    clear: out.filter(o => o.clear >= 20).length, median: med,
+    blockedOnClearPath: out.filter(o => o.clear >= 20 && (o.reversed || o.best < 0.5 * med)).length,
+    // walls: approaches that went more than 30 px past the predicted contact point
+    passedThroughWall: out.filter(o => o.clear < 30 && o.best > o.clear + 30).length,
+  });
+}

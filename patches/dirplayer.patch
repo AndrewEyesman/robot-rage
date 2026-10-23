@@ -39,6 +39,482 @@ index 3048ea00..44f377d2 100644
                  || (n >= 52 && n % 4 == 0 && {
                      let b = entry_bytes;
                      let sf = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+diff --git a/vm-rust/src/lib.rs b/vm-rust/src/lib.rs
+index d447a516..8de12eda 100644
+--- a/vm-rust/src/lib.rs
++++ b/vm-rust/src/lib.rs
+@@ -2540,3 +2540,68 @@ pub fn start() {
+     }
+     init_player();
+ }
++
++/// Debug: sweep sprite `probe` over a grid and test `probe intersects t` for each
++/// target, at every `angle_step` degrees. Returns JSON
++/// `{"xs":[..],"ys":[..],"angles":[..],"hits":{"<target>":["<0/1 per x>" per y per angle]}}`.
++/// The probe's loc and rotation are restored afterwards. Used by the arena
++/// collision sweep (`scripts/collision-sweep.mjs`).
++#[wasm_bindgen]
++pub fn rr_intersect_sweep(
++    probe: i16,
++    targets: Vec<i16>,
++    left: i32,
++    top: i32,
++    right: i32,
++    bottom: i32,
++    step: i32,
++    angle_step: f64,
++) -> String {
++    use player::bytecode::sprite_compare::sprites_intersect;
++    reserve_player_mut(|player| {
++        let saved = {
++            let s = player.movie.score.get_sprite_mut(probe);
++            (s.loc_h, s.loc_v, s.rotation)
++        };
++        let xs: Vec<i32> = (left..right).step_by(step.max(1) as usize).collect();
++        let ys: Vec<i32> = (top..bottom).step_by(step.max(1) as usize).collect();
++        let mut angles = vec![];
++        let mut a = 0.0;
++        while a < 360.0 {
++            angles.push(a);
++            a += angle_step.max(1.0);
++        }
++        let mut hits: Vec<(i16, Vec<String>)> = targets.iter().map(|t| (*t, vec![])).collect();
++        for &angle in &angles {
++            for &y in &ys {
++                let mut rows: Vec<String> = targets.iter().map(|_| String::with_capacity(xs.len())).collect();
++                for &x in &xs {
++                    {
++                        let s = player.movie.score.get_sprite_mut(probe);
++                        s.loc_h = x;
++                        s.loc_v = y;
++                        s.rotation = angle;
++                    }
++                    for (i, t) in targets.iter().enumerate() {
++                        rows[i].push(if sprites_intersect(player, probe, *t) { '1' } else { '0' });
++                    }
++                }
++                for (i, row) in rows.into_iter().enumerate() {
++                    hits[i].1.push(row);
++                }
++            }
++        }
++        {
++            let s = player.movie.score.get_sprite_mut(probe);
++            (s.loc_h, s.loc_v, s.rotation) = saved;
++        }
++        let hits_json: Vec<String> = hits
++            .iter()
++            .map(|(t, rows)| format!("\"{}\":[{}]", t, rows.iter().map(|r| format!("\"{}\"", r)).collect::<Vec<_>>().join(",")))
++            .collect();
++        format!(
++            "{{\"xs\":{:?},\"ys\":{:?},\"angles\":{:?},\"hits\":{{{}}}}}",
++            xs, ys, angles, hits_json.join(",")
++        )
++    })
++}
+diff --git a/vm-rust/src/player/bitmap/bitmap.rs b/vm-rust/src/player/bitmap/bitmap.rs
+index d22c47c7..af81adc0 100644
+--- a/vm-rust/src/player/bitmap/bitmap.rs
++++ b/vm-rust/src/player/bitmap/bitmap.rs
+@@ -1993,3 +1993,26 @@ mod crop_tests {
+         assert_eq!(&out.data[(2 * 3 + 2) * 4..(2 * 3 + 2) * 4 + 4], &[0, 0, 0, 0], "padding past the source is transparent");
+     }
+ }
++
++#[cfg(test)]
++mod matte_tests {
++    use super::*;
++    use crate::player::bitmap::palette_map::PaletteMap;
++
++    /// A 32-bit image with alpha mattes by its alpha, whatever colour sits under
++    /// the transparent pixels. Robot Rage's arena collision maps have black,
++    /// fully transparent floor; keying out white made that floor a wall.
++    #[test]
++    fn alpha_image_mattes_by_alpha() {
++        let mut bmp = Bitmap::new(4, 1, 32, 32, 8, PaletteRef::BuiltIn(BuiltInPalette::SystemWin));
++        bmp.use_alpha = true;
++        let pixels: [[u8; 4]; 4] = [[0, 0, 0, 0], [0, 0, 0, 255], [255, 255, 255, 0], [255, 255, 255, 255]];
++        for (i, p) in pixels.iter().enumerate() {
++            bmp.data[i * 4..i * 4 + 4].copy_from_slice(p);
++        }
++        bmp.create_matte(&PaletteMap::new());
++        let matte = bmp.matte.as_ref().unwrap();
++        let bits: Vec<bool> = (0..4).map(|x| matte.get_bit(x, 0)).collect();
++        assert_eq!(bits, vec![false, true, false, true]);
++    }
++}
+diff --git a/vm-rust/src/player/bitmap/mask.rs b/vm-rust/src/player/bitmap/mask.rs
+index dca82ee4..81d5b2be 100644
+--- a/vm-rust/src/player/bitmap/mask.rs
++++ b/vm-rust/src/player/bitmap/mask.rs
+@@ -131,6 +131,24 @@ impl Bitmap {
+     }
+ 
+     pub fn create_matte(&mut self, palettes: &PaletteMap) {
++        // A 32-bit image with an alpha channel mattes by its alpha (11.5
++        // Scripting Dictionary, createMatte: "built from the image's alpha
++        // layer"; its alphaThreshold argument defaults to 0). Robot Rage's arena
++        // collision maps are such images: walls are opaque, open floor is
++        // transparent, and the colour under the transparent pixels is a mix of
++        // black and white. Keying out the white background instead made most of
++        // two maps solid, so the robot hit walls that aren't there.
++        if self.bit_depth == 32 && self.use_alpha {
++            let mut matte = BitmapMask::new(self.width, self.height, false);
++            for y in 0..self.height {
++                for x in 0..self.width {
++                    let (_, _, _, a) = self.get_pixel_color_with_alpha(palettes, x, y);
++                    matte.set_bit(x, y, a > 0);
++                }
++            }
++            self.matte = Some(Arc::new(matte));
++            return;
++        }
+         let bg_color = &self.get_bg_color_ref();
+         let mut mask = self.get_mask(palettes, bg_color);
+         let mut outside_pixels = vec![];
+diff --git a/vm-rust/src/player/bytecode/sprite_compare.rs b/vm-rust/src/player/bytecode/sprite_compare.rs
+index b66492b2..c2aeb775 100644
+--- a/vm-rust/src/player/bytecode/sprite_compare.rs
++++ b/vm-rust/src/player/bytecode/sprite_compare.rs
+@@ -30,80 +30,137 @@ fn get_sprite_image_ref(player: &DirPlayer, sprite_num: i16) -> Option<(BitmapRe
+ 
+ /// Check pixel-level collision between two sprites using their bitmap mattes.
+ /// Only called when AABB already overlaps and at least one sprite has matte ink.
+-fn check_matte_pixel_overlap(
+-    player: &DirPlayer,
+-    src_num: i16,
+-    tgt_num: i16,
+-    src_rect: (i32, i32, i32, i32),
+-    tgt_rect: (i32, i32, i32, i32),
+-    src_is_matte: bool,
+-    tgt_is_matte: bool,
+-) -> bool {
+-    // Compute overlap region in stage coordinates
+-    let overlap_left = src_rect.0.max(tgt_rect.0);
+-    let overlap_top = src_rect.1.max(tgt_rect.1);
+-    let overlap_right = src_rect.2.min(tgt_rect.2);
+-    let overlap_bottom = src_rect.3.min(tgt_rect.3);
+-
+-    if overlap_left >= overlap_right || overlap_top >= overlap_bottom {
+-        return false;
+-    }
+-
+-    // Helper: get the matte Arc for a sprite's bitmap
+-    let get_matte = |sprite_num: i16| -> Option<(Arc<BitmapMask>, u16, u16)> {
+-        let member_ref = player.movie.score.get_channel(sprite_num)
+-            .sprite.member.as_ref()?.clone();
+-        let member = player.movie.cast_manager.find_member_by_ref(&member_ref)?;
+-        let bmp = member.member_type.as_bitmap()?;
+-        let bitmap = player.bitmap_manager.get_bitmap(bmp.image_ref)?;
+-        let matte = bitmap.matte.as_ref()?.clone();
+-        Some((matte, bitmap.width, bitmap.height))
+-    };
+-
+-    // Get matte data for matte-ink sprites
+-    let src_matte = if src_is_matte { get_matte(src_num) } else { None };
+-    let tgt_matte = if tgt_is_matte { get_matte(tgt_num) } else { None };
++/// Where a sprite sits on the stage, for collision tests: its unrotated rect,
++/// the point it rotates and flips about (its loc, i.e. the member's regPoint),
++/// and, for matte inks, the bitmap matte to sample.
++struct SpriteShape {
++    rect: (f64, f64, f64, f64),
++    loc: (f64, f64),
++    cos: f64,
++    sin: f64,
++    flip_h: bool,
++    flip_v: bool,
++    matte: Option<(Arc<BitmapMask>, u16, u16)>,
++}
+ 
+-    // If we need matte data but it's not available (not yet rendered), fall back to AABB
+-    if (src_is_matte && src_matte.is_none()) || (tgt_is_matte && tgt_matte.is_none()) {
+-        return true;
++impl SpriteShape {
++    fn of(player: &mut DirPlayer, sprite_num: i16) -> Option<SpriteShape> {
++        let sprite = player.movie.score.get_sprite(sprite_num)?;
++        sprite.member.as_ref()?;
++        let r = crate::player::score::get_concrete_sprite_rect(player, sprite);
++        if r.right <= r.left || r.bottom <= r.top {
++            return None;
++        }
++        let (rad, flip_h, flip_v, ink) =
++            (sprite.rotation.to_radians(), sprite.flip_h, sprite.flip_v, sprite.ink);
++        let loc = (sprite.loc_h as f64, sprite.loc_v as f64);
++        let matte = if is_matte_ink(ink) {
++            get_sprite_image_ref(player, sprite_num).and_then(|(image_ref, w, h)| {
++                let palettes = player.movie.cast_manager.palettes();
++                let bmp = player.bitmap_manager.get_bitmap_mut(image_ref)?;
++                if bmp.matte.is_none() {
++                    bmp.create_matte(&palettes);
++                }
++                bmp.matte.clone().map(|m| (m, w, h))
++            })
++        } else {
++            None
++        };
++        Some(SpriteShape {
++            rect: (r.left as f64, r.top as f64, r.right as f64, r.bottom as f64),
++            loc,
++            cos: rad.cos(),
++            sin: rad.sin(),
++            flip_h,
++            flip_v,
++            matte,
++        })
+     }
+ 
+-    let src_rect_w = (src_rect.2 - src_rect.0).max(1);
+-    let src_rect_h = (src_rect.3 - src_rect.1).max(1);
+-    let tgt_rect_w = (tgt_rect.2 - tgt_rect.0).max(1);
+-    let tgt_rect_h = (tgt_rect.3 - tgt_rect.1).max(1);
+-
+-    // Check pixel overlap in the overlap region
+-    for stage_y in overlap_top..overlap_bottom {
+-        for stage_x in overlap_left..overlap_right {
+-            // Check source pixel opacity
+-            let src_opaque = if let Some((ref matte, bw, bh, ..)) = src_matte {
+-                let bx = ((stage_x - src_rect.0) as u32 * bw as u32 / src_rect_w as u32) as u16;
+-                let by = ((stage_y - src_rect.1) as u32 * bh as u32 / src_rect_h as u32) as u16;
+-                matte.get_bit(bx, by)
+-            } else {
+-                true // Non-matte sprite: all pixels in bounding box are opaque
+-            };
++    /// Stage bounding box of the rotated sprite.
++    fn bounds(&self) -> (f64, f64, f64, f64) {
++        let (l, t, r, b) = self.rect;
++        let corners = [(l, t), (r, t), (r, b), (l, b)].map(|(x, y)| self.to_stage(x, y));
++        let xs = corners.map(|c| c.0);
++        let ys = corners.map(|c| c.1);
++        (
++            xs.iter().cloned().fold(f64::INFINITY, f64::min),
++            ys.iter().cloned().fold(f64::INFINITY, f64::min),
++            xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
++            ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
++        )
++    }
+ 
+-            if !src_opaque { continue; }
++    /// Unrotated sprite space -> stage. Rotation is clockwise on screen.
++    fn to_stage(&self, x: f64, y: f64) -> (f64, f64) {
++        let (cx, cy) = self.loc;
++        let mut dx = x - cx;
++        let mut dy = y - cy;
++        if self.flip_h { dx = -dx; }
++        if self.flip_v { dy = -dy; }
++        (cx + dx * self.cos - dy * self.sin, cy + dx * self.sin + dy * self.cos)
++    }
+ 
+-            // Check target pixel opacity
+-            let tgt_opaque = if let Some((ref matte, bw, bh, ..)) = tgt_matte {
+-                let bx = ((stage_x - tgt_rect.0) as u32 * bw as u32 / tgt_rect_w as u32) as u16;
+-                let by = ((stage_y - tgt_rect.1) as u32 * bh as u32 / tgt_rect_h as u32) as u16;
+-                matte.get_bit(bx, by)
+-            } else {
+-                true
+-            };
++    /// Stage -> unrotated sprite space.
++    fn to_sprite(&self, x: f64, y: f64) -> (f64, f64) {
++        let (cx, cy) = self.loc;
++        let (dx, dy) = (x - cx, y - cy);
++        let mut ux = dx * self.cos + dy * self.sin;
++        let mut uy = -dx * self.sin + dy * self.cos;
++        if self.flip_h { ux = -ux; }
++        if self.flip_v { uy = -uy; }
++        (cx + ux, cy + uy)
++    }
+ 
+-            if src_opaque && tgt_opaque {
+-                return true; // Found overlapping opaque pixels
++    /// Whether the sprite covers the stage point: inside its rotated rect and,
++    /// for matte inks, on an opaque pixel of the matte.
++    fn covers(&self, x: f64, y: f64) -> bool {
++        let (sx, sy) = self.to_sprite(x, y);
++        let (l, t, r, b) = self.rect;
++        if sx < l || sx >= r || sy < t || sy >= b {
++            return false;
++        }
++        match &self.matte {
++            None => true,
++            Some((matte, bw, bh)) => {
++                let bx = ((sx - l) / (r - l) * *bw as f64) as u16;
++                let by = ((sy - t) / (b - t) * *bh as f64) as u16;
++                bx < *bw && by < *bh && matte.get_bit(bx, by)
+             }
+         }
+     }
++}
+ 
+-    false // No overlapping opaque pixels
++/// `sprite a intersects b`: whether the two sprites overlap on the stage. Both
++/// sprites are placed with their rotation and flips; a sprite with a matte ink
++/// counts only its opaque matte pixels, any other sprite its whole rect.
++///
++/// This used to compare the unrotated rects and sample mattes as if neither
++/// sprite were rotated. Robot Rage tests its rotated robot sprite against
++/// full-arena collision maps this way every frame.
++pub(crate) fn sprites_intersect(player: &mut DirPlayer, a: i16, b: i16) -> bool {
++    let (Some(sa), Some(sb)) = (SpriteShape::of(player, a), SpriteShape::of(player, b)) else {
++        return false;
++    };
++    let (al, at, ar, ab) = sa.bounds();
++    let (bl, bt, br, bb) = sb.bounds();
++    let (l, t, r, btm) = (al.max(bl), at.max(bt), ar.min(br), ab.min(bb));
++    if l >= r || t >= btm {
++        return false;
++    }
++    // Sample stage pixel centres in the overlap of the two bounding boxes.
++    let mut y = t.floor() + 0.5;
++    while y < btm {
++        let mut x = l.floor() + 0.5;
++        while x < r {
++            if sa.covers(x, y) && sb.covers(x, y) {
++                return true;
++            }
++            x += 1.0;
++        }
++        y += 1.0;
++    }
++    false
+ }
+ 
+ pub struct SpriteCompareBytecodeHandler {}
+@@ -153,134 +210,8 @@ impl SpriteCompareBytecodeHandler {
+             let source_sprite_num = get_sprite_num(&source_sprite_ref)?;
+             let target_sprite_num = get_sprite_num(&target_sprite_ref)?;
+ 
+-            debug!("ontospr: Comparing sprite {} with sprite {}", source_sprite_num, target_sprite_num);
+-            debug!("  source_sprite_ref datum: {}", format_concrete_datum(&player.get_datum(&source_sprite_ref), player));
+-            debug!("  target_sprite_ref datum: {}", format_concrete_datum(&player.get_datum(&target_sprite_ref), player));
+-
+-            // Helper function to get rect bounds
+-            let mut get_rect_bounds = |sprite_num: i16| -> Result<(i32, i32, i32, i32), ScriptError> {
+-                let rect_datum = sprite_get_prop(player, sprite_num, Symbol::builtin(BuiltInSymbol::Rect))?;
+-
+-                debug!("  sprite {} rect datum: {}", sprite_num, format_concrete_datum(&rect_datum, player));
+-
+-                // Extract rect coordinates - rect is stored as Datum::Rect([left, top, right, bottom])
+-                match rect_datum {
+-                    Datum::Rect(vals, _flags) => {
+-                        let left = vals[0] as i32;
+-                        let top = vals[1] as i32;
+-                        let right = vals[2] as i32;
+-                        let bottom = vals[3] as i32;
+-                        debug!("  sprite {} rect: [{}, {}, {}, {}]", sprite_num, left, top, right, bottom);
+-                        Ok((left, top, right, bottom))
+-                    }
+-                    Datum::List(_, coords, _) => {
+-                        // Also support list format [left, top, right, bottom] just in case
+-                        if coords.len() != 4 {
+-                            return Err(ScriptError::new(format!(
+-                                "Sprite {} rect has invalid format (length {})",
+-                                sprite_num, coords.len()
+-                            )));
+-                        }
+-                        let left = player.get_datum(&coords[0]).int_value()?;
+-                        let top = player.get_datum(&coords[1]).int_value()?;
+-                        let right = player.get_datum(&coords[2]).int_value()?;
+-                        let bottom = player.get_datum(&coords[3]).int_value()?;
+-                        debug!("  sprite {} rect: [{}, {}, {}, {}]", sprite_num, left, top, right, bottom);
+-                        Ok((left, top, right, bottom))
+-                    }
+-                    _ => {
+-                        Err(ScriptError::new(format!(
+-                            "Sprite {} rect is not a rect or list: {}",
+-                            sprite_num, format_concrete_datum(&rect_datum, player)
+-                        )))
+-                    }
+-                }
+-            };
+-
+-            // Get rectangles for both sprites
+-            let source_rect = match get_rect_bounds(source_sprite_num) {
+-                Ok(rect) => rect,
+-                Err(e) => {
+-                    warn!("WARNING: Failed to get rect for source sprite {}: {:?}", source_sprite_num, e);
+-                    // Sprite doesn't exist or has no rect, return 0 (no collision)
+-                    let result_ref = player.alloc_datum(Datum::Int(0));
+-                    let scope = player.scopes.get_mut(ctx.scope_ref).unwrap();
+-                    scope.stack.push(result_ref);
+-                    return Ok(HandlerExecutionResult::Advance);
+-                }
+-            };
+-
+-            let target_rect = match get_rect_bounds(target_sprite_num) {
+-                Ok(rect) => rect,
+-                Err(e) => {
+-                    warn!("WARNING: Failed to get rect for target sprite {}: {:?}", target_sprite_num, e);
+-                    // Sprite doesn't exist or has no rect, return 0 (no collision)
+-                    let result_ref = player.alloc_datum(Datum::Int(0));
+-                    let scope = player.scopes.get_mut(ctx.scope_ref).unwrap();
+-                    scope.stack.push(result_ref);
+-                    return Ok(HandlerExecutionResult::Advance);
+-                }
+-            };
+-
+-            // Check if rectangles intersect (AABB test)
+-            let (src_left, src_top, src_right, src_bottom) = source_rect;
+-            let (tgt_left, tgt_top, tgt_right, tgt_bottom) = target_rect;
+-
+-            let mut intersects = !(
+-                src_right <= tgt_left ||   // source is completely to the left
+-                src_left >= tgt_right ||   // source is completely to the right
+-                src_bottom <= tgt_top ||   // source is completely above
+-                src_top >= tgt_bottom      // source is completely below
+-            );
+-
+-            // Matte ink pixel-level collision check
+-            // In Director, sprites with matte ink use actual pixel overlap rather
+-            // than just bounding box intersection.
+-            if intersects {
+-                let src_ink = player.movie.score.get_channel(source_sprite_num).sprite.ink;
+-                let tgt_ink = player.movie.score.get_channel(target_sprite_num).sprite.ink;
+-
+-                if is_matte_ink(src_ink) || is_matte_ink(tgt_ink) {
+-                    // Ensure mattes are computed for the matte-ink sprites
+-                    if is_matte_ink(src_ink) {
+-                        if let Some((image_ref, _, _)) = get_sprite_image_ref(player, source_sprite_num) {
+-                            let palettes = player.movie.cast_manager.palettes();
+-                            if let Some(bmp) = player.bitmap_manager.get_bitmap_mut(image_ref) {
+-                                if bmp.matte.is_none() {
+-                                    bmp.create_matte(&palettes);
+-                                }
+-                            }
+-                        }
+-                    }
+-                    if is_matte_ink(tgt_ink) {
+-                        if let Some((image_ref, _, _)) = get_sprite_image_ref(player, target_sprite_num) {
+-                            let palettes = player.movie.cast_manager.palettes();
+-                            if let Some(bmp) = player.bitmap_manager.get_bitmap_mut(image_ref) {
+-                                if bmp.matte.is_none() {
+-                                    bmp.create_matte(&palettes);
+-                                }
+-                            }
+-                        }
+-                    }
+-
+-                    intersects = check_matte_pixel_overlap(
+-                        player,
+-                        source_sprite_num,
+-                        target_sprite_num,
+-                        source_rect,
+-                        target_rect,
+-                        is_matte_ink(src_ink),
+-                        is_matte_ink(tgt_ink),
+-                    );
+-                }
+-            }
+-
+-            // Debug logging
+-            debug!("ontospr: sprite {} [{},{},{},{}] vs sprite {} [{},{},{},{}] => {}",
+-                source_sprite_num, src_left, src_top, src_right, src_bottom,
+-                target_sprite_num, tgt_left, tgt_top, tgt_right, tgt_bottom,
+-                if intersects { "INTERSECT" } else { "no collision" }
+-            );
++            let intersects = sprites_intersect(player, source_sprite_num, target_sprite_num);
++            debug!("ontospr: sprite {} vs sprite {} => {}", source_sprite_num, target_sprite_num, intersects);
+ 
+             // Push result (1 for true, 0 for false)
+             let result = if intersects { 1 } else { 0 };
 diff --git a/vm-rust/src/player/events.rs b/vm-rust/src/player/events.rs
 index 184a4962..799437b5 100644
 --- a/vm-rust/src/player/events.rs
@@ -2145,10 +2621,10 @@ index 1880c1df..0b4960a9 100644
  // linking fails ("Uniform `u_texcoord2_direct` is not linkable between attached
 diff --git a/vm-rust/tests/rr_score.rs b/vm-rust/tests/rr_score.rs
 new file mode 100644
-index 00000000..7381b691
+index 00000000..55e82964
 --- /dev/null
 +++ b/vm-rust/tests/rr_score.rs
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,169 @@
 +// Diagnostic: dump how dirplayer reads a movie's score.
 +//   RR_DCR=/path/movie.dcr RR_FRAME=5 RR_CHANNELS=8-15 cargo test --test rr_score -- --nocapture
 +
@@ -2262,6 +2738,59 @@ index 00000000..7381b691
 +            let w = bmp.width as usize;
 +            let at = |x: usize, y: usize| &bmp.data[(y * w + x) * 4..(y * w + x) * 4 + 4];
 +            println!("  px(5,5)={:?} px(200,300)={:?}", at(5, 5), at(200, 300));
++        }
++    }
++}
++
++// Write bitmap members as PNGs: the image (with alpha), its alpha channel, and the
++// matte dirplayer builds for matte ink (white = opaque/collides).
++//   RR_DCR=/path/movie.dcr RR_MEMBERS=197,198 RR_OUT=/tmp/dir cargo test --test rr_score dump_bitmap_png -- --nocapture
++#[test]
++fn dump_bitmap_png() {
++    use vm_rust::director::chunks::cast_member::CastMemberSpecificData;
++    use vm_rust::player::bitmap::palette_map::PaletteMap;
++    let (Ok(path), Ok(members), Ok(out)) =
++        (std::env::var("RR_DCR"), std::env::var("RR_MEMBERS"), std::env::var("RR_OUT")) else { return };
++    let bytes = std::fs::read(&path).expect("read movie");
++    let file = read_director_file_bytes(&bytes, "movie.dcr", "http://local/").expect("parse movie");
++    let palettes = PaletteMap::new();
++    for member in members.split(',').map(|m| m.trim().parse::<u32>().unwrap()) {
++        for cast in &file.casts {
++            let Some(def) = cast.members.get(&member) else { continue };
++            let CastMemberSpecificData::Bitmap(info) = &def.chunk.specific_data else { continue };
++            let Some(bitd) = def.children.iter().find_map(|c| c.as_ref().and_then(|c| c.as_bitmap())) else { continue };
++            let mut bmp = vm_rust::player::bitmap::bitmap::decompress_bitmap(&bitd.data, info, 1, bitd.version).expect("decode");
++            bmp.use_alpha = info.use_alpha;
++            let (w, h) = (bmp.width as u32, bmp.height as u32);
++            let mut rgba = image::RgbaImage::new(w, h);
++            let mut alpha = image::GrayImage::new(w, h);
++            for y in 0..h {
++                for x in 0..w {
++                    let (r, g, b, a) = bmp.get_pixel_color_with_alpha(&palettes, x as u16, y as u16);
++                    rgba.put_pixel(x, y, image::Rgba([r, g, b, a]));
++                    alpha.put_pixel(x, y, image::Luma([a]));
++                }
++            }
++            bmp.create_matte(&palettes);
++            let matte = bmp.matte.as_ref().unwrap();
++            let mut m = image::GrayImage::new(w, h);
++            let mut opaque = 0usize;
++            for y in 0..h {
++                for x in 0..w {
++                    let bit = matte.get_bit(x as u16, y as u16);
++                    opaque += bit as usize;
++                    m.put_pixel(x, y, image::Luma([if bit { 255 } else { 0 }]));
++                }
++            }
++            let a_opaque = alpha.pixels().filter(|p| p.0[0] >= 128).count();
++            println!(
++                "cast {} member {}: {}x{} depth {} use_alpha {} | matte opaque {:.1}% | alpha>=128 {:.1}%",
++                cast.id, member, w, h, info.bit_depth, info.use_alpha,
++                100.0 * opaque as f64 / (w * h) as f64, 100.0 * a_opaque as f64 / (w * h) as f64
++            );
++            rgba.save(format!("{}/m{}-image.png", out, member)).unwrap();
++            alpha.save(format!("{}/m{}-alpha.png", out, member)).unwrap();
++            m.save(format!("{}/m{}-matte.png", out, member)).unwrap();
 +        }
 +    }
 +}

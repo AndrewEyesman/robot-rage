@@ -146,6 +146,11 @@ see `docs/upstream.md` for why.
   `keyPressed(123)` got VOID and the robot never drove.
 - Text renders through the "auto" glyph path by default, not PR #244's new "hinted" path,
   which fills the counters of the 14px "Impact *" button labels.
+- Mattes of 32-bit images with alpha come from the alpha channel, and `intersects` places
+  both sprites with their rotation and flips before comparing mattes. The arena's hidden
+  collision maps are alpha images and the robot sprite rotates; see `docs/collision.md`.
+- `rr_intersect_sweep(...)` (debug export) sweeps a sprite over a grid and reports
+  `intersects` results, for the collision checks in `tools/`.
 - `keyPressed(",")` and other punctuation map to their Mac key codes; they used to fall back
   to code 0, the `a` key.
 - `tests/rr_score.rs`: native diagnostics: how a movie's score is decoded (`dump_score`),
