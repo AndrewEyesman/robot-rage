@@ -16,7 +16,8 @@
 //     WS_PER_ADDRESS [40], WS_TOTAL [2000], WS_NEW_PER_MIN [120], WS_MAX_PAYLOAD_KB [256],
 //     WS_PING_SEC [30], IRC_MAX_LINE [1024], IRC_LINES_PER_10S [200], IRC_CHAT_PER_10S [10],
 //     IRC_REGISTER_SEC [60], RELAY_MSGS_PER_SEC [1000], RELAY_KB_PER_SEC [1024],
-//     RELAY_PEERS_PER_HOST [8], SESSION_DAYS [30]; 0 turns a limit off
+//     RELAY_PEERS_PER_HOST [8], SESSION_DAYS [30], CLIENT_ERRORS_PER_MIN [30]; 0 turns a
+//     limit off
 //   IRC_REQUIRE_SESSION=1 ...   the lobby takes a nick only with a session owning its robot as
 //     PASS (the port sends it; the original and dirplayer send none, so they can't join)
 //   MAP_REQUIRE_SESSION=1 ...   paint map saves only with a session (the port sends it), not
@@ -33,6 +34,7 @@ import { IrcServer, robotNameOfNick } from "./irc.mjs";
 import { Relay } from "./relay.mjs";
 import { LIMITS, SocketGuard, clientAddress } from "./limits.mjs";
 import { createLog, redact } from "./logs.mjs";
+import { createClientErrors } from "./clienterrors.mjs";
 import { resolveIn, sendFile } from "./static.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -52,6 +54,7 @@ const handleMainAsp = createApi(store, log, {
   adminToken: process.env.ADMIN_TOKEN || "",
   kick: (who) => irc.kick(who) + relay.kick(who),
 });
+const clientErrors = createClientErrors(log, { perMinute: LIMITS.clientErrorsPerMinute });
 const irc = new IrcServer({ log, motd: ["Welcome to your own Robot Rage server."] });
 // STUN servers the page uses to connect a match's players directly (WebRTC); the
 // relay stays the fallback, so no TURN. Comma-separated URLs, or a JSON
@@ -121,6 +124,7 @@ function mainIni(origin) {
 }
 
 class TooLarge extends Error {}
+const CLIENT_ERROR_MAX_BODY = 32 * 1024;
 
 async function readBody(req, max = LIMITS.apiMaxBody) {
   const chunks = [];
@@ -199,17 +203,24 @@ const server = createServer(async (req, res) => {
     }
     if (pathname.startsWith("/api/")) {
       const address = clientAddress(req, LIMITS.trustProxy, log);
+      const name = pathname.slice("/api/".length).toLowerCase();
       let body;
       try {
-        body = req.method === "POST" ? await readBody(req) : url.search;
+        // The page's error reports are small (src/error-report.ts).
+        body = req.method === "POST" ? await readBody(req, name === "clienterror" ? CLIENT_ERROR_MAX_BODY : undefined) : url.search;
       } catch (err) {
         if (!(err instanceof TooLarge)) throw err;
         log(`api: request body too large (${address})`);
         res.setHeader("Connection", "close");
         return send(res, 413, "too large");
       }
+      if (name === "clienterror") {
+        if (req.method !== "POST") return send(res, 405, "POST only");
+        // JSON in UTF-8 (readBody reads Latin-1, for the game's forms).
+        res.writeHead(clientErrors(Buffer.from(body, "latin1").toString("utf8"), address)).end();
+        return;
+      }
       const params = parseForm(body);
-      const name = pathname.slice("/api/".length).toLowerCase();
       switch (name) {
         case "main.asp":
         case "abuse.asp": { // the arena's report button

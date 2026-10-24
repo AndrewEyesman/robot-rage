@@ -25,6 +25,7 @@
 // "no current connection" code, and getPeerConnectionList lists a listener's peers.
 
 import { invoke } from './dispatch';
+import { scriptError } from './errors';
 import { myAddress, player } from './api';
 import { warnOnce } from './player';
 import { byteToChar, charToByte } from '../lingo/charset';
@@ -510,6 +511,7 @@ export class MultiuserXtra {
     } catch (e) {
       // As a script error in Director: reported, and the player carries on.
       console.error(e);
+      scriptError(best.handler, e);
     }
   }
 }

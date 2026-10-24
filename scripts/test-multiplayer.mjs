@@ -752,10 +752,41 @@ try {
   });
 
   await step("logs: no passwords or session ids", async () => {
+    await mainAsp({ action: "getrobotmap", sessionid: a.sid, robotid: a.robotid });
+    await sleep(50);
     const logged = server.output();
     assert.ok(!/"pw"|password: "?pw|=pw\b/.test(logged), "no password in the log");
     for (const who of [a, b]) assert.ok(!logged.includes(who.sid), "no session id in the log");
     assert.match(logged, /main\.asp loginmember \(127\.0\.0\.1\) -> \[#err: 0, #id: \d+, #sid: "<redacted>"\]/);
+    // Short replies: a paint map as its length, a robot's data cut before #propertyList.
+    assert.match(logged, /main\.asp getrobotmap \(127\.0\.0\.1\) -> <\d+ chars>/);
+    assert.match(logged, /main\.asp getrobot \(127\.0\.0\.1\) -> \[#err: 0, #robotid: \d+, [^\n]*, \.\.\.\] \(\d+ chars\)\n/);
+  });
+
+  await step("client errors: logged the first time and at the 10th report, redacted, limited", async () => {
+    const report = (errors) => fetch(`${HTTP}/api/clienterror`, { method: "POST", body: JSON.stringify({ errors }) });
+    const error = { where: "mouseUp", message: "Error: index 3 out of range", stack: "at a (/app/game-x.js:1:2)", movie: "lobby060_", frame: 12, label: "room" };
+    assert.equal((await report([error])).status, 204);
+    for (let i = 0; i < 9; i++) await report([error]);
+    await report([{ ...error, message: "Error: sessionid=s3cr3t for me@example.org", stack: "" }]);
+    assert.equal((await report("nope")).status, 204);
+    assert.equal((await fetch(`${HTTP}/api/clienterror`, { method: "POST", body: "{" })).status, 400);
+    assert.equal((await fetch(`${HTTP}/api/clienterror`)).status, 405);
+    assert.equal((await fetch(`${HTTP}/api/clienterror`, { method: "POST", body: "x".repeat(40_000) })).status, 413);
+    await sleep(100);
+    const lines = server.output().split("\n").filter((l) => l.includes("client error"));
+    assert.deepEqual(lines.map((l) => l.replace(/^\S+ /, "")), [
+      'client error (127.0.0.1) lobby060_ frame 12 "room", mouseUp: Error: index 3 out of range; stack: at a (/app/game-x.js:1:2)',
+      'client error (127.0.0.1) lobby060_ frame 12 "room", mouseUp: Error: index 3 out of range (10 reports)',
+      'client error (127.0.0.1) lobby060_ frame 12 "room", mouseUp: Error: sessionid=<redacted> for <email>',
+    ]);
+    // 30 errors a minute per address: 11 so far, so 19 more are logged and the rest dropped.
+    await report(Array.from({ length: 20 }, (_, i) => ({ ...error, message: `Error: ${i}` })));
+    await report([{ ...error, message: "Error: over the limit" }]);
+    await sleep(100);
+    const after = server.output().split("\n").filter((l) => l.includes("client error"));
+    assert.equal(after.length, 3 + 19);
+    assert.ok(!after.some((l) => l.includes("over the limit")));
   });
 
   ircB.ws.close();

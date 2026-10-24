@@ -5,6 +5,8 @@
 //   node port/tools/unit-tests.mjs                        every test
 //   node port/tools/unit-tests.mjs input                  only tests whose area or name contains "input"
 //   node port/tools/unit-tests.mjs http://127.0.0.1:8094  against another dev server
+//   UNIT_SKIP="text layout" node port/tools/unit-tests.mjs   all but the tests whose area or name
+//     contains it (CI, which has no extracted fonts; also through regress.mjs)
 //
 // Needs a dev server (http://127.0.0.1:8092 by default, `cd port/web && npm run dev`;
 // an http URL argument or APP picks another). No game server is needed. Exit status 1
@@ -16,6 +18,8 @@ import { chromium } from 'playwright-core';
 const args = process.argv.slice(2);
 const APP = args.find((a) => /^https?:/.test(a)) ?? process.env.APP ?? 'http://127.0.0.1:8092';
 const only = args.find((a) => !/^https?:/.test(a));
+const skip = process.env.UNIT_SKIP;
+const query = new URLSearchParams({ ...(only && { only }), ...(skip && { skip }) }).toString();
 const t0 = Date.now();
 
 const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new', '--mute-audio'] });
@@ -24,7 +28,7 @@ try {
   const page = await (await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 })).newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
-  await page.goto(`${APP}/tests.html${only ? `?only=${encodeURIComponent(only)}` : ''}`);
+  await page.goto(`${APP}/tests.html${query ? `?${query}` : ''}`);
   await page.waitForFunction(() => window.__unitResults, null, { timeout: 60000, polling: 100 });
   const res = await page.evaluate(() => window.__unitResults);
   if (res.error) {

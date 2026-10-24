@@ -2,6 +2,8 @@
 // case-insensitively by name, as Lingo matches them. `pass()` inside a handler lets
 // the event continue down the hierarchy; a handler that doesn't pass stops it.
 
+import { scriptError } from './errors';
+
 const handlerNames = new WeakMap<object, Map<string, string>>();
 
 /** The method implementing handler `name` on `obj`, if any. */
@@ -44,6 +46,7 @@ const stack: Frame[] = [];
 let errorCount = 0;
 function reportScriptError(handler: string, e: unknown) {
   if (errorCount++ < 100) console.error(`script error in ${handler}:`, e);
+  scriptError(handler, e);
 }
 
 /** pass(): let the current event go on to the next handler in the hierarchy. */

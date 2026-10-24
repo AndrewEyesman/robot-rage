@@ -26,7 +26,8 @@ Found a bug? Please [open an issue](../../issues)
 with what you did, what happened and what you expected, plus your browser and a
 screenshot if you can. Pull requests are welcome too. The translated scripts follow
 `port/TRANSLATING.md`, and `npm test` runs the checks (`docs/port-behaviors.md` lists
-what they cover).
+what they cover). GitHub Actions runs the ones that don't need the game's files on every
+push and pull request (`.github/workflows/test.yml`).
 
 ## Setup
 
@@ -110,7 +111,11 @@ anyone reaching it directly could fake that header.
 volume once a day and keeps 14 days (`docker compose cp backup:/backups .` fetches
 them). Without Docker, `scripts/backup-db.sh <data dir> <backup dir>` does one; from cron:
 `15 4 * * * /path/to/robotrage/scripts/backup-db.sh /path/to/data /path/to/backups`.
-To restore, stop the server and unzip a copy over `db.json`.
+To restore, stop the server and unzip a copy over `db.json`. To check a backup without
+touching the live data, unzip it into an empty folder and start a second container on it:
+`docker run --rm -d --name rr-restore-test -p 127.0.0.1:18095:8080 -v <folder>:/data robotrage`
+(the folder writable by the image's `node` user), then log in or call the API on port 18095.
+The backups live on the same disk as the data, so copy them off the machine as well.
 
 ## Results and money (anti-cheat)
 
@@ -180,6 +185,17 @@ after failures, also per account name), new accounts per day, API requests, lobb
 and WebSocket connections and traffic; expired sessions and old matches are pruned. Every
 limit and its default is in `server/limits.mjs` and the header of `server/index.mjs`. The
 players' privacy note is `port/web/privacy.html`.
+
+**Logs:** a line per request and event on stdout, and in Docker also a file per day under
+`/data/logs`, kept 14 days (`LOG_DIR`, `LOG_DAYS`). Passwords and session ids never appear;
+replies are shortened (a paint map shows as its length, a robot's data is cut). The game
+reports its own errors from the players' browsers (`port/web/src/error-report.ts`): each
+shows up once as a `client error` line with the movie, frame, handler and stack, and again
+at its 10th, 100th... report (`server/clienterrors.mjs`; limited by `CLIENT_ERRORS_PER_MIN`,
+off in a browser with `?reporterrors=0`). Some errors are the original game's own and
+harmless (Director ignored script errors; see `docs/port-issues.md`). The stacks point
+into the minified bundle: build the deployed commit with
+`(cd port/web && npx vite build --sourcemap)` to look the positions up.
 
 Two settings close what the original game left open, at the cost of the original itself
 (dirplayer) and old clients, so they're off by default and on in `docker-compose.yml`:

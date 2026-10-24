@@ -1,6 +1,6 @@
 // Runs the Director runtime's unit tests in the page (tests.html) and reports to
 // window.__unitResults for port/tools/unit-tests.mjs. ?only=word runs the tests whose
-// area or name contains the word.
+// area or name contains the word; ?skip=word leaves those out.
 
 import { loadSystemFonts } from '../fonts';
 import { cases, cleanup, type TestCase } from './harness';
@@ -41,13 +41,16 @@ async function runOne(c: TestCase): Promise<Result> {
 }
 
 async function main() {
-  const only = new URLSearchParams(location.search).get('only')?.toLowerCase();
+  const query = new URLSearchParams(location.search);
+  const only = query.get('only')?.toLowerCase();
+  const skip = query.get('skip')?.toLowerCase();
   const t0 = performance.now();
   await loadSystemFonts('/assets');
   const results: Result[] = [];
   const out = document.getElementById('out')!;
   for (const c of cases) {
-    if (only && !`${c.area} ${c.name}`.toLowerCase().includes(only)) continue;
+    const title = `${c.area} ${c.name}`.toLowerCase();
+    if ((only && !title.includes(only)) || (skip && title.includes(skip))) continue;
     const r = await runOne(c);
     results.push(r);
     const line = document.createElement('div');

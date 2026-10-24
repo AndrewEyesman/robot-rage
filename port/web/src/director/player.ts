@@ -19,6 +19,7 @@ import { Sprite } from './sprite';
 import { charPosToLoc, locToCharPos } from './text-layout';
 import { parseParams } from './glue';
 import { stopAllSounds } from './audio';
+import { scriptError } from './errors';
 
 export const STAGE_W = 800;
 export const STAGE_H = 600;
@@ -356,6 +357,7 @@ export class Player {
     } catch (e) {
       // Director's alertHook: log the script error and keep playing.
       if (this.errors++ < 50) console.error(e);
+      scriptError('frame', e);
     }
   }
 

@@ -1,0 +1,43 @@
+# The checks that need neither the game files nor the assets extracted from them
+# (Raketspel/Miniclip's, never in this repository or its caches): the server tests and
+# the port's type check, unit tests and multiuser checks. The rest of the regression
+# suite (port/tools/regress.mjs) runs locally, where the assets and the approved
+# screenshots are; the pre-commit hook runs its fast part.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            port/web/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: port/web
+      - name: Server tests
+        run: npm run test:server
+      - name: Port checks without game assets
+        run: node port/tools/regress.mjs typecheck lingo-unit runtime-unit multiuser
+        env:
+          # Text layout measures the game's fonts, extracted from its files.
+          UNIT_SKIP: text layout

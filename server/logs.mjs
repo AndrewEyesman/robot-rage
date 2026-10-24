@@ -53,7 +53,15 @@ export function redact(params) {
   return out;
 }
 
-/** A main.asp reply fit for the log: the session id out. */
-export function redactReply(text) {
-  return text.replace(/(#sid:\s*)"[^"]*"/gi, '$1"<redacted>"');
+/**
+ * A main.asp reply fit for the log: the session id out, and short. A reply that isn't a
+ * property list (a paint map) shows as its length; a robot's data (#propertyList,
+ * #gameDescription) and whatever follows it as "..." with the reply's length.
+ */
+export function redactReply(text, max = 200) {
+  if (!text.startsWith("[")) return `<${text.length} chars>`;
+  let out = text.replace(/(#sid:\s*)"[^"]*"/gi, '$1"<redacted>"');
+  const bulky = out.search(/,\s*#(propertyList|gameDescription)\b/i);
+  if (bulky >= 0) out = `${out.slice(0, bulky)}, ...] (${text.length} chars)`;
+  return out.length > max ? `${out.slice(0, max)}...` : out;
 }

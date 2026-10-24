@@ -3,13 +3,11 @@
 
 import { Behavior, G, go, put, script, sendSprite, the } from '../../director';
 import { sym, voidp } from '../../lingo';
-import { ensureEmptyWorld } from './shim-empty-world';
 
 export class LobbyStart extends Behavior {
   theNetID: unknown;
 
   beginSprite() {
-    ensureEmptyWorld('robot'); // TEMPORARY SHIM, see shim-empty-world.ts
     sendSprite(1, 'usedoktor');
     put('läser');
     // the preferred3dRenderer = #openGL: the port has one 3D renderer.

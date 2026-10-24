@@ -538,7 +538,7 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
     const reply = handler(params, member, { address });
     if (reply === TOO_MANY) return reply;
     const text = typeof reply === "string" ? reply : toLingo(reply);
-    log(`main.asp ${action} (${address}) -> ${redactReply(text.slice(0, 200))}`);
+    log(`main.asp ${action} (${address}) -> ${redactReply(text)}`);
     return text;
   }
 

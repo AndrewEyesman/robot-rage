@@ -68,6 +68,8 @@ export function loadLimits(env = process.env) {
     relayMsgsPerSec: int(env, "RELAY_MSGS_PER_SEC", 1000),
     relayBytesPerSec: int(env, "RELAY_KB_PER_SEC", 1024) * 1024,
     relayPeersPerHost: int(env, "RELAY_PEERS_PER_HOST", 8),
+    // Error reports from players' browsers (clienterrors.mjs), errors per address per minute.
+    clientErrorsPerMinute: int(env, "CLIENT_ERRORS_PER_MIN", 30),
     // Sessions expire after this long unused (each use refreshes them).
     sessionTtlMs: int(env, "SESSION_DAYS", 30) * DAY,
     // Sessions where the original sent none (1 to require, default off, so the original
