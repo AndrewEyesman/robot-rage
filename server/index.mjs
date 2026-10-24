@@ -2,6 +2,8 @@
 // IRC lobby and the peer relay, all on one port.
 //
 //   PORT=8080 GAME_DIR=./public/game DATA_DIR=./data node server/index.mjs
+//   ICE_SERVERS=stun:stun.example.org:3478 ...   STUN for direct matches (default Google's; '' for none)
+//   ADMIN_TOKEN=<secret> ...   enables the admingrant action (testing), from this machine only
 
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -20,9 +22,18 @@ const DATA_DIR = resolve(process.env.DATA_DIR || join(ROOT, "data"));
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const store = new Store(join(DATA_DIR, "db.json"));
-const handleMainAsp = createApi(store, log);
+const handleMainAsp = createApi(store, log, { adminToken: process.env.ADMIN_TOKEN || "" });
 const irc = new IrcServer({ log, motd: ["Welcome to your own Robot Rage server."] });
-const relay = new Relay({ log });
+// STUN servers the page uses to connect a match's players directly (WebRTC); the
+// relay stays the fallback, so no TURN. Comma-separated URLs, or a JSON
+// RTCIceServer list; empty for host candidates only (one machine or one LAN).
+function iceServers(value = "stun:stun.l.google.com:19302") {
+  const v = value.trim();
+  if (!v) return [];
+  if (v.startsWith("[")) return JSON.parse(v);
+  return [{ urls: v.split(",").map((u) => u.trim()).filter(Boolean) }];
+}
+const relay = new Relay({ log, iceServers: iceServers(process.env.ICE_SERVERS) });
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -103,6 +114,13 @@ function originOf(req) {
   return `${proto}://${req.headers.host}`;
 }
 
+// A request from this machine that didn't come through a proxy (one that adds
+// X-Forwarded-For, as a reverse proxy in front of the server would).
+function isLocal(req) {
+  const addr = req.socket.remoteAddress || "";
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr) && !req.headers["x-forwarded-for"] && !req.headers.forwarded;
+}
+
 function send(res, status, body, type = "text/plain; charset=utf-8") {
   res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store" });
   res.end(body);
@@ -139,7 +157,7 @@ const server = createServer(async (req, res) => {
       switch (name) {
         case "main.asp":
         case "abuse.asp": // the arena's report button
-          return send(res, 200, handleMainAsp(params));
+          return send(res, 200, handleMainAsp(params, { trusted: isLocal(req) }));
         case "ip.php":
           // The page supplies the real per-tab address as the sw1 param.
           return send(res, 200, "");

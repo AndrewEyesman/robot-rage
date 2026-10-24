@@ -3,6 +3,7 @@
 
 import { Behavior, member, sprite } from '../../director';
 import { LList, char, lingoString, sym, type LValue } from '../../lingo';
+import { gameFixes } from '../fixes';
 import { robotDesc } from './util';
 
 export class Gridbutton extends Behavior {
@@ -45,8 +46,9 @@ export class Gridbutton extends Behavior {
 
   selectGrid() {
     // Quirk: reads tRam[1] before checking the list, so without a chassis this is a
-    // script error (index out of range) and the grid never shows.
-    let g = lingoString(this.tRam.getAt(1));
+    // script error (index out of range) and the grid never shows. The port skips the
+    // unused early read (movies/fixes.ts; ?quirks=grid restores it).
+    let g = gameFixes.gridNoChassis ? '' : lingoString(this.tRam.getAt(1));
     let h = char(g, g.length);
     if (this.toggle === 1) {
       if (this.tRam.count > 0) {

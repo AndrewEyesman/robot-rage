@@ -241,7 +241,33 @@ export class Player {
     await this.switchMovie();
     this.nextFrameAt = performance.now();
     requestAnimationFrame((t) => this.tick(t));
+    this.playWhileHidden();
   }
+
+  /**
+   * The Shockwave plugin kept playing whatever the browser did with the page; the browser
+   * stops requestAnimationFrame in a hidden tab, slows it for a window behind others, and
+   * throttles timers to once a second. When the display hasn't called for a frame in two
+   * frame periods, a worker's timer (not throttled) runs the frame cycles, without
+   * drawing, so the movie keeps its tempo (a match keeps talking to the opponent).
+   */
+  private playWhileHidden() {
+    if (typeof Worker === 'undefined' || typeof document === 'undefined') return;
+    const src = 'setInterval(()=>postMessage(0),10)';
+    let worker: Worker;
+    try {
+      worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    } catch {
+      return;
+    }
+    worker.onmessage = () => {
+      const now = performance.now();
+      if (document.hidden || now - this.lastDisplayTick > 2 * (1000 / Math.max(1, this.tempo)) + 20) this.cycle(now, false);
+    };
+  }
+
+  /** When requestAnimationFrame last ran (the worker's timer stands in when it falls behind). */
+  private lastDisplayTick = 0;
 
   sprite(n: number): Sprite {
     return this.sprites[n] ?? this.sprites[0];
@@ -291,24 +317,35 @@ export class Player {
   }
 
   private tick(t: number) {
+    this.lastDisplayTick = performance.now();
+    this.cycle(t, true);
+    requestAnimationFrame((tt) => this.tick(tt));
+  }
+
+  /** Run the frame cycles due by time t, the timeouts, and draw. */
+  private cycle(t: number, draw: boolean) {
     try {
-      let steps = 0;
-      if (this.paused) this.nextFrameAt = t + 1000 / Math.max(1, this.tempo);
-      while (t >= this.nextFrameAt && steps < 4) {
+      const period = 1000 / Math.max(1, this.tempo);
+      if (this.paused) this.nextFrameAt = t + period;
+      // One frame cycle per draw at most. Director plays every frame: one that runs late
+      // (a long script, a 3D world being built) makes the movie slower for a moment
+      // rather than being caught up with frames run back to back, which showed as jumps
+      // in the screens' slide-ins. Within a millisecond counts as due (display refreshes
+      // land on a 60 fps tempo's frames).
+      if (t >= this.nextFrameAt - 1) {
         this.stepFrame();
         this.frameCycles++;
-        this.nextFrameAt += 1000 / Math.max(1, this.tempo);
-        steps++;
+        this.nextFrameAt += period;
+        // A whole frame or more behind: the next one is a period from now.
+        if (t >= this.nextFrameAt) this.nextFrameAt = t + period;
       }
-      if (t - this.nextFrameAt > 250) this.nextFrameAt = t;
       this.lastTickTime = t;
       this.runTimeouts();
-      this.render();
+      if (draw) this.render();
     } catch (e) {
       // Director's alertHook: log the script error and keep playing.
       if (this.errors++ < 50) console.error(e);
     }
-    requestAnimationFrame((tt) => this.tick(tt));
   }
 
   private runTimeouts() {

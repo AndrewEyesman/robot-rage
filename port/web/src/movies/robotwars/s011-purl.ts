@@ -28,12 +28,20 @@ export function prepareMovie() {
 }
 
 export function clearRobotProplist(): LPropList {
+  member('map1a').image.fill(member('map1a').image.rect, DColor.hex('0x888888'));
+  member('map1b').image.fill(member('map1b').image.rect, DColor.hex('0x888888'));
+  return emptyRobotProplist();
+}
+
+/**
+ * clearRobotProplist's list alone, without greying your own paint maps (split out for
+ * the port's fix that shows another player's never-saved robot, movies/fixes.ts).
+ */
+export function emptyRobotProplist(): LPropList {
   const rd = propList(
     sym('ram'), new LList([sym('r1')]), sym('torn'), new LList(), sym('hjul'), new LList([sym('h2')]), sym('motor'), new LList([sym('ma1')]),
     sym('batteri'), new LList([sym('b1')]), sym('vapen'), new LList(), sym('wpnPos'), new LList(), sym('special'), new LList(), sym('ammunition'), new LList(),
   );
-  member('map1a').image.fill(member('map1a').image.rect, DColor.hex('0x888888'));
-  member('map1b').image.fill(member('map1b').image.rect, DColor.hex('0x888888'));
   return propList(sym('robotDescription'), rd, sym('inventory'), new LList(), sym('money'), 50, sym('space'), 100, sym('spaceleft'), 10, sym('maxSpeed'), 40, sym('pansar'), 50, sym('info1'), 1112 - 50);
 }
 

@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server/index.mjs",
     "test": "node scripts/test-multiplayer.mjs && node port/tools/regress.mjs",
+    "test:full": "node scripts/test-multiplayer.mjs && node port/tools/regress.mjs --full",
     "test:server": "node scripts/test-multiplayer.mjs",
     "test:port": "node port/tools/regress.mjs",
     "test:fast": "node port/tools/regress.mjs --fast"

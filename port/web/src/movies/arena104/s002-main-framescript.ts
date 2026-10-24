@@ -5,7 +5,7 @@
 // result overlay, reporting the score (setrobotscore), revenge and draw offers, and the
 // sprites shots and sparkles borrow (createSprite / createSparkle).
 
-import { arenaFixes } from './enhancements';
+import { arenaFixes, takeTabSwitch } from './enhancements';
 import {
   G, dot, externalParamValue, go, intersects, keyPressed, member, netDone, netError, pass, puppetSprite, put, script, sendAllSprites, sendSprite,
   sound, sprite, the, type MultiuserXtra, type SoundMember,
@@ -501,7 +501,9 @@ export class MainFramescript {
     } else if (st === s('doneScale')) {
       this.pstartTime = the.milliSeconds;
       this.state = s('sendResult');
-      if (G.gMatchResult === s('lost')) {
+      // The port's fix (arenaFixes.bothReport): the loser reports too, for the server
+      // to count only results both players agree on.
+      if (G.gMatchResult === s('lost') && !arenaFixes.bothReport) {
         this.state = s('done');
         put('lost, dont send');
       }
@@ -525,7 +527,8 @@ export class MainFramescript {
       infoList.addProp(s('checksum'), random(2000));
       const asp = lingoString(dot(G.gVersionList, 'mainasp', 'version'));
       if (eq(G.gWinnerID, 0)) {
-        if (eq(pget(G.gUserData, 'server'), 1)) {
+        // A tie: the host's report only, or both with arenaFixes.bothReport.
+        if (eq(pget(G.gUserData, 'server'), 1) || arenaFixes.bothReport) {
           this.pnetId = RobotWarsSend(asp, infoList);
         }
       } else {
@@ -707,7 +710,7 @@ export class MainFramescript {
       G.gOpIP = pget(content, 'ip');
       // lag is still VOID here.
       sendSprite(this.opponentSp, s('receivedEvent'), pget(content, 'x'), pget(content, 'y'), pget(content, 'dx'), pget(content, 'dy'), pget(content, 'angle'), pget(content, 'speed'), lag);
-      if (this.state === s('waitOpponent')) {
+      if (this.state === s('waitOpponent') || (arenaFixes.startSync && this.state === s('sendready'))) {
         if (eq(G.gPlayerNumber, 2)) {
           send('ready ok', propList(s('ip'), G.gMyIP), 'udp', G.gUseUDP);
           G.gOpponentReady = 1;
@@ -851,7 +854,8 @@ export function checkTempo(me: TempoState) {
       me.pSeconds = tSeconds;
       me.pwait = Math.trunc((the.milliSeconds - me.pTime) / 30);
       me.pTime = the.milliSeconds;
-      if (me.pwait > 500) {
+      const tabSwitch = takeTabSwitch();
+      if (me.pwait > 500 && !(arenaFixes.tabSwitch && tabSwitch)) {
         const pl = pget(G.gUserData, 'propertyList') as LPropList;
         if (voidp(pl.getaProp(s('hacker')))) {
           pl.setaProp(s('speedgear'), 1);

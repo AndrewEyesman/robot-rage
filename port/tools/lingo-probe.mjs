@@ -18,7 +18,7 @@ for (const a of process.argv.slice(2)) {
 if (port === '8090') throw new Error('8090 is the shared server; use a test server');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new'] });
+const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new', '--mute-audio'] });
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 await page.goto(`http://127.0.0.1:${port}/`);
 await sleep(2000);

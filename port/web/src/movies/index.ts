@@ -8,3 +8,5 @@ import './arena104';
 import './lobby060_';
 import './arena104/weapons';
 import './factory0604';
+// The port's fixes to the original's bugs outside the arena (?quirks=... restores them).
+import './fixes';

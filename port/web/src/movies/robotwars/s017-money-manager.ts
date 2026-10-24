@@ -64,6 +64,31 @@ export function RegisterBuy(part: LValue) {
   sendSprite(1, 'makedoktor');
 }
 
+/**
+ * Port enhancement (factory0604/enhancements.ts, super weapons for credits): buy a Super
+ * Pack's parts for credits, with RegisterBuy's checks, books and messages. The original
+ * sold packs only for real money.
+ */
+export function RegisterBuyPack(pack: LValue, contents: LList, price: number) {
+  sendSprite(1, 'usedoktor');
+  checkInfo1();
+  const n = G.gPartDescription.getProp(pack);
+  if (price <= num(dot(G.gUserData, 'propertyList', 'money'))) {
+    for (const part of contents) (dot(G.gUserData, 'propertyList', 'inventory') as LList).add(part);
+    sendAllSprites('UpdateAll');
+    setDot(G.gUserData, 'propertyList', 'money', num(dot(G.gUserData, 'propertyList', 'money')) - price);
+    setDot(G.gUserData, 'propertyList', 'info1', 1112 - num(dot(G.gUserData, 'propertyList', 'money')));
+    member('Money Stats').text = lingoString(dot(G.gUserData, 'propertyList', 'money'));
+    const names = [...contents].map((p) => lingoString(dot(G.gPartDescription.getProp(p), 'namn'))).join(', ');
+    // The thanks box shows six lines: the parts, no Workshop hint.
+    const te = 'You have aquired ' + lingoString(dot(n, 'namn')) + ' for ' + price + ' credits: ' + names + '.';
+    sendAllSprites('ShowthanksBox', te);
+  } else {
+    sendAllSprites('ShowthanksBox', "You don't have enough credits!!!" + RETURN + RETURN + 'Win credits in battles or sell/purchase your Super Weapons');
+  }
+  sendSprite(1, 'makedoktor');
+}
+
 export function RegisterSale(part: LValue) {
   sendSprite(1, 'usedoktor');
   const n = G.gPartDescription.getProp(part);

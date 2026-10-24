@@ -18,7 +18,7 @@ const APP = args.find((a) => /^https?:/.test(a)) ?? process.env.APP ?? 'http://1
 const only = args.find((a) => !/^https?:/.test(a));
 const t0 = Date.now();
 
-const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new'] });
+const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new', '--mute-audio'] });
 let code = 0;
 try {
   const page = await (await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 })).newPage();

@@ -10,6 +10,7 @@ import { Behavior, G, dot, go, member, netDone, netError, netTextResult, postNet
 import { EMPTY, LList, LPropList, TAB, item, itemCount, lingoString, propList, setItemDelimiter, sym, value, voidp, type LSymbol, type LValue } from '../../lingo';
 import { JumpMovie, text2image } from '../robotwars/s007-jump-movie';
 import { ReplaceWord, connectP2P, getRankClass } from './s004-lobby-moviescript';
+import { gameFixes, withRobotDefaults } from '../fixes';
 import { eq, setMU } from './util';
 
 // global gopponentdata, gLobbydata, gUrl, gUserData, gGameGlobals, gVersionList,
@@ -127,6 +128,8 @@ export class P2PConnectFramescript extends Behavior {
         if (netDone(this.netId) && this.netId !== undefined) {
           if (eq(netError(this.netId), 'ok')) {
             const tList = value(netTextResult(this.netId)) as LPropList;
+            // A never-saved opponent fights as the empty robot (movies/fixes.ts).
+            if (gameFixes.emptyRobot) tList.setaProp(sym('propertyList'), withRobotDefaults(dot(tList, 'propertyList')));
             getRankClass(dot(tList, 'score'));
             G.gOpponentProplist = dot(tList, 'propertyList');
             od().setaProp(sym('propertyList'), dot(tList, 'propertyList'));
@@ -161,6 +164,9 @@ export class P2PConnectFramescript extends Behavior {
                 sym('clientname'), dot(G.gopponentdata, 'robotname'), sym('serverip'), dot(G.gUserData, 'robotname')),
             ),
           );
+          // The port's fix (movies/fixes.ts, gameFixes.matchSession): the host's session,
+          // so the server knows the start is the host's own (server/results.mjs).
+          if (gameFixes.matchSession) infoList.addProp(sym('sessionid'), dot(G.gLobby, 'session'));
           const url = mainasp();
           this.netId = postNetText(url, infoList);
           put(lingoString(G.gUrl) + lingoString(dot(G.gVersionList, 'mainasp', 'version')), url.slice(url.indexOf('?')) + lingoString(infoList));
@@ -227,6 +233,10 @@ export class P2PConnectFramescript extends Behavior {
       this.pSwitch = 1;
       this.pTries = 1;
       pl(G.gUserData).setaProp(sym('server'), eq(dot(G.gUserData, 'server'), 0) ? 1 : 0);
+      // gChallengeGo stays 1 in the original, so #Connect sends the side that should now
+      // listen straight back to #connectToServer, to the address that just failed: the
+      // swap never worked and both players went back to the lobby (movies/fixes.ts).
+      if (gameFixes.p2pSwap) G.gChallengeGo = 0;
     }
     sendAllSprites('makedoktor');
   }
@@ -274,6 +284,11 @@ export class P2PConnectFramescript extends Behavior {
   ConnectToMe(who: LValue) {
     put('ConnectToMe**************');
     if (eq(who, dot(G.gopponentdata, 'ircrobotname'))) {
+      // After a role swap the new server sends ConnectToMe twice (from #Connect and from
+      // its AcceptChallenge handler); in the original a second one arriving once
+      // connected sends this side back to #connectToServer, which times out to the
+      // lobby while the other plays on. The port ignores it then (movies/fixes.ts).
+      if (gameFixes.p2pSwap && (this.pState === sym('connected') || this.pState === sym('arena'))) return;
       G.gChallengeGo = 1;
       this.pState = sym('connectToServer');
     }

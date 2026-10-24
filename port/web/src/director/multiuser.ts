@@ -14,6 +14,11 @@
 // [#errorCode, #recipients, #senderID, #subject, #content, #timeStamp] when
 // passMessage is set; otherwise the message waits for getNetMessage().
 //
+// A P2P connection (listen/connect) also tries to reach the other player directly
+// over WebRTC, with the relay socket for signalling and as the fallback (p2p.ts). The
+// scripts see the same messages, in the same order, either way; `transport` and
+// transportInfo() say which way they go.
+//
 // Where dirplayer is known to differ from Director (docs/inventory.md), this follows
 // Director: points and rects keep float components, sendNetMessage returns an error
 // code instead of failing, a lost connection is reported with Multiuser's own
@@ -23,6 +28,7 @@ import { invoke } from './dispatch';
 import { myAddress, player } from './api';
 import { warnOnce } from './player';
 import { byteToChar, charToByte } from '../lingo/charset';
+import { DirectLink, p2pSetting, webrtcAvailable, type Control, type Transport } from './p2p';
 import { LFloat, LList, LPoint, LPropList, LRect, LSymbol, isInt, lingoString, num, sym, type LValue } from '../lingo';
 
 /** "There is no current connection": a connection that failed or went away. The arena and lobby test for it. */
@@ -95,6 +101,13 @@ export class MultiuserXtra {
   private closedByUs = false;
   private scheduled = false;
   private recvBuffer = new Uint8Array(0);
+  /** Direct links: the joiner's to the host (key ''), the host's to each peer (lowercased userID). */
+  private links = new Map<string, DirectLink>();
+  /** The relay answered our hello: it does control messages (server/relay.mjs). */
+  private signalling: { iceServers: RTCIceServer[]; offset: number; rtt: number } | null = null;
+  private pendingOffers: Control[] = [];
+  /** Why this connection has no direct link, when it has none. */
+  private relayReason = 'not connected';
 
   /** setNetMessageHandler(#handler, scriptObject, subject, sender, passMessage) */
   setNetMessageHandler(handler: unknown, target?: unknown, subject?: unknown, sender?: unknown, passMessage?: unknown): number {
@@ -181,7 +194,8 @@ export class MultiuserXtra {
       return 0;
     }
     const names = recipients instanceof LList ? recipients.items.map(str) : unset(recipients) ? [] : [str(recipients)];
-    this.send(encodeMessage({ errorCode: 0, recipients: names, senderID: this.userID, subject: subject === undefined ? '' : str(subject), content: content as LValue, timeStamp: 0 }));
+    const m = { errorCode: 0, recipients: names, senderID: this.userID, subject: subject === undefined ? '' : str(subject), content: content as LValue, timeStamp: 0 };
+    this.sendMessage(m);
     return 0;
   }
 
@@ -207,6 +221,8 @@ export class MultiuserXtra {
       const name = str(peer);
       this.send(encodeMessage({ errorCode: 0, recipients: ['System'], senderID: this.userID, subject: 'BreakConnection', content: name, timeStamp: 0 }));
       this.peers = this.peers.filter((p) => p.toLowerCase() !== name.toLowerCase());
+      this.links.get(name.toLowerCase())?.close();
+      this.links.delete(name.toLowerCase());
       return 0;
     }
     this.dispose();
@@ -219,6 +235,7 @@ export class MultiuserXtra {
    * its instance (gMultiuserInstanceIRC = VOID).
    */
   dispose() {
+    this.closeLinks();
     this.closedByUs = true;
     this.pendingOut = [];
     this.ws?.close(1000);
@@ -249,12 +266,31 @@ export class MultiuserXtra {
     return 0;
   }
 
+  /**
+   * Not Director's: how this P2P connection's messages travel. 'direct' once every
+   * counterpart's are on a WebRTC DataChannel, 'connecting' while one is negotiating,
+   * else 'relay' (also IRC, and connections that never tried: ?p2p=relay, no WebRTC).
+   */
+  get transport(): Transport {
+    const links = this.listener ? this.peers.map((p) => this.links.get(p.toLowerCase())) : [this.links.get('')];
+    if (!links.length || links.some((l) => !l)) return 'relay';
+    if (links.some((l) => l!.transport === 'connecting')) return 'connecting';
+    return links.every((l) => l!.transport === 'direct') ? 'direct' : 'relay';
+  }
+
+  /** The transport, the page's setting, why there's no direct link, and each link's state. */
+  transportInfo() {
+    const links = [...this.links.values()].map((l) => l.info());
+    return { transport: this.transport, setting: p2pSetting(), reason: links.length ? links.map((l) => l.reason).join('; ') : this.relayReason, clockOffset: this.signalling?.offset, links };
+  }
+
   // ---------------------------------------------------------------- transport
 
   private open(url: string, logon: Uint8Array | null, announce: boolean) {
     this.dispose();
     this.closedByUs = false;
     this.opened = false;
+    this.relayReason = 'the relay has not answered (no direct connections)';
     this.recvBuffer = new Uint8Array(0);
     let ws: WebSocket;
     try {
@@ -270,12 +306,16 @@ export class MultiuserXtra {
       if (!current()) return;
       this.opened = true;
       if (logon) ws.send(logon);
+      // Ask the relay for direct-connection signalling (a relay without it never answers).
+      if (this.mode === 'smus') ws.send(JSON.stringify({ t: 'hello', c: performance.now() }));
       for (const out of this.pendingOut.splice(0)) ws.send(out);
       if (announce) this.receive({ errorCode: 0, recipients: [this.userID], senderID: 'System', subject: 'ConnectToNetServer', content: undefined, timeStamp: 0 });
     };
     ws.onmessage = (e) => {
       if (!current()) return;
-      if (typeof e.data === 'string') {
+      if (typeof e.data === 'string' && this.mode === 'smus') {
+        this.onControl(e.data);
+      } else if (typeof e.data === 'string') {
         this.receive({ errorCode: 0, recipients: [this.userID], senderID: 'System', subject: 'String', content: e.data, timeStamp: 0 });
       } else if (this.mode === 'text') {
         let s = '';
@@ -289,9 +329,100 @@ export class MultiuserXtra {
     ws.onclose = ws.onerror = () => {
       if (!current()) return;
       this.ws = null;
+      this.closeLinks();
       // A connection that never opened failed to connect; one that did was lost.
       this.receive({ errorCode: ERR_NO_CONNECTION, recipients: [this.userID], senderID: 'System', subject: this.opened ? 'ConnectionProblem' : 'ConnectToNetServer', content: undefined, timeStamp: 0 });
     };
+  }
+
+  /** A game message: on the direct channel to each counterpart that has one, else the relay. */
+  private sendMessage(m: MultiuserMessage) {
+    const frame = encodeMessage(m);
+    if (!this.links.size || (m.recipients.length === 1 && m.recipients[0] === 'System')) return this.send(frame);
+    if (!this.listener) {
+      if (!this.links.get('')?.send(frame)) this.send(frame);
+      return;
+    }
+    // The relay's routing (server/relay.mjs recipientsOf), over this listener's peers.
+    const lower = m.recipients.map((r) => r.toLowerCase());
+    let targets = this.peers;
+    if (m.recipients.length && !m.recipients.includes('*')) {
+      const named = this.peers.filter((p) => lower.includes(p.toLowerCase()));
+      targets = named.length ? named : this.peers.length === 1 ? this.peers : [];
+    }
+    const viaRelay = targets.filter((p) => !this.links.get(p.toLowerCase())?.send(targets.length === 1 ? frame : frame.slice()));
+    if (viaRelay.length === targets.length) return this.send(frame);
+    // Some went direct: the relay gets a copy for the rest only (addressed to them by name).
+    if (viaRelay.length) this.send(encodeMessage({ ...m, recipients: viaRelay }));
+  }
+
+  /** A control message from the relay: its hello, or the other end's signalling. */
+  private onControl(text: string) {
+    let m: Control;
+    try {
+      m = JSON.parse(text);
+    } catch {
+      return;
+    }
+    if (m.t === 'hello' || m.t === 'time') {
+      // Clock: the relay's time stamps continue on the channel. Keep the sample with the shortest round trip.
+      const now = performance.now();
+      const rtt = now - Number(m.c);
+      const offset = Number(m.now) - (Number(m.c) + now) / 2;
+      if (!this.signalling) this.signalling = { iceServers: (m.iceServers as RTCIceServer[]) ?? [], offset, rtt };
+      else if (rtt < this.signalling.rtt) Object.assign(this.signalling, { offset, rtt });
+      if (m.t === 'hello') {
+        for (let i = 0; i < 3; i++) setTimeout(() => this.control({ t: 'time', c: performance.now() }), 50 * (i + 1));
+        const setting = p2pSetting();
+        this.relayReason = setting === 'relay' ? 'relay only (?p2p=relay)' : !webrtcAvailable() ? 'no WebRTC' : 'waiting for an offer';
+        if (!this.listener && setting !== 'relay' && webrtcAvailable()) this.link('', true);
+        for (const o of this.pendingOffers.splice(0)) this.onOffer(o);
+      }
+      return;
+    }
+    if (m.t === 'offer') return this.onOffer(m);
+    const link = this.links.get(this.listener ? String(m.from ?? '').toLowerCase() : '');
+    void link?.onControl(m);
+  }
+
+  private onOffer(m: Control) {
+    if (!this.listener) return;
+    if (!this.signalling) return void this.pendingOffers.push(m);
+    const from = String(m.from ?? '');
+    if (p2pSetting() === 'relay' || !webrtcAvailable()) return this.control({ t: 'decline', to: from });
+    this.links.get(from.toLowerCase())?.close();
+    void this.link(from, false).onControl(m);
+  }
+
+  private link(name: string, offerer: boolean): DirectLink {
+    const link = new DirectLink({
+      name,
+      offerer,
+      iceServers: this.signalling?.iceServers ?? [],
+      setting: p2pSetting(),
+      control: (c) => this.control(c),
+      deliver: (frame) => {
+        try {
+          this.receive(decodeMessage(frame.subarray(6)));
+        } catch (e) {
+          console.warn('Multiuser: bad message', e);
+        }
+      },
+      clock: () => performance.now() + (this.signalling?.offset ?? 0),
+    });
+    this.links.set(name.toLowerCase(), link);
+    return link;
+  }
+
+  private control(m: Control) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m));
+  }
+
+  private closeLinks() {
+    for (const l of this.links.values()) l.close();
+    this.links.clear();
+    this.signalling = null;
+    this.pendingOffers = [];
   }
 
   private send(data: Uint8Array | string) {
@@ -330,6 +461,11 @@ export class MultiuserXtra {
       // The relay announces each peer that logs on, and reports the ones that go away.
       if (m.subject === 'WaitForNetConnection' && m.errorCode === 0 && !this.peers.some((p) => p.toLowerCase() === m.senderID.toLowerCase())) this.peers.push(m.senderID);
       if (m.errorCode !== 0) this.peers = this.peers.filter((p) => p.toLowerCase() !== m.senderID.toLowerCase());
+      // A peer that went away or logged on again: its old direct link is gone with it.
+      if ((m.errorCode !== 0 || m.subject === 'WaitForNetConnection') && m.senderID) {
+        this.links.get(m.senderID.toLowerCase())?.close();
+        this.links.delete(m.senderID.toLowerCase());
+      }
     }
     this.incoming.push(m);
     if (!this.scheduled) {

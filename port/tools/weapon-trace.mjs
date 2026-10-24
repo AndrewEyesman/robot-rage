@@ -23,8 +23,8 @@
 //    real one's keyEvent does, and after its move) and records the handlers the weapons
 //    call on it (damage, spendEnergy, hopp, rekyl...). So any difference comes from the
 //    weapons, not the driving.
-// 3. The probes are compared tick by tick (numbers to 5e-4, so "3" against "3.0000" is
-//    an integer/float difference), and the damage and energy the weapons take from the
+// 3. The probes are compared tick by tick (numbers to 1e-3: four printed decimals and
+//    float drift over a long flight), and the damage and energy the weapons take from the
 //    robot are checked against the original robot's armour and battery.
 //
 // Weapons that use random() (the disc's bounce) can't match draw for draw: the Lingo
@@ -48,19 +48,40 @@ const shot = (k, hold, wait, drive = '0') => {
 };
 const robot = (vapen, pos) =>
   `[#ram: [#r3], #torn: [#t3], #hjul: [#h2], #motor: [#ma1], #batteri: [#b3], #vapen: [${vapen.map((v) => '#' + v).join(', ')}], #wpnPos: [${pos.map((p) => '#' + p).join(', ')}], #special: [], #ammunition: []]`;
-const std = [...run('00000000', 3), ...shot(1, 2, 45), ...shot(2, 2, 45), ...shot(3, 2, 45), ...shot(1, 2, 20, '1'), ...shot(2, 2, 20, '1'), ...shot(3, 20, 30)];
+// (the first idle ticks also let dirplayer's pinned clock settle: it reads late for a few ticks)
+const std = [...run('00000000', 8), ...shot(1, 2, 45), ...shot(2, 2, 45), ...shot(3, 2, 45), ...shot(1, 2, 20, '1'), ...shot(2, 2, 20, '1'), ...shot(3, 20, 30)];
 
 export const SCENARIOS = {
   grenade_mine_axe: { rd: robot(['v4', 'v1', 'v8'], ['t', 'b', 'f']), schedule: std, models: ['Granatkastare1', 'Slagpik1', 'Mina1'] },
   flame_nail_claw: { rd: robot(['v2', 'v13', 'v9'], ['t', 'b', 'f']), schedule: std, models: ['Eldkastare1', 'Klo11', 'Klo21'] },
   laser_glue_drill: { rd: robot(['v3', 'v14', 'v10'], ['t', 'b', 'f']), schedule: std, models: ['laserkanon1', 'laserray1', 'Skruv1'] },
-  guided_oil_saw: { rd: robot(['v16', 'v15', 'v11'], ['t', 'b', 'f']), schedule: std, models: ['missilHN1', 'missilVU1', 'sågblad1'] },
+  guided_oil_saw: { rd: robot(['v16', 'v15', 'v11'], ['t', 'b', 'f']), schedule: std, models: ['missilHN1', 'missilVU1'] },
   heat_pin_plow: { rd: robot(['v17', 'v12', 'v6'], ['t', 'f', 'b']), schedule: std, models: ['missilHN1', 'Taggar1'] },
   regen_kami_spear: { rd: robot(['v22', 'v24', 'v21'], ['t', 'b', 'f']), schedule: std, models: ['regen1', 'speargun1'] },
   field_flash_disc: { rd: robot(['v33', 'v25', 'v26'], ['t', 'f', 'b']), schedule: std, models: ['shield1', 'flash1', 'spinndisc1'] },
   cloak_mini_charges: { rd: robot(['v34', 'v31', 'v32'], ['t', 'f', 'b']), schedule: std, models: ['trans1', 'RCbombcar1', 'RCMine1'] },
   gun_emp_dagger: { rd: robot(['v35', 'v36', 'v7'], ['f', 'b', 'f']), schedule: std, models: ['Railgun1', 'EMP1'] },
+  // The maintainer's spear gun: razor discs at the back, spear gun at the front, all five spears.
+  spear_front_five: { rd: robot(['v26', 'v24'], ['b', 'f']), schedule: [...run('00000000', 8), ...[1, 2, 3, 4, 5, 6].flatMap(() => shot(2, 2, 18))], models: ['speargun1'], forward: 5 },
+  spear_back_five: { rd: robot(['v24'], ['b']), schedule: [...run('00000000', 8), ...[1, 2, 3, 4, 5, 6].flatMap(() => shot(1, 2, 18))], models: ['speargun1'] },
 };
+
+/**
+ * Differences that aren't the weapons' and are reported elsewhere (docs/port-issues.md):
+ * BuildRobot's copies of the mini-gun, mini robot and disc launcher come out #none in
+ * the port where dirplayer reads #front (their parents carry no mesh; the visible parts
+ * are children, which match).
+ */
+const KNOWN = [
+  { key: /^model (Railgun1|RCbombcar1|spinndisc1)$/, re: /#(none|front)(?=[,\]])/, to: '#vis' },
+  { key: /^m of \d+$/, when: /^\["RCbombcar1"/, re: /#(none|front)(?=[,\]])/, to: '#vis' },
+  // The saw (v11): dirplayer can't find its blade model by the part table's Mac-encoded
+  // name ("s\x8cgblad"), so the original side never spins it; the port finds and spins it.
+  { key: /^m of \d+$/, when: /^\[Void, Void, Void\]$/, whenPort: /^\["s\u0152gblad1"/, re: /^.*$/, to: '-' },
+  // The spear gun's cloneDeep copies: children are numbered "-copy1" in the port and
+  // "-copy2" in dirplayer (the runtime's clone naming; same models, same positions).
+  { key: /^m of \d+$/, when: /^\["spear/, re: /-copy\d+/, to: '-copyN' },
+];
 
 const PROPS = ['state', 'x', 'y', 'z', 'dx', 'dy', 'dz', 'angle', 'dangle', 'counter', 'speed', 'pHit', 'radie', 'gnista'];
 const WEAPON_SPRITES = [12, 13, 14];
@@ -71,7 +92,7 @@ async function launch() {
   return chromium.launch({
     executablePath: '/usr/bin/google-chrome-stable',
     headless: true,
-    args: ['--headless=new', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required'],
+    args: ['--headless=new', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
   });
 }
 
@@ -112,6 +133,7 @@ async function original(browser, sc) {
   await sleep(1500);
   await click(480, 375);
   await sleep(15000);
+  if (VERBOSE) console.log('original: entering Training');
   await click(731, 501);
   for (let i = 0; i < 60; i++) {
     await sleep(1000);
@@ -124,11 +146,14 @@ async function original(browser, sc) {
     'sendSprite(1, #makedoktor)',
     // The weapon channels as a fresh Training has them (puppets left from the first build go).
     ...[11, 12, 13, 14].flatMap((n) => [`sprite(${n}).scriptInstanceList = []`, `sprite(${n}).loc = point(0, 0)`, `sprite(${n}).rotation = 0`, `sprite(${n}).member = member(0, 0)`, `puppetSprite(${n}, 0)`]),
+    ...[1, 2, 3].map((k) => `member("weapon${k} num").text = ""`),
     'world.resetWorld()',
     'sendSprite(0, #beginSprite)',
     'sendSprite(10, #InitRobot)',
   ];
+  if (VERBOSE) console.log('original: robot', await lingo('string(sprite(10).state)'));
   for (const c of setup) {
+    if (VERBOSE) console.log('original:', c.slice(0, 60));
     const r = await lingo(c);
     if (r.startsWith('ERR')) throw new Error(`${c}: ${r}`);
   }
@@ -144,7 +169,7 @@ async function original(browser, sc) {
     motorkonst: Number(await lingo('string(sprite(10).motorkonst)')),
   };
   const robotExpr =
-    'string([sprite(10).x, sprite(10).y, sprite(10).z, sprite(10).angle, sprite(10).anglex, sprite(10).anglez, sprite(10).speed, sprite(10).dx, sprite(10).dy, sprite(10).fart, sprite(10).state, sprite(10).locH, sprite(10).locV, sprite(10).rotation, sprite(10).damageStatus, sprite(10).member.name])';
+    'string([sprite(10).x, sprite(10).y, sprite(10).z, sprite(10).angle, sprite(10).anglex, sprite(10).anglez, sprite(10).speed, sprite(10).dx, sprite(10).dy, sprite(10).fart, sprite(10).state, sprite(10).locH, sprite(10).locV, sprite(10).rotation, sprite(10).damageStatus, sprite(10).member.name, sprite(10).pRobot.parent.worldPosition, sprite(10).pRobot.transform.rotation, sprite(10).pRobot.parent.transform.rotation, sprite(10).keymap])';
   const ticks = [];
   const robot0 = await lingo(robotExpr);
   let last = '00000000';
@@ -160,10 +185,13 @@ async function original(browser, sc) {
         window.Date = R;
         return;
       }
+      // The clock creeps on by 1 ms every 100000 reads: dirplayer's VM waits for time to
+      // pass inside a long handler, and a stopped clock hangs it.
+      let n = 0;
       window.Date = class extends R {
         constructor(...a) {
           if (a.length) super(...a);
-          else super(t);
+          else super(t + Math.floor(n++ / 100000));
         }
       };
       // Date.now() stays real: the page's event loop busy-waits on it.
@@ -177,9 +205,12 @@ async function original(browser, sc) {
       last = map;
     }
     const ms = Number(await lingo('string(the milliSeconds)'));
+    if (VERBOSE) process.stdout.write(`ms ${ms} `);
     const err1 = await lingo('sendAllSprites(#prepareFrame)');
+    if (VERBOSE) process.stdout.write(`frame ${await lingo('string(the milliSeconds)')} `);
     const err2 = await lingo('sendSprite(0, #RecycleSprites)');
     const ms2 = Number(await lingo('string(the milliSeconds)'));
+    if (VERBOSE) process.stdout.write(`recycled `);
     ticks.push({ map, ms, ms2, robot: await lingo(robotExpr), probes: await readOriginal(lingo, sc), errors: [err1, err2].filter((e) => e.startsWith('ERR')) });
     await pin(null);
   }
@@ -218,14 +249,15 @@ async function readOriginal(lingo, sc) {
 
 // ------------------------------------------------------------------ the port
 
-async function ported(browser, sc, orig) {
+async function ported(browser, sc, orig, fixes = false) {
   const page = await (await browser.newContext({ viewport: { width: 800, height: 600 } })).newPage();
   const logs = [];
   page.on('console', (m) => {
     if (m.type() === 'error') logs.push(m.text().slice(0, 400));
   });
   page.on('pageerror', (e) => logs.push('pageerror ' + e.message));
-  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard`);
+  // The port's enhancements that change weapons are off for the comparison (?quirks=).
+  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard${fixes ? '' : '&quirks=spear'}`);
   await page.waitForFunction(() => window.__player?.movie?.name === 'arena104', null, { timeout: 60000 });
   await sleep(1500);
   const result = await page.evaluate(
@@ -256,7 +288,11 @@ async function ported(browser, sc, orig) {
       // The original's globals for Training.
       const ud = val(orig.env.userData);
       G.gUserData = { propertyList: ud, robotid: undefined, robotname: undefined, score: 0 };
-      G.gPartDescription = val(orig.env.partDescription);
+      // dirplayer shows the cast's Mac bytes decoded as Mac Roman ("sågblad"); the port
+      // keeps each byte as its Windows-1252 character, as Adobe's Windows player does
+      // ("s\u0152gblad", byte 0x8C), which is how the 3D file names the saw blade.
+      const MAC = { 'å': '\u0152', 'ä': '\u0160', 'ö': '\u0161', 'Å': '\x81', 'Ä': '\u20ac', 'Ö': '\u2026', 'é': '\u017d', 'ü': '\u0178' };
+      G.gPartDescription = val(orig.env.partDescription.replace(/[åäöÅÄÖéü]/g, (c) => MAC[c]));
       G.gGamePlace = val(orig.env.gamePlace).getAt(1);
       G.gPlayerNumber = val(orig.env.playerNumber).getAt(1);
       G.gLastHitTime = now;
@@ -273,7 +309,16 @@ async function ported(browser, sc, orig) {
       const srcRobot = S3.member3d('robot' + ram.slice(1));
       G.gRobot1 = RW3.BuildRobot('robot1', rd, G.world, srcRobot);
       G.gRobot1.scale(2.0);
-      for (let n = 11; n <= 14; n++) p.sprite(n).scriptInstanceList = [];
+      // The weapon channels as a fresh Training has them (the arena's own frame script
+      // may have run first with its default robot).
+      for (let n = 11; n <= 14; n++) {
+        const s = p.sprite(n);
+        s.scriptInstanceList = [];
+        s.locH = s.locV = 0;
+        s.rotation = 0;
+        s.member = null;
+        s.puppet = false;
+      }
 
       // The stand-in robot: the original's state, tick by tick.
       const calls = [];
@@ -300,11 +345,13 @@ async function ported(browser, sc, orig) {
           this.damageStatus.setaProp(sym('energy'), ds.getaProp(sym('energy')));
           this.damageStatus.setaProp(sym('pansar'), ds.getaProp(sym('pansar')));
           spr.member = D.member(l.getAt(16));
-          // UpdateRobot
-          const num = L.num;
-          this.pRobot.parent.worldPosition = S3.vector(num(this.x) * 5, num(this.z), num(this.y) * 5);
-          this.pRobot.transform.rotation = S3.vector(num(this.anglex), 0, num(this.anglez));
-          this.pRobot.parent.transform.rotation = S3.vector(0, -num(this.angle) + 90, 0);
+          // The robot model where the original's last UpdateRobot left it (a hopp during
+          // the tick changes z only after the model has moved).
+          this.pRobot.parent.worldPosition = l.getAt(17);
+          this.pRobot.transform.rotation = l.getAt(18);
+          this.pRobot.parent.transform.rotation = l.getAt(19);
+          // The keymap the robot acts on (#broken and the like clear it each frame).
+          this.keymap = L.lingoString(l.getAt(20));
         }
         // keyEvent, as the robot behavior runs it from CheckKeyQueue (sprite 211, the
         // chat line, is #hidden in Training).
@@ -323,15 +370,23 @@ async function ported(browser, sc, orig) {
         prepareFrame() {
           const t = this.tick;
           this.take(t.pre);
-          if (t.map !== this.keymap) this.keyEvent(t.map);
+          // keyPressed only queues keys in these states (the queue then delivers them this tick).
+          const takes = ['move', 'slow', 'fast', 'hopp', 'battery', 'mini', 'scrambled'].some((x) => this.state === sym(x));
+          if (t.changed && takes) this.keyEvent(t.map);
+          // moveMini: in #mini the robot steers the mini robot instead of itself.
+          if (this.state === sym('mini')) D.sendSprite(this.minisp, 'steermini', this.keymap.slice(0, 4), this.speed);
           this.take(t.post);
         }
       }
-      for (const h of ['damage', 'spendEnergy', 'hopp', 'rekyl', 'hit', 'fasten', 'makeslow', 'makenormal', 'release', 'slippery', 'startmini', 'stopmini', 'emp', 'noemp', 'tip', 'MakeLoser', 'breakdown']) {
+      for (const h of ['damage', 'spendEnergy', 'hopp', 'rekyl', 'hit', 'fasten', 'makeslow', 'makenormal', 'release', 'slippery', 'stopmini', 'emp', 'noemp', 'tip', 'MakeLoser', 'breakdown']) {
         ReplayRobot.prototype[h] = function (...a) {
           calls.push([h, ...a.map((x) => L.lingoString(x))]);
         };
       }
+      ReplayRobot.prototype.startmini = function (sp0) {
+        calls.push(['startmini', L.lingoString(sp0)]);
+        this.minisp = sp0;
+      };
       const robot = new ReplayRobot();
       robot.take(orig.robot0);
       p.sprite(10).puppet = true;
@@ -386,7 +441,11 @@ async function ported(browser, sc, orig) {
       };
       p.frameScript = frame;
 
+      for (const k of [1, 2, 3]) D.member(`weapon${k} num`).text = '';
       A3.initWeapons(G.gRobot1, rd, 1, 10);
+      // The robot's InitRobot (sent after the rebuild on the original's side, and run on
+      // its first frame in the game) starts with sendAllSprites(#stopshoot).
+      D.sendAllSprites('stopshoot');
       window.__wt = { D, S3, L, G, p, frame, robot };
 
       const S = (v) => L.lingoString(v);
@@ -401,7 +460,8 @@ async function ported(browser, sc, orig) {
           out[`script ${n}`] = inst.constructor.name.toLowerCase();
           for (const k of ['m', 'pm']) {
             const m = prop(k);
-            out[`${k} of ${n}`] = m instanceof S3.Model ? S(new L.LList([m.name, m.worldPosition, m.visibility])) : '-';
+            // A deleted model's position reads as zero in dirplayer.
+            out[`${k} of ${n}`] = m instanceof S3.Model ? S(new L.LList([m.name, m.deleted ? S3.vector(0, 0, 0) : m.worldPosition, m.visibility])) : '-';
           }
         }
         for (const name of sc.models) {
@@ -415,12 +475,14 @@ async function ported(browser, sc, orig) {
 
       const ticks = [];
       let pre = orig.robot0;
+      let lastMap = '00000000';
       const stopAt = evalAt === null ? Infinity : evalAt;
       for (const t of orig.ticks) {
         if (ticks.length === stopAt) break;
         now = t.ms;
         calls.length = 0;
-        robot.tick = { pre, post: t.robot, map: t.map };
+        robot.tick = { pre, post: t.robot, map: t.map, changed: t.map !== lastMap };
+        lastMap = t.map;
         // sendAllSprites(#prepareFrame) as dirplayer runs it: the receivers are the
         // behaviors on the stage when it starts, so a shot created during this tick gets
         // its first prepareFrame next tick (dirplayer's frame events work the same way).
@@ -473,7 +535,7 @@ function same(a, b) {
     // tallied: the translations keep plain JS numbers where Lingo's int/float type
     // doesn't change the result (values.ts); a real difference shows in the value.
     if (x.includes('.') !== y.includes('.')) intFloat++;
-    return Math.abs(Number(x) - Number(y)) <= 5e-4 + 1e-6 * Math.abs(Number(x));
+    return Math.abs(Number(x) - Number(y)) <= 1e-3 + 1e-6 * Math.abs(Number(x));
   });
 }
 let intFloat = 0;
@@ -487,7 +549,19 @@ function compare(name, orig, port) {
     const P = port.ticks[i];
     const keys = new Set([...Object.keys(t.probes), ...Object.keys(P.probes)]);
     for (const k of keys) {
-      if (same(t.probes[k], P.probes[k])) continue;
+      let [a, b] = [t.probes[k], P.probes[k]];
+      // A sprite rotation of 360 reads 0 in dirplayer on Training's first tick.
+      if (k.startsWith('sprite') && a && b) [a, b] = [a, b].map((v) => v.replace(/^(\[[^,]+, [^,]+, )360\.0000/, '$10.0000'));
+      // A sprite's loc is a float truncated to whole pixels: positions that agree to
+      // 1e-3 can land a pixel apart (a gun at x 6000 in dirplayer, 5999.9999 in the port).
+      if (k.startsWith('sprite') && a && b) {
+        const la = a.match(/^\[(-?\d+), (-?\d+), /);
+        const lb = b.match(/^\[(-?\d+), (-?\d+), /);
+        if (la && lb && Math.abs(la[1] - lb[1]) <= 1 && Math.abs(la[2] - lb[2]) <= 1) b = b.replace(/^\[(-?\d+), (-?\d+), /, `[${la[1]}, ${la[2]}, `);
+      }
+      // Known differences outside the weapons (KNOWN below): compared without them.
+      for (const kn of KNOWN) if (kn.key.test(k) && a && b && (!kn.when || kn.when.test(a)) && (!kn.whenPort || kn.whenPort.test(b))) [a, b] = [a.replace(kn.re, kn.to), b.replace(kn.re, kn.to)];
+      if (same(a, b)) continue;
       const cat = k.replace(/\d+$/, 'N');
       if (!firstBad.has(cat)) firstBad.set(cat, { tick: i, key: k, o: t.probes[k], p: P.probes[k] });
       bad++;
@@ -498,9 +572,13 @@ function compare(name, orig, port) {
     const shield = /^\[1,/.test(P.probes.globals ?? '') ? 0.8 : 1;
     const dmg = P.calls.filter((c) => c[0] === 'damage').reduce((s, c) => s + Number(c[1]) * shield, 0);
     const spend = P.calls.filter((c) => c[0] === 'spendEnergy').reduce((s, c) => s + Number(c[1]), 0);
-    // The robot's own motor drain (handleMove spends energy for up/down unless the robot is in #battery or #mini).
-    const rstate = t.robot.match(/#(\w+), \d+, \d+, [-\d.]+, \[#energy/)?.[1];
-    const motor = (t.map[2] === '1' || t.map[3] === '1') && rstate !== 'battery' && rstate !== 'mini' ? motorkonst * battkonst : 0;
+    // The robot's own motor drain: handleMove spends energy for up/down.
+    const stateOf = (r) => r.match(/#(\w+), -?\d+, -?\d+, [-\d.]+, \[#energy/)?.[1];
+    const rstates = [stateOf(t.robot), stateOf(i ? orig.ticks[i - 1].robot : orig.robot0)];
+    // (#broken, #over and #stunned clear the keymap; #battery and #mini don't drive; the rest don't run handleMove's keys)
+    const noMotor = ['battery', 'mini', 'broken', 'over', 'stunned', 'stop', 'tip', 'fall'];
+    const keymap = t.robot.match(/, "([01]{8})"\]$/)?.[1] ?? t.map;
+    const motor = (keymap[2] === '1' || keymap[3] === '1') && !rstates.some((x) => noMotor.includes(x)) ? motorkonst * battkonst : 0;
     const expEnergy = Math.max(0, prevDs[0] - (spend + motor) * battkonst);
     const expPansar = Math.max(0, prevDs[1] - dmg);
     if (Math.abs(expPansar - ds[1]) > 1e-3 && !firstBad.has('armour')) firstBad.set('armour', { tick: i, key: 'armour', o: ds[1], p: `${expPansar} (calls ${JSON.stringify(P.calls)})` });
@@ -524,6 +602,26 @@ function compare(name, orig, port) {
   return false;
 }
 
+/**
+ * With the port's fix on (enhancements.ts arenaFixes.spearForward), every spear of a
+ * front-mounted gun flies forward: the robot faces -z in these scenarios, so each spear
+ * model's z must fall from tick to tick while it flies.
+ */
+async function checkForward(browser, name, sc, orig) {
+  const port = await ported(browser, sc, orig, true);
+  const zs = new Map();
+  port.ticks.forEach((t) => {
+    for (const [k, v] of Object.entries(t.probes)) {
+      const m = /^m of (\d+)$/.test(k) && v.match(/^\["(spear[^"]*)", vector\( *[-\d.]+, *[-\d.]+, *([-\d.]+)/);
+      if (m) (zs.get(m[1]) ?? zs.set(m[1], []).get(m[1])).push(Number(m[2]));
+    }
+  });
+  const backward = [...zs].filter(([, z]) => z.length < 2 || z[1] >= z[0]);
+  const ok = zs.size === sc.forward && !backward.length;
+  console.log(`${name} (port fix on): ${ok ? 'ok' : 'FAIL'}, ${zs.size} of ${sc.forward} spears fired${backward.length ? `, backwards: ${backward.map(([n]) => n).join(', ')}` : ', all forward'}`);
+  return ok;
+}
+
 const wanted = args.filter((a) => !a.startsWith('--'));
 const names = wanted.length ? wanted : Object.keys(SCENARIOS);
 const browser = await launch();
@@ -542,6 +640,7 @@ for (const name of names) {
   const dump = opt('dump');
   if (dump) (await import('node:fs')).writeFileSync(`${dump}-${name}.json`, JSON.stringify({ orig, port }, null, 1));
   ok = compare(name, orig, port) && ok;
+  if (sc.forward) ok = (await checkForward(browser, name, sc, orig)) && ok;
 }
 await browser.close();
 process.exit(ok ? 0 : 1);

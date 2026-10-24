@@ -108,6 +108,16 @@ async function main() {
     const opp = value(await mainAsp({ action: 'getrobotall', robotid: query.get('opp') ?? '' })) as LPropList;
     if (prop(opp, 'err') !== 0) throw new Error(`opponent ${query.get('opp')}: ${lingoString(opp)}`);
     opponent = opp;
+    // The lobby's host reports the match start (setrwgames, lobby060_ s033, with its
+    // session as the port's lobby sends it); the server counts ranked results only for
+    // a match it saw start.
+    if (match === 'host' && account) {
+      const description = propList(
+        sym('server'), robotid, sym('client'), prop(opp, 'robotid'), sym('servername'), prop(ud, 'robotname'), sym('clientname'), prop(opp, 'robotname'),
+        sym('serverip'), prop(ud, 'robotname'),
+      );
+      await mainAsp({ action: 'setrwgames', gamegescription: lingoString(description), sessionid: account.sid });
+    }
   }
 
   // What the loader leaves: main.ini (the file list JumpMovie uses, the server URL).

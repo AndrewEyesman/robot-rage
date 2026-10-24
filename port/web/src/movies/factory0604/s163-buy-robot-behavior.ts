@@ -8,6 +8,7 @@ import { LList, add, div, gt, rgb, sym, type LColor, type LSymbol, type LValue, 
 import { GetMiddlePoint } from '../robotwars/s006-3d-scripts';
 import { InstallStorePart, UnInstallStorePart } from './s277-3d-store';
 import { parts } from './util';
+import { garageFixes } from './enhancements';
 
 export class BuyRobotBehavior extends Behavior {
   sp = 0;
@@ -34,7 +35,8 @@ export class BuyRobotBehavior extends Behavior {
 
   prepareFrame() {
     if (G.gpopBuy) {
-      sendAllSprites('ShowpurchaseBox');
+      // Port enhancement (super weapons for credits, enhancements.ts): no payment box.
+      if (!garageFixes.superCredits) sendAllSprites('ShowpurchaseBox');
       G.gpopBuy = 0;
     }
     const st = this.state;

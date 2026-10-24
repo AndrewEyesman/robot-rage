@@ -43,6 +43,24 @@ The arena dev page:
     index.html?match=client&host=10.9.9.1&opp=1003&user=rival@home.lan&pass=rage2005
                                                  the other tab joins it (&ranked=1: ranked)
 
+Matches (and the lobby's P2P connections, which become the match's) go directly
+between the two browsers over a WebRTC DataChannel (`web/src/director/p2p.ts`, used by
+the Multiuser Xtra in `multiuser.ts`). The game server's relay socket carries the
+signalling and the messages until the channel opens, and all of them if it doesn't
+open within 5 s (strict NATs); the switch, and a fall back when an open channel dies,
+keep every message, in order. The server's STUN servers come from its `ICE_SERVERS`
+(see the top `README.md`).
+
+    ?p2p=relay        relay only: the opponent never sees this player's IP address
+                      (also localStorage.rrP2P = 'relay'); a relay-only host declines offers
+    ?p2p=fail         testing: ICE can't connect, so the match falls back to the relay
+
+`muInstance.transport` (`'direct'`, `'connecting'` or `'relay'`) and
+`muInstance.transportInfo()` (with the reason and each link's message counts) say
+how a connection ended up; the page logs `Multiuser: direct connection ...` or
+`Multiuser: relay ... (reason)`. `node port/tools/p2p-test.mjs <dev server>` checks
+the switch and the fall back in two tabs and prints the round trip on each.
+
 In the arena the keys are the game's (arrows drive, Z/X/C fire, 1/2/3 cameras, T
 chats). Two improvements, kept apart from the translated scripts in
 `arena104/enhancements.ts`:

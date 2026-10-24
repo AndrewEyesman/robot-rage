@@ -19,7 +19,7 @@ const VIEW = { x: 27, y: 9, width: 750, height: 449 };
 
 const browser = await chromium.launch({
   executablePath: '/usr/bin/google-chrome-stable', headless: true,
-  args: ['--headless=new', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl'],
+  args: ['--headless=new', '--mute-audio', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl'],
 });
 const ctx = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
 

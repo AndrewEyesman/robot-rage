@@ -18,6 +18,26 @@
 //   it properly (?quirks=ping restores the original).
 // - No ambient wind: matches loop the "ambient sound" member at volume 20; the maintainer
 //   asked for it gone (?ambient=1 brings it back).
+// - Start sync: the arena alternates between sending "ready" and waiting, a frame each,
+//   and player 2 answered the host's "ready" only while waiting. Two tabs in lockstep
+//   could miss each other forever. The port answers in both (?quirks=sync restores it).
+// - Tab switches: the speed-hack check measured the time a hidden tab spent stopped as
+//   one long second, struck the robot for #speedgear and stalled every frame. The player
+//   now keeps running while hidden, and a check spanning a tab switch is let off
+//   (?quirks=speedgear restores the strike).
+// - Training restarts after a crash: falling into the pit or off the roof, or losing
+//   all armour, stopped the robot for good (the lose handler only shows it broken), so
+//   the player had to leave Training and come back. Three seconds after the crash the
+//   port plays Training's entry again, as the garage's door does (?quirks=pit restores
+//   the original).
+// - Spear gun at the front: its spears fly along the gun model's own axis, which points
+//   backwards when the gun is mounted at the front (the back mount turns it round), so a
+//   front gun shot through its own robot and out of the back. The port turns a front
+//   gun's spears round so they fly forward (?quirks=spear restores the original).
+// - Ranked results from both players: after each ranked round only the winner reported
+//   the result (the host alone for a tie), and the server believed it. Now the loser
+//   reports too (and both report ties), so the server counts a round only when both
+//   reports agree (server/results.mjs; ?quirks=results restores the original).
 
 import { BitmapMember, STAGE_H, STAGE_W, bootHooks, member, mutedSounds, type Player, type Sprite } from '../../director';
 import { install3d, Shockwave3dMember, type ViewRect } from '../../director/s3d';
@@ -33,8 +53,23 @@ const quirks = (query.get('quirks') ?? '').split(',');
 export const arenaFixes = {
   pingDelay: !quirks.includes('ping'),
   ambient: query.get('ambient') === '1',
+  startSync: !quirks.includes('sync'),
+  tabSwitch: !quirks.includes('speedgear'),
+  trainingRespawn: !quirks.includes('pit'),
+  spearForward: !quirks.includes('spear'),
+  bothReport: !quirks.includes('results'),
 };
 if (!arenaFixes.ambient) mutedSounds.add('ambient sound');
+
+let tabSwitched = false;
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => (tabSwitched = true));
+
+/** Whether the tab was hidden or shown since the last call (the speed-hack check's last second). */
+export function takeTabSwitch(): boolean {
+  const was = tabSwitched || (typeof document !== 'undefined' && document.hidden);
+  tabSwitched = false;
+  return was;
+}
 
 /** The stage's top edge of the control panel: everything above it is the 3D view's. */
 const PANEL_TOP = 457;

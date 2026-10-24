@@ -8,7 +8,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 export class Store {
   constructor(path) {
     this.path = path;
-    this.db = { nextId: 1000, members: {}, robots: {}, sessions: {} };
+    this.db = { nextId: 1000, members: {}, robots: {}, sessions: {}, matches: {} };
     if (existsSync(path)) this.db = { ...this.db, ...JSON.parse(readFileSync(path, "utf8")) };
     this.saveTimer = null;
   }

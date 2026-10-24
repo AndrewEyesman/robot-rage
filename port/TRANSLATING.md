@@ -69,7 +69,8 @@ labels, sprites and behaviors stay exactly where the original put them. Read
   integers use `Math.trunc(a / b)`; where it formats a float use the library.
 - **Keep the original's structure and numbers.** Same handler names, same states, same
   constants, same order of operations, including quirks and bugs (note them with a
-  comment, don't fix them; fixes for the maintainer come later as separate enhancements).
+  comment, don't fix them in the translation). Bugs that hurt play are then fixed as
+  enhancements, kept apart and switchable back (see Issues).
   Comments explain Director behaviour the code relies on, not what the line does.
 - **Never commit** the decompiled scripts, extracted assets, game files or Adobe
   binaries. The translated TypeScript is fine to commit (the maintainer's call).
@@ -83,9 +84,17 @@ its own game server and dev server on fresh seed data (`port/tools/regress-seed.
 every run, so it never depends on, or changes, the shared test server; `--live` runs
 against 8091/8092 instead. A pre-commit hook (`scripts/git-hooks`, enabled with
 `git config core.hooksPath scripts/git-hooks`) runs the fast checks whenever a commit
-touches the port or the server. Before calling any change done,
-especially to shared code (`port/web/src/director/`, `s3d/`, `lingo/`), run the full
-suite: a behaviour that stops working is a failure to fix, not a side effect. When you
+touches the port or the server. A behaviour that stops working is a failure to fix,
+not a side effect, but don't make the maintainer wait on tests they don't need:
+
+- While working, run only the checks for what you touched (a word filters by name:
+  `regress.mjs garage`, `regress.mjs match`), plus the typecheck.
+- Before reporting a change done, run the default suite once (a few minutes); `--fast`
+  is enough when nothing near the arena, matches or networking changed.
+- `--full` adds `weapon-trace` (the weapons against the original, 10-30 minutes): run it
+  only when arena weapon, robot or physics code changed, or before a commit and push.
+- A check that fails in a run while other agents edit files can be a reload mid-run:
+  rerun it alone before blaming your change. When you
 verify something new, add its line to the list and, where practical, a check to the
 suite. Screenshot checks compare with approved images in `.cache/regress/approved/`;
 approve a deliberate change with `--approve` only after looking at the diff.
@@ -93,11 +102,21 @@ approve a deliberate change with `--approve` only after looking at the diff.
 ## Issues
 
 Every issue found along the way goes in `docs/port-issues.md`: original-game quirks
-kept on purpose, differences between the port and Adobe's player, things that need
-The maintainer's decision (faithful but bad for play), runtime fixes, and tooling problems.
-Say what happens, why, and where.
+kept on purpose, differences between the port and Adobe's player, fixes to the
+original, runtime fixes, and tooling problems. Say what happens, why, and where.
+
+The maintainer's rule: functionality first, then accuracy. An original bug that hurts play (in
+a browser or anywhere) is fixed without waiting for a decision, as an enhancement: the
+translated script keeps the original's logic behind a flag (`arenaFixes` in
+`movies/arena104/enhancements.ts` is the pattern; outside the arena, `gameFixes` in
+`movies/fixes.ts`), a `?quirks=...` setting restores
+the original, and a regression check guards the fix. Frame rates: never below what the
+score asks for; higher is better.
 
 ## Checking
+
+Launch every test browser with `--mute-audio` (the port/tools scripts do): headless
+Chrome still plays the game's sounds through the speakers.
 
 Check each screen against something real, not by eye alone:
 

@@ -7,6 +7,7 @@ import {
   stringp, sym, value, type LValue,
 } from '../../lingo';
 import { eq } from './util';
+import { gameFixes, watchSave } from '../fixes';
 
 export function RobotWarsSend(scriptName: string, infoList: LPropList): number {
   infoList.setaProp('robotid', dot(G.gGameGlobals, 'userID'));
@@ -16,9 +17,15 @@ export function RobotWarsSend(scriptName: string, infoList: LPropList): number {
   if (the.machineType !== 256) {
     for (let i = 1; i <= infoList.count; i++) if (stringp(infoList.getAt(i))) infoList.setAt(i, MacToPC(infoList.getAt(i) as string));
   }
+  // The port's fix (movies/fixes.ts, gameFixes.economy): a save asks for the server's
+  // money back and takes it.
+  const saving = gameFixes.economy && eq(infoList.getaProp('action'), 'setrobot');
+  if (saving) infoList.setaProp('economy', 1);
   put(concatSpace(concatSpace('sending', lingoString(G.gUrl) + scriptName), infoList));
   setMessage('Kontaktar servern...', 5000);
-  return postNetText(lingoString(G.gUrl) + scriptName, infoList);
+  const id = postNetText(lingoString(G.gUrl) + scriptName, infoList);
+  if (saving) watchSave(id, Number(dot(G.gUserData, 'propertyList', 'money')));
+  return id;
 }
 
 /** The reply's property list, its text when it isn't one, or #waiting / #error. */

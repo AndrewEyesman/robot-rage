@@ -3,6 +3,7 @@
 
 import { Behavior, go, sprite, the } from '../../director';
 import { propList, sym, type LSymbol, type LValue } from '../../lingo';
+import { gameFixes } from '../fixes';
 import { eq } from './util';
 
 export class DoorBehavior extends Behavior {
@@ -57,8 +58,12 @@ export class DoorBehavior extends Behavior {
     } else if (st === sym('moveclose')) {
       sprite(this.sp).visible = true;
       this.counter = this.counter + 1;
-      // The original passes 0, not dest, when closing (quirk kept).
-      if (this.ScrollTo(0) === sym('done')) this.pState = sym('done');
+      // The original passes 0, not dest, when closing: each half brakes toward x = 0, and
+      // the first to get there (the one starting nearest 0) advances the playhead, which
+      // snaps every half to its closed position mid-slide. The port slides each half to
+      // its own closed position, so all travel 500 px in the same 35 frames and arrive
+      // together (movies/fixes.ts; ?quirks=doors restores the original).
+      if (this.ScrollTo(gameFixes.doorClose ? this.dest : 0) === sym('done')) this.pState = sym('done');
     }
   }
 

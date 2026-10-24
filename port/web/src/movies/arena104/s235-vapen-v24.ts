@@ -91,7 +91,13 @@ export class VapenV24 {
       // amLeft is VOID until the first prepareFrame: no ammunition yet.
       let tamleft = num(rocket_decrypt(this.amLeft as string));
       if (tamleft > 0) {
-        const pos = world().model('speargun' + this.suffix).child(6 - tamleft).worldPosition;
+        // The spear behavior moves the gun's first child into the world, so the list
+        // shrinks and from the fourth shot child[6 - tamleft] is past its end. In
+        // Director a node's child[n] past the end, then a property, reads the node's own
+        // property (checked in Adobe's player): those shots start at the gun's position,
+        // and all five spears fly.
+        const gun = world().model('speargun' + this.suffix);
+        const pos = (gun.child(6 - tamleft) ?? gun).worldPosition;
         sendSprite(0, 'createSprite', 'spear', pos, this.robotSp);
         playsound('speargun_sound', 255);
         tamleft = tamleft - 1;

@@ -4,7 +4,8 @@
 
 import { Behavior, G, cursor, dot, member, pass, rollover, sendAllSprites, sendSprite, sprite, the } from '../../director';
 import { EMPTY, LList, itemDelimiter, setItemDelimiter, sym, voidp, lingoString, type LSymbol, type LValue } from '../../lingo';
-import { FormatUserName } from '../robotwars/s004-new-init';
+import { FormatUserName, getUserIpCode } from '../robotwars/s004-new-init';
+import { challengerData, gameFixes } from '../fixes';
 import { DeclineChallenge, ReplaceWord } from './s004-lobby-moviescript';
 import { eq, setWordsBold } from './util';
 
@@ -24,7 +25,17 @@ export class IncommingChallenge extends Behavior {
 
   mouseUp() {
     const cl = G.ChallengeList as LList;
-    if (cl.count > 0) sendSprite(0, 'getRobot', dot(cl.getAt(1), 'robotid'), 1);
+    if (cl.count > 0) {
+      if (gameFixes.challengeCard) {
+        // The original sends the robot id where getRobot expects the robot's data: a
+        // script error, so nothing happened. The port opens the challenger's card, as
+        // clicking its name in the room does (onlineUsers), once the lobby is ready.
+        const irc = dot(cl.getAt(1), 'ircrobotname');
+        if (sendSprite(0, 'isready')) sendSprite(0, 'getRobot', challengerData(irc, FormatUserName(lingoString(irc)), getUserIpCode(lingoString(irc))), 1);
+        return;
+      }
+      sendSprite(0, 'getRobot', dot(cl.getAt(1), 'robotid'), 1);
+    }
   }
 
   showChallenge(intext: LValue) {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Before a commit that touches the port or the server, run the fast regression checks
-# (its own servers on seeded data; about a minute). The full suite (npm run test:port)
-# includes the slow checks: run it before pushing. Skip in an emergency with
+# (its own servers on seeded data; a couple of minutes). The default suite
+# (npm run test:port) adds the slow checks; npm run test:full adds weapon-trace (10-30
+# minutes): run it before pushing arena weapon, robot or physics changes. Skip in an emergency with
 # `git commit --no-verify`, and say so in the commit message.
 #   Enable once per checkout: git config core.hooksPath scripts/git-hooks
 set -euo pipefail

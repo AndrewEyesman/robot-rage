@@ -8,7 +8,9 @@ import { div, num, point, sym, type LSymbol, type LValue, type LVector } from '.
 import { GetDistance } from '../robotwars/s004-new-init';
 import { playsound } from '../robotwars/s030-soundscript';
 import { VectorToPoint } from './s006-arena-3d';
-import { sp, world } from './weapon-util';
+import { monteringsplats } from '../robotwars/s006-3d-scripts';
+import { arenaFixes } from './enhancements';
+import { eq, sp, world } from './weapon-util';
 
 // global world, gPlog, gPartDescription, gPlayerNumber
 
@@ -59,6 +61,10 @@ export class SpearBehavior {
     this.m = world().model('speargun' + this.suffix).child[1] as Model;
     this.m.shader = world().model('spear' + this.suffix).shader;
     world().group('world').addChild(this.m, sym('preserveWorld'));
+    // Enhancement (enhancements.ts, ?quirks=spear): a gun at the front fires forward.
+    if (arenaFixes.spearForward && eq(monteringsplats(sp(this.robotSprite, 'robotRD'), sym('v24')), sym('f'))) {
+      this.m.rotate(0, 180, 0);
+    }
     sprite(this.sp).rotation = sprite(this.robotSprite).rotation - 90;
     this.state = sym('move');
   }

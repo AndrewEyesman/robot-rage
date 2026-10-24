@@ -19,8 +19,8 @@ export class DiscBehavior {
   m: Model | undefined;
   robotSprite: number;
   V: LValue = undefined;
-  x: number = 0;
-  y: number = 0;
+  x!: number;
+  y!: number;
   z: number;
   dx: number;
   dy: number;

@@ -12,6 +12,7 @@ import { BuildRobot } from '../robotwars/s006-3d-scripts';
 import { CameraScript } from './s007-camera-script';
 import { BuildWorld, UpdateBatteryHeight, UpdatePansarWidth, initWeapons, initWheels, theOVerlay } from './s006-arena-3d';
 import { RecycleSprites, checkTempo, createSparkle, createSprite, keyMap, keyMap2, removeSprite } from './s002-main-framescript';
+import { arenaFixes } from './enhancements';
 import { eq, n, pget, setLinesFontSize, sp, world } from './util';
 
 // global gDelay, gTimeDiff, gGamePlace, gCamera, gLastReceivedTime, gWatcher,
@@ -19,6 +20,9 @@ import { eq, n, pget, setLinesFontSize, sp, world } from './util';
 // gWonGames, gLostGames, gVersionList
 
 const s = (name: string) => sym(name);
+
+/** How long a crashed robot lies before Training restarts (the port's fix, enhancements.ts). */
+const RESPAWN_MS = 3000;
 
 export class BackyardFramescript {
   state: LSymbol | undefined = undefined;
@@ -43,6 +47,8 @@ export class BackyardFramescript {
   pOldTempo: LValue = undefined;
   pwait: number = undefined as unknown as number;
   pTime: number = undefined as unknown as number;
+  /** The port's: when Training restarts after a crash (arenaFixes.trainingRespawn). */
+  pRespawnTime = 0;
 
   beginSprite() {
     sendSprite(1, s('usedoktor'));
@@ -178,7 +184,25 @@ export class BackyardFramescript {
     } else if (st === s('showResult')) {
       this.state = s('stopped');
     }
+    if (arenaFixes.trainingRespawn) this.respawnAfterCrash();
     this.RecycleSprites();
+  }
+
+  /**
+   * The port's fix (arenaFixes.trainingRespawn): in the original a robot that falls into
+   * the pit or off the roof (#stop) or loses its armour (#broken) stays that way; the
+   * lose handler returns early in Training (gMatchResult isn't #nada here), so nothing
+   * follows. Three seconds on, Training starts again from its entry.
+   */
+  respawnAfterCrash() {
+    const st = sp(this.playerSp, 'state');
+    if (st !== s('stop') && st !== s('broken')) {
+      this.pRespawnTime = 0;
+    } else if (this.pRespawnTime === 0) {
+      this.pRespawnTime = the.milliSeconds + RESPAWN_MS;
+    } else if (the.milliSeconds >= this.pRespawnTime) {
+      this.state = s('respawn');
+    }
   }
 
   updateBattery() {
@@ -272,6 +296,11 @@ export class BackyardFramescript {
   }
 
   exitFrame() {
+    if (this.state === s('respawn')) {
+      // The port's restart: Training's entry (check renderer, init backyard, doors).
+      go('backyard');
+      return;
+    }
     if (this.state === s('gameover')) {
       // There is no "goback" marker: go() to a missing marker does nothing.
       go('goback');

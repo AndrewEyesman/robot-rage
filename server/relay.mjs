@@ -20,6 +20,18 @@
 //   away on its own; the arena turns that into a walkover.
 // Messages the host addresses to nobody (getPeerConnectionList() is empty in
 // the emulator) go to all its peers.
+//
+// Direct matches (the port, port/web/src/director/p2p.ts): text frames are JSON
+// control messages the game never sees. A client that sends {t: "hello"} gets
+// {t: "hello", iceServers, now} back ({t: "time"} just the clock), and from then
+// on the relay passes its other control messages (WebRTC offer, answer, ICE
+// candidates, the switch markers) to the other end: a peer's to the host with
+// `from` set to the peer's userID, the host's to the peer named in `to`. A
+// counterpart that never said hello gets nothing; the sender hears
+// {t: "unsupported"} instead. Binary frames are relayed exactly as before, and in
+// order with the control messages, which is what the switch to a direct
+// connection relies on. A client that never sends text frames (the dirplayer
+// page) never receives one.
 
 const MUS_HEADER = 0x7200;
 // Multiuser Xtra "no current connection" error, which the client handles.
@@ -101,8 +113,9 @@ function takeFrames(state, chunk) {
 }
 
 export class Relay {
-  constructor({ log }) {
+  constructor({ log, iceServers = [] }) {
     this.log = log;
+    this.iceServers = iceServers;
     this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, peer> }
     this.epoch = Date.now();
   }
@@ -140,7 +153,8 @@ export class Relay {
     previous?.ws.close(1000, "replaced");
     this.log(`relay: ${user} listening at ${addr}`);
 
-    ws.on("message", (data) => {
+    ws.on("message", (data, isBinary) => {
+      if (!isBinary) return this.control(ws, host, null, data);
       for (const frame of takeFrames(host.state, Buffer.from(data))) {
         let env;
         try {
@@ -194,7 +208,8 @@ export class Relay {
       return ws.close(1000, "nobody listening");
     }
 
-    ws.on("message", (data) => {
+    ws.on("message", (data, isBinary) => {
+      if (!isBinary) return this.control(ws, host, peer, data);
       for (const frame of takeFrames(state, Buffer.from(data))) {
         let env;
         try {
@@ -224,6 +239,33 @@ export class Relay {
       }
       this.log(`relay: ${peer.name} left ${host.user}`);
     });
+  }
+
+  // A text frame: a control message (see the top of this file).
+  control(ws, host, peer, data) {
+    let msg;
+    try {
+      msg = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg.t !== "string") return;
+    const send = (to, m) => to?.readyState === to?.OPEN && to.send(JSON.stringify(m));
+    if (msg.t === "hello" || msg.t === "time") {
+      ws.signalling = true;
+      return send(ws, { t: msg.t, c: msg.c, now: this.now(), ...(msg.t === "hello" ? { iceServers: this.iceServers } : {}) });
+    }
+    let target, out;
+    if (ws === host.ws) {
+      target = host.peers.get(String(msg.to ?? "").toLowerCase())?.ws;
+      out = { ...msg, to: undefined };
+    } else {
+      if (!peer) return; // before its Logon
+      target = host.ws;
+      out = { ...msg, from: peer.name };
+    }
+    if (target?.signalling && target.readyState === target.OPEN) send(target, out);
+    else if (msg.t !== "unsupported") send(ws, { t: "unsupported", from: ws === host.ws ? msg.to : undefined });
   }
 
   contentString(content) {

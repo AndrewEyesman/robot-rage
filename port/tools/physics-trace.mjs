@@ -18,7 +18,7 @@ const [port = '8091', app = 'http://127.0.0.1:8092'] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({
   executablePath: '/usr/bin/google-chrome-stable', headless: true,
-  args: ['--headless=new', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl'],
+  args: ['--headless=new', '--mute-audio', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl'],
 });
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 const lingo = (code) => page.evaluate(async (c) => {

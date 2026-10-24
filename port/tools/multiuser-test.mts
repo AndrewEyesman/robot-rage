@@ -1,7 +1,8 @@
 // Checks the port's Multiuser Xtra (port/web/src/director/multiuser.ts) against a
 // running game server: registers on the IRC lobby the way IRC_OBJECT does (#text mode)
 // until the 376 welcome, then passes SMUS messages with every Lingo value type between
-// a waitForNetConnection listener and a connectToNetServer peer through the relay.
+// a waitForNetConnection listener and a connectToNetServer peer through the relay
+// (direct WebRTC connections need a browser: p2p-test.mjs).
 //
 //   cd port/web && npx tsx ../tools/multiuser-test.mts [port]     (default 8091; never 8090)
 
@@ -67,6 +68,10 @@ const field = (m: Msg, k: string) => m.getaProp(sym(k));
   await waitFor(() => peerGot.find((m) => field(m, 'subject') === 'ConnectToNetServer' && field(m, 'errorCode') === 0), 'peer ConnectToNetServer');
   await waitFor(() => hostGot.find((m) => field(m, 'subject') === 'WaitForNetConnection'), 'host WaitForNetConnection');
   assert.deepEqual(host.getPeerConnectionList().items, ['PeerBot']);
+  // Both asked the relay for direct-connection signalling; Node has no WebRTC, so they stay on the relay.
+  await waitFor(() => peer.transportInfo().reason === 'no WebRTC' && host.transportInfo().clockOffset !== undefined, 'relay hello');
+  assert.equal(peer.transport, 'relay');
+  assert.equal(host.transport, 'relay');
 
   const content = propList(
     sym('x'), 12, sym('neg'), -2147483648, sym('f'), 2.5, sym('whole'), lf(3), sym('s'), 'Grüß "x" — ok',

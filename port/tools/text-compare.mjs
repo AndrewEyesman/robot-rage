@@ -213,7 +213,7 @@ async function main() {
   }
   mkdirSync(out, { recursive: true });
   const cases = names.length ? CASES.filter((c) => names.includes(c.name)) : CASES;
-  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new'] });
+  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new', '--mute-audio'] });
   const page = await (await browser.newContext({ viewport: { width: 900, height: 700 }, deviceScaleFactor: 1 })).newPage();
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
   await page.goto(`${ORIGIN}/assets/fonts/system/glyphs/verdana.json`);

@@ -16,6 +16,7 @@ import {
   DeclineChallenge, DisconnectFromSMUS, PingP2P, ReplaceWord, SendchallengeSMUS, SetRobotPing, changeroom, connectP2P,
   getRankClass, getrankingindex,
 } from './s004-lobby-moviescript';
+import { gameFixes, withRobotDefaults } from '../fixes';
 import { eq, setMU } from './util';
 
 // global gOnline, gIRC, P2PmuInstanceListen, P2PmuInstanceConnect, SMUSmuInstance,
@@ -256,6 +257,10 @@ export class OnlineFramescript extends Behavior {
   }
 
   showrobot(tList: LPropList) {
+    // A robot that was never saved has no data ([]): the original errors on it below
+    // (no robotDescription), leaving no 3D robot, no challenge and a lobby stuck in
+    // #getOpponentRobot. The port shows it as the empty robot (movies/fixes.ts).
+    if (gameFixes.emptyRobot) tList.setaProp(sym('propertyList'), withRobotDefaults(dot(tList, 'propertyList')));
     G.gOpponentProplist = dot(tList, 'propertyList');
     pl(G.gRobotData).setaProp(sym('propertyList'), dot(tList, 'propertyList'));
     pl(G.gRobotData).setaProp(sym('score'), dot(tList, 'score'));

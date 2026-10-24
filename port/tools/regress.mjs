@@ -5,7 +5,8 @@
 //
 //   node port/tools/regress.mjs                  everything
 //   node port/tools/regress.mjs login garage     only checks whose name contains a word
-//   node port/tools/regress.mjs --fast           skip the slow tool checks
+//   node port/tools/regress.mjs --fast           skip the slow checks (two-tab matches, traces): a couple of minutes
+//   node port/tools/regress.mjs --full           also the weapons against the original (weapon-trace, 10-30 min)
 //   node port/tools/regress.mjs --approve        re-record the approved screenshots
 //   node port/tools/regress.mjs --live           use the running dev server (8092) and test server (8091)
 //
@@ -26,7 +27,7 @@
 // Approve a deliberate change with --approve after looking at the diff.
 import { chromium } from 'playwright-core';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,6 +54,8 @@ mkdirSync(OUT, { recursive: true });
 
 const args = args0;
 const fast = args.includes('--fast');
+// The `full` checks (weapon-trace) take 10-30 minutes: only with --full or named.
+const full = args.includes('--full');
 const approve = args.includes('--approve');
 const filters = args.filter((a) => !a.startsWith('--'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -80,14 +83,41 @@ const TO_GARAGE = [
   ['wait', 1500],
 ];
 
+/** In the lobby: the point on a name's line in the room's user list (sprite 9, 13 px lines). */
+const LINE_OF = (name) => `(() => { const b = p.sprite(9).bounds; const i = p.member('rvtext').text.split('\\r').findIndex((l) => l.startsWith('${name}\\t')); return [b.left + 40, b.top + 13 * i + 6]; })()`;
+/** In the lobby: that robot's card is shown and can be challenged. */
+const CARD_OF = (name) =>
+  `String(p.frameScript.pState) === '#waiting' && String(p.globals.getOpponentState) === '#waiting' && p.frameScript.pchallengestate === 1 && String(p.globals.gRobotData?.getaProp(sym('robotname'))) === '${name}'`;
+
+/**
+ * Records every frame cycle in which a door half (robotwars 263) is closing or closed:
+ * [sprite, locH, closed position, state], to check the slides run to the end.
+ */
+const DOOR_LOG = `(() => { window.__doors = []; const prev = p.onFrame; p.onFrame = (pl) => { prev?.(pl); const hs = [];
+  for (const s of pl.sprites) for (const b of s?.scriptInstanceList ?? []) if (b.constructor.name === 'DoorBehavior' && ['#moveclose', '#done'].includes(String(b.pState))) hs.push([s.spriteNum, s.locH, b.closepos, String(b.pState)]);
+  if (hs.length) window.__doors.push({ movie: pl.movie?.name, frame: pl.frame, hs }); }; return 1; })()`;
+/** The doors of a movie closed in one slide: 30+ frame cycles, and every half at its closed position when the playhead moved on. */
+const DOORS_CLOSED = (movie) => `(() => { const e = window.__doors.filter((d) => d.movie === '${movie}'); const last = e[e.length - 1];
+  return e.length >= 30 && last.hs.length > 0 && last.hs.every(([sp, x, closed, st]) => x === closed && st === '#done'); })()`;
+
+/** Save gUserData as the garage does (setrobot, economy=1); the reply goes in window.__saved. */
+const SAVE_ROBOT = `(async () => { const L = await import('/src/lingo/index.ts'); const g = p.globals;
+  const body = new URLSearchParams({ action: 'setrobot', sessionid: String(g.gLobby.getaProp(sym('session'))), robotid: String(g.gGameGlobals.getaProp(sym('userID'))),
+    proplist: L.lingoString(g.gUserData.getaProp(sym('propertyList'))), economy: '1' });
+  window.__saved = await (await fetch('/api/main.asp', { method: 'POST', body })).text(); return 1; })()`;
+
 /** Each check: a command, or a flow of steps in a fresh browser context. */
 const CHECKS = [
   { name: 'typecheck', cmd: ['npx', 'tsc', '--noEmit'], cwd: 'port/web' },
   { name: 'lingo-unit', cmd: ['npx', 'tsx', 'src/lingo/test.ts'], cwd: 'port/web' },
   { name: 'runtime-unit', cmd: ['node', 'port/tools/unit-tests.mjs', APP] },
   { name: 'multiuser', cmd: ['npx', 'tsx', '../tools/multiuser-test.mts', String(SERVER_PORT)], cwd: 'port/web' },
+  // Direct (WebRTC) connections: the switch and a fall back mid-stream lose and reorder nothing; ?p2p=relay, ?p2p=fail.
+  { name: 'multiuser-p2p', cmd: ['node', 'port/tools/p2p-test.mjs', APP] },
   { name: 'physics-trace', cmd: ['node', 'port/tools/physics-trace.mjs', String(SERVER_PORT), APP], slow: true },
   { name: 'check3d', cmd: ['node', 'port/tools/check3d.mjs', APP], slow: true },
+  // The arena's weapons against the original in dirplayer, tick by tick (11 scenarios, ~12 min).
+  { name: 'weapon-trace', cmd: ['node', 'port/tools/weapon-trace.mjs', `--server=${SERVER_PORT}`, `--app=${APP}`], slow: true, full: true, timeout: 2400000 },
   {
     name: 'loader-to-login',
     url: '/game.html',
@@ -194,6 +224,69 @@ const CHECKS = [
     ],
   },
   {
+    // Super weapons for credits (the maintainer; factory0604/enhancements.ts): the Super Weapons
+    // pages sell each weapon for its price and each pack (7 parts) for 2100. Crusher gets
+    // its 5000 credits from the server's admin grant (paid as the robot loads), and the
+    // server accepts the purchases when they're saved; Crusher is put back afterwards.
+    name: 'garage-super-credits',
+    url: '/game.html',
+    setup: () => grantCrusher(5000),
+    teardown: restoreCrusher,
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['click', 280, 15],
+      ['expect', 'buy room opens', `p.frame === 101`, 4000],
+      ['wait', 1500],
+      ['expect', 'the granted credits arrived with the robot', `p.globals.gUserData.getaProp('propertyList').getaProp('money') === 5000`, 1000],
+      ['clickAt', `(() => { const b = p.sprite(28).bounds; return [(b.left + b.right) / 2, (b.top + b.bottom) / 2]; })()`],
+      ['expect', 'the Super Pack 2 ad leads to its page: nothing bought, no payment box', `p.frame === 159 && p.globals.gUserData.getaProp('propertyList').getaProp('money') === 5000 && !p.sprite(313).visible && !p.sprite(79).visible`, 3000],
+      ['wait', 500],
+      ['click', 90, 309],
+      ['expect', 'Laser Cannon page', `p.frame === 151`, 3000],
+      ['expect', 'its description gives the green credit price, the button is the regular BUY NOW!', `p.sprite(43).member.text.includes('Price: 320 credits') && !p.sprite(43).member.text.includes('Sale value') && p.sprite(50).member.name === 'buy btn' && p.sprite(51).member.text === ''`, 2000],
+      ['wait', 800],
+      ['eval', `p.sprite(6).visible = false`],
+      ['wait', 100],
+      ['shot', 'garage-super-weapon-page'],
+      ['eval', `p.sprite(6).visible = true`],
+      ['click', 295, 491],
+      ['expect', 'bought: in the inventory, 320 credits less, thanks box', `(() => { const pl = p.globals.gUserData.getaProp('propertyList'); return pl.getaProp('money') === 4680 && pl.getaProp('inventory').getPos(sym('v3')) > 0 && p.sprite(79).visible && /Laser Cannon/.test(p.sprite(82).member.text); })()`, 2000],
+      ['click', 285, 429],
+      ['click', 90, 324],
+      ['expect', 'Super Pack 1 page, priced 2 100', `p.frame === 152 && p.sprite(43).member.text.includes('Price: 2 100 credits')`, 3000],
+      ['wait', 800],
+      ['eval', `p.sprite(6).visible = false`],
+      ['wait', 100],
+      ['shot', 'garage-super-pack-page'],
+      ['eval', `p.sprite(6).visible = true`],
+      ['click', 295, 491],
+      ['expect', 'pack bought: its 7 parts in the inventory, 2100 credits less', `(() => { const pl = p.globals.gUserData.getaProp('propertyList'); const inv = pl.getaProp('inventory'); return pl.getaProp('money') === 2580 && ['v1', 'v9', 'v4', 'v16', 'v17', 'b3'].every((x) => inv.getPos(sym(x)) > 0) && inv.count === 8; })()`, 2000],
+      ['wait', 300],
+      ['eval', `p.sprite(6).visible = false`],
+      ['wait', 100],
+      ['shot', 'garage-super-pack-bought'],
+      ['eval', `p.sprite(6).visible = true`],
+      // Saved as the garage saves (setrobot with economy=1): the server keeps it all.
+      ['eval', SAVE_ROBOT],
+      ['expect', 'the server accepts the purchases (2580 credits kept)', `/#err: 0/.test(window.__saved) && window.__saved.includes('#money: 2580]')`, 5000],
+      // 100 credits the server never gave (as the arena adds a prize for rounds the
+      // opponent never confirmed), saved through the game's own RobotWarsSend: the
+      // server keeps 2580 and the client takes it back (gameFixes.economy), in step
+      // with MrDoktor.
+      ['eval', `(async () => { const L = await import('/src/lingo/index.ts'); const net = await import('/src/movies/robotwars/s019-net-lingo.ts');
+        const g = p.globals; const pl = g.gUserData.getaProp(sym('propertyList')); pl.setaProp(sym('money'), 2680); pl.setaProp(sym('info1'), 1112 - 2680);
+        p.sprite(1).scriptInstanceList.find((i) => i.makedoktor).makedoktor();
+        const info = new L.LPropList(); info.addProp('action', 'setrobot'); info.addProp('proplist', L.lingoString(pl));
+        net.RobotWarsSend(L.lingoString(g.gVersionList.getaProp(sym('mainasp')).getaProp(sym('version'))), info); return 1; })()`],
+      ['expect', 'the client takes back the money the server kept, info1 and MrDoktor in step', `(() => { const pl = p.globals.gUserData.getaProp(sym('propertyList'));
+        const before = p.globals.gDoktor; p.sprite(1).scriptInstanceList.find((i) => i.usedoktor).usedoktor();
+        const now = p.globals.gUserData.getaProp(sym('propertyList'));
+        return now === pl && now.getaProp(sym('money')) === 2580 && now.getaProp(sym('info1')) === 1112 - 2580 && p.globals.gDoktor === before; })()`, 5000],
+    ],
+  },
+  {
     name: 'garage-parts-sell',
     url: '/game.html',
     steps: [
@@ -253,10 +346,142 @@ const CHECKS = [
     setup: ensureRegressAccount,
     steps: [['expect', 'lobby reached the country list', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000], ['wait', 1000], ['shot', 'lobby-countries']],
   },
-  { name: 'match-input-delay', match: true, slow: true },
+  {
+    // Training restarts after a crash (docs/port-issues.md #7): the robot tips into the
+    // pit (its own #tip, as the frame script sends on touching the pit) and, 3 s later,
+    // Training plays its entry again and the robot drives.
+    name: 'training-respawn',
+    url: '/index.html?layout=original&parts=r1,h2,ma1,b1,v6&pos=f&pansar=50&name=Crusher',
+    steps: [
+      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ['eval', `p.sprite(10).scriptInstanceList.find((b) => b.constructor.name === 'RobotBehavior').tip()`],
+      ['expect', 'the robot tips into the pit and stops', `String(p.sprite(10).getProp('state')) === '#stop'`, 4000],
+      ['expect', 'Training starts again from its entry', `p.frame >= 17 && p.frame <= 19`, 6000],
+      ['expect', 'the robot is ready to drive again', `p.frame === 20 && String(p.sprite(10).getProp('state')) === '#move'`, 15000],
+    ],
+  },
+  {
+    // The paintshop's grid button with no chassis (#40): it used to fail before toggling.
+    name: 'garage-grid-nochassis',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['click', 360, 295],
+      ['expect', 'Remove takes the chassis off', `p.globals.gUserData.getaProp(sym('propertyList')).getaProp(sym('robotDescription')).getaProp(sym('ram')).count === 0`, 2000],
+      ['click', 175, 15],
+      ['expect', 'paintshop opens', `p.frameLabel === 'paint'`, 3000],
+      ['wait', 1500],
+      ['click', 173, 82],
+      ['expect', 'the grid button toggles', `p.sprite(29).member.name === 'GRIDD'`, 1000],
+    ],
+  },
+  {
+    // Two players in a lobby room (docs/port-issues.md #29, #31, #28): Regress opens the
+    // card of Fresh, a robot that was never saved; Fresh challenges with its first P2P
+    // connection made to fail (a bad address), so the two swap server and client;
+    // Regress opens the challenger's card by clicking the challenge, accepts with
+    // CHALLENGE, and both play the match (Regress fighting the empty robot).
+    name: 'lobby-fixes',
+    url: '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress&trace',
+    setup: ensureFreshRobot,
+    slow: true,
+    steps: [
+      ['expect', 'Regress reached the lobby', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1500],
+      ['click', 50, 350],
+      ['wait', 2000],
+      ['click', 40, 107],
+      ['expect', 'Regress in Sweden East', `String(p.globals.gRoom.pRoom) === 'rw11e'`, 5000],
+      ['tab', 'fresh', '/lobby-dev.html?email=fresh@home.lan&password=rage2005&robot=Fresh&trace'],
+      ['expect', 'Fresh reached the lobby', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1500],
+      ['click', 50, 350],
+      ['wait', 2000],
+      ['click', 40, 107],
+      ['expect', 'Fresh in Sweden East', `String(p.globals.gRoom.pRoom) === 'rw11e'`, 5000],
+      ['use', 'main'],
+      ['expect', 'Regress sees Fresh', `/(^|\\r)Fresh\\t/.test(p.member('rvtext').text)`, 10000],
+      ['clickAt', LINE_OF('Fresh')],
+      ['expect', "the never-saved robot's card opens, with its 3D robot and CHALLENGE", CARD_OF('Fresh') + ` && !!p.member('robot').group('robot')`, 15000],
+      ['clickAt', LINE_OF('Regress')],
+      ['expect', 'another card opens after it', CARD_OF('Regress'), 15000],
+      ['use', 'fresh'],
+      ['expect', 'Fresh sees Regress', `/(^|\\r)Regress\\t/.test(p.member('rvtext').text)`, 10000],
+      ['clickAt', LINE_OF('Regress')],
+      ['expect', "Fresh opens Regress's card", CARD_OF('Regress'), 15000],
+      ['click', 560, 435],
+      ['expect', 'Fresh sends the challenge', `p.frameLabel === 'ChallengeWait'`, 5000],
+      ['eval', `p.globals.gopponentdata.setaProp(sym('Userip'), 'nowhere.invalid')`],
+      ['use', 'main'],
+      ['expect', 'the challenge reaches Regress', `p.globals.ChallengeList.count > 0`, 10000],
+      ['clickAt', `(() => { const b = p.sprite(38).bounds; return [(b.left + b.right) / 2, (b.top + b.bottom) / 2]; })()`],
+      ['expect', "clicking the challenge opens the challenger's card", CARD_OF('Fresh'), 12000],
+      ['click', 560, 435],
+      ['expect', 'CHALLENGE accepts it', `p.frameLabel === 'ChallengeWait' || p.movie.name === 'arena104'`, 5000],
+      ['expect', 'after the swap Regress plays as player 2, against the empty robot', `p.movie.name === 'arena104' && String(p.frameScript?.state) === '#idle' && p.globals.gPlayerNumber === 2 && String(p.sprite(20).getProp('state')) === '#move'`, 60000],
+      ['use', 'fresh'],
+      ['expect', 'and Fresh as player 1', `p.movie.name === 'arena104' && String(p.frameScript?.state) === '#idle' && p.globals.gPlayerNumber === 1`, 20000],
+    ],
+  },
+  {
+    // Screen entries: the door halves (robotwars 263) slide all the way to their closed
+    // positions and arrive together; the original braked toward x = 0 and snapped
+    // halfway (docs/port-issues.md #47). Garage, lobby and arena (the control panel).
+    name: 'door-slides',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['eval', DOOR_LOG],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['expect', 'garage entry: every half slides to its closed position, together', DOORS_CLOSED('factory0604'), 3000],
+      ['tab', 'lobby', '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress&trace'],
+      ['eval', DOOR_LOG],
+      ['expect', 'lobby entry: the same', DOORS_CLOSED('lobby060_'), 30000],
+      ['tab', 'arena', '/index.html?layout=original&parts=r1,h2,ma1,b1,v6&pos=f&pansar=50&name=Crusher'],
+      ['expect', 'Training ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ['eval', DOOR_LOG],
+      ['eval', `p.sprite(10).scriptInstanceList.find((b) => b.constructor.name === 'RobotBehavior').tip()`],
+      ['expect', 'arena entry (Training, after a crash restarts it): the control panel slides to its place', DOORS_CLOSED('arena104'), 30000],
+    ],
+    setup: ensureRegressAccount,
+  },
+  { name: 'match-input-delay', match: 'delay', slow: true },
+  { name: 'match-start-sync', match: 'sync', slow: true },
+  { name: 'match-hidden-tab', match: 'hidden', slow: true },
+  { name: 'match-transport', match: 'transport', slow: true },
+  { name: 'match-ranked', match: 'ranked', slow: true },
 ];
 
 // ------------------------------------------------------------------ setup
+
+/** The suite's own game server's admin token (startFixture); --live servers have none. */
+const ADMIN_TOKEN = live ? process.env.ADMIN_TOKEN ?? '' : `regress-${process.pid}`;
+
+/** main.asp on the game server itself (not through the dev server's proxy): the admin grant answers only local, direct requests. */
+async function gameAsp(fields) {
+  const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/main.asp`, { method: 'POST', body: new URLSearchParams(fields) });
+  return r.text();
+}
+
+let crusherSaved;
+/** Crusher's saved data, then its money set to `money` with the admin grant (paid when the robot next loads). */
+async function grantCrusher(money) {
+  const sid = JSON.parse(lingoField(await mainAsp({ action: 'loginmember', membername: 'tester@home.lan', password: 'rage2005' }), 'sid'));
+  crusherSaved = { sid, proplist: lingoField(await mainAsp({ action: 'getrobot', robotid: 1003, sessionid: sid }), 'propertyList') };
+  const r = await gameAsp({ action: 'admingrant', robot: 1003, amount: money, set: 1, token: ADMIN_TOKEN });
+  if (lingoField(r, 'err') !== '0') throw new Error(`admin grant refused (${r}): the server needs ADMIN_TOKEN`);
+}
+
+/** Crusher back as it was before grantCrusher: a legal save (everything bought sold back, the old money kept). */
+async function restoreCrusher() {
+  if (!crusherSaved) return;
+  const r = await mainAsp({ action: 'setrobot', robotid: 1003, sessionid: crusherSaved.sid, proplist: crusherSaved.proplist });
+  if (lingoField(r, 'err') !== '0') throw new Error(`restoring Crusher failed: ${r}`);
+  crusherSaved = undefined;
+}
 
 async function mainAsp(fields) {
   const r = await fetch(`${APP}/api/main.asp`, { method: 'POST', body: new URLSearchParams(fields) });
@@ -310,6 +535,28 @@ async function ensureRegressAccount() {
   await mainAsp({ action: 'setrobotmap', robotid: id, sessionid: sid, map });
 }
 
+/**
+ * fresh@home.lan with a robot "Fresh" that was never saved (the server holds [] for its
+ * property list, docs/port-issues.md #29), reset every run; plus regress@home.lan.
+ */
+async function ensureFreshRobot() {
+  await ensureRegressAccount();
+  const email = 'fresh@home.lan';
+  let login = await mainAsp({ action: 'loginmember', membername: email, password: 'rage2005' });
+  if (lingoField(login, 'err') !== '0') {
+    await mainAsp({ action: 'createmember', membername: email, password: 'rage2005' });
+    login = await mainAsp({ action: 'loginmember', membername: email, password: 'rage2005' });
+  }
+  const sid = JSON.parse(lingoField(login, 'sid'));
+  let robots = await mainAsp({ action: 'getmyrobots', sessionid: sid });
+  if (!/robotname: "Fresh"/.test(robots)) {
+    await mainAsp({ action: 'createrobot', robotname: 'Fresh', sessionid: sid });
+    robots = await mainAsp({ action: 'getmyrobots', sessionid: sid });
+  }
+  const id = Number(robots.match(/#robotid: (\d+), #robotname: "Fresh"/)[1]);
+  await mainAsp({ action: 'setrobot', robotid: id, sessionid: sid, proplist: '[]' });
+}
+
 // ------------------------------------------------------------------ running
 
 function run(cmd, cwd, timeout = 600000) {
@@ -356,27 +603,43 @@ async function flow(check) {
   browser ??= await chromium.launch({
     executablePath: '/usr/bin/google-chrome-stable',
     headless: true,
-    args: ['--headless=new', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required'],
+    args: ['--headless=new', '--mute-audio', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required'],
   });
   const ctx = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
-  const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => {
-    if (m.type() === 'error' && /script error|TypeError|ReferenceError/.test(m.text())) errors.push(m.text().slice(0, 300));
-  });
-  const lines = [];
-  let ok = true;
-  try {
-    await check.setup?.();
-    await page.goto(APP + check.url);
+  // Every tab's console, saved as .cache/regress/out/<check>-console.txt for a failure's story.
+  const consoleLog = [];
+  const t0 = Date.now();
+  // Flows with ['tab', name, url] steps play several tabs (players) at once; the first
+  // is "main". Steps act on the current tab, ['use', name] switches (and brings it to
+  // the front: only the front tab reliably gets clicks, docs/port-issues.md #34).
+  const pages = {};
+  let page;
+  const openTab = async (name, url) => {
+    page = pages[name] = await ctx.newPage();
+    const tag = name === 'main' ? '' : `[${name}] `;
+    page.on('pageerror', (e) => errors.push(tag + e.message));
+    page.on('console', (m) => {
+      consoleLog.push(`${((Date.now() - t0) / 1000).toFixed(2)} ${name} ${m.text().slice(0, 400)}`);
+      if (m.type() === 'error' && /script error|TypeError|ReferenceError/.test(m.text())) errors.push(tag + m.text().slice(0, 300));
+    });
+    await page.goto(APP + url);
     await page.waitForFunction(() => window.__player, null, { timeout: 15000 });
     await page.evaluate(async () => {
       const d = await import('/src/director/index.ts');
       window.__sound = d.sound;
       window.__sym = (await import('/src/lingo/index.ts')).sym;
     });
-    const ev = (expr) => page.evaluate((e) => {
+  };
+  const lines = [];
+  let ok = true;
+  try {
+    await check.setup?.();
+    await openTab('main', check.url);
+    const ev = (expr) => page.evaluate(async (e) => {
+      // A tab that reloaded (the dev server re-optimising its dependencies when a later
+      // tab first loads) lost the helpers openTab gave it.
+      if (!window.__sym) window.__sym = (await import('/src/lingo/index.ts')).sym;
       const p = window.__player;
       const sym = window.__sym;
       void p, sym;
@@ -385,7 +648,20 @@ async function flow(check) {
     for (const step of check.steps) {
       const [kind, ...a] = step;
       if (kind === 'wait') await sleep(a[0]);
-      else if (kind === 'click' || kind === 'down' || kind === 'up') {
+      else if (kind === 'tab') await openTab(a[0], a[1]);
+      else if (kind === 'use') {
+        page = pages[a[0]];
+        await page.bringToFront();
+      } else if (kind === 'clickAt') {
+        // A click at [x, y] computed in the page (e.g. a name's line in a list).
+        const [x, y] = await ev(a[0]);
+        await page.mouse.move(x, y);
+        await sleep(60);
+        await page.mouse.down();
+        await sleep(100);
+        await page.mouse.up();
+        await sleep(250);
+      } else if (kind === 'click' || kind === 'down' || kind === 'up') {
         await page.mouse.move(a[0], a[1]);
         await sleep(60);
         if (kind !== 'up') await page.mouse.down();
@@ -440,7 +716,14 @@ async function flow(check) {
     ok = false;
     lines.push(`  FAIL ${e.message.split('\n')[0]}`);
   }
+  try {
+    await check.teardown?.();
+  } catch (e) {
+    ok = false;
+    lines.push(`  FAIL teardown: ${e.message.split('\n')[0]}`);
+  }
   if (errors.length) lines.push(...errors.slice(0, 5).map((e) => `  (page error) ${e}`));
+  writeFileSync(join(OUT, `${check.name}-console.txt`), consoleLog.join('\n'));
   // A fresh browser per flow: after several garage and arena pages (WebGL contexts) a
   // long-lived one died mid-run and failed the remaining checks instantly.
   await browser.close().catch(() => {});
@@ -448,20 +731,133 @@ async function flow(check) {
   return { ok, out: lines.join('\n') };
 }
 
-/** A two-tab match, read the input delay (docs/port-issues.md #36); retried for the start-sync hang (#1). */
-async function match() {
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const r = await run(['node', 'port/tools/arena-match.mjs', APP], '.', 150000);
-    const m = r.out.match(/step host .*gdelay\) => "([^"]*)"/);
-    // No number: the match never got past the start sync (#1); try again.
-    if (m && m[1] !== '' && Number.isFinite(Number(m[1]))) {
-      const d = Number(m[1]);
-      return { ok: d < 5, out: `  ${d < 5 ? 'ok  ' : 'FAIL'} host input delay ${d} ms (attempt ${attempt})` };
-    }
-  }
-  return { ok: false, out: '  FAIL the match never started in 5 attempts (start-sync hang, #1)' };
+/** Run arena-match.mjs (a two-tab match) with its STEP and SECONDS settings. */
+const BASE_QUERY = process.env.QUERY ?? '';
+async function arenaMatch(name, env) {
+  // QUERY (extra page settings) given to the suite applies to every match unless a check sets its own.
+  // RANKED too, so a ranked check doesn't leak into later matches.
+  Object.assign(process.env, { QUERY: BASE_QUERY, RANKED: '', ...env });
+  const r = await run(['node', 'port/tools/arena-match.mjs', APP], '.', 150000);
+  writeFileSync(join(OUT, `${name}.txt`), r.out);
+  return r;
 }
-process.env.STEP = 'host|0|3000§host|String(__player.globals.gdelay)|300';
+
+/** Both tabs' frame script states on the last state line before the steps. */
+function startStates(out) {
+  const line = out.split('\n').filter((l) => /^t\d+ /.test(l)).pop() ?? '';
+  return [...line.matchAll(/"fs":"#?([^"]*)"/g)].map((m) => m[1]);
+}
+
+/** Past the start sync (ready / ready ok): counting down or playing. */
+const started = (states) => states.length === 2 && states.every((s) => !['init', 'sendready', 'waitOpponent', 'ping'].includes(s));
+
+async function match(kind) {
+  if (kind === 'sync') {
+    // The start sync used to hang in about 2 of 7 two-tab matches (docs/port-issues.md #1).
+    const lines = [];
+    let ok = true;
+    for (let i = 1; i <= 4; i++) {
+      const r = await arenaMatch(`match-start-sync-${i}`, { SECONDS: '14', STEP: '' });
+      const st = startStates(r.out);
+      const good = started(st);
+      ok &&= good;
+      lines.push(`  ${good ? 'ok  ' : 'FAIL'} match ${i} started (states ${st.join(' / ') || 'none'})`);
+    }
+    return { ok, out: lines.join('\n') };
+  }
+  if (kind === 'hidden') {
+    // A hidden tab keeps playing (docs/port-issues.md #2): the browser stops
+    // requestAnimationFrame (simulated here; headless Chrome never hides a tab), the
+    // worker's timer runs the frames. 25 s is past the opponent's 20 s silence walkover.
+    // Then a stall the worker doesn't cover (a browser throttling everything): 17 s,
+    // past the speed-hack check's 15 s, must not strike the robot.
+    const hide = (reallyHidden) => `(() => {
+      window.__raf = window.__raf ?? window.requestAnimationFrame; window.__rafQ = [];
+      window.requestAnimationFrame = (f) => (__rafQ.push(f), 0);
+      ${reallyHidden ? "Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });" : ''}
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.__c0 = __player.frameCycles; return 0; })()`;
+    const show = `(() => {
+      delete document.hidden; delete document.visibilityState;
+      window.requestAnimationFrame = __raf; document.dispatchEvent(new Event('visibilitychange'));
+      __rafQ.forEach((f) => __raf(f));
+      return 'cycles=' + (__player.frameCycles - __c0); })()`;
+    const report = `'state=' + String(__player.frameScript.state) + ' speedgear=' + String(__player.globals.gUserData.getaProp('propertyList').getaProp('speedgear')) + ' result=' + String(__player.globals.gMatchResult)`;
+    const steps = [`host|${report}|100`, `client|${report}|100`, `host|${hide(true)}|25000`, `host|${show}|3000`, `host|${report}|100`, `client|${report}|100`, `host|${hide(false)}|17000`, `host|${show}|3000`, `host|${report}|100`, `client|${report}|100`];
+    const r = await arenaMatch('match-hidden-tab', { SECONDS: '14', STEP: steps.map((st) => st.replace(/\s*\n\s*/g, ' ')).join('§') });
+    const res = [...r.out.matchAll(/^step (?:host|client) .*? => "?([^"\n]*)"?$/gm)].map((m) => m[1]);
+    const val = (i) => res[i] ?? '';
+    const cycles = Number(val(3).match(/cycles=(\d+)/)?.[1] ?? 0);
+    const stillOn = (i) => /state=#?idle /.test(val(i)) && /result=#?nada$/.test(val(i));
+    const strikes = (i) => val(i).match(/speedgear=(\S*)/)?.[1];
+    // The seed's Rival already has a strike (from this bug, on the test server).
+    const noStrike = (i, base) => strikes(i) !== undefined && strikes(i) === strikes(base);
+    const checks = [
+      [started(startStates(r.out)), `match started`],
+      [cycles >= 400, `hidden 25 s: the host ran ${cycles} frames (20 fps: ~500)`],
+      [stillOn(4) && stillOn(5), `hidden 25 s: both still playing (${val(4)} | ${val(5)})`],
+      [noStrike(4, 0) && noStrike(5, 1), `hidden 25 s: no speed-hack strike`],
+      [noStrike(8, 0) && noStrike(9, 1), `stalled 17 s: no speed-hack strike (${val(8)})`],
+      [stillOn(8) && stillOn(9), `stalled 17 s: both still playing`],
+    ];
+    return { ok: checks.every((c) => c[0]), out: checks.map(([good, what]) => `  ${good ? 'ok  ' : 'FAIL'} ${what}`).join('\n') };
+  }
+  if (kind === 'ranked') {
+    // Ranked results count once both players report (server/results.mjs): the host's
+    // dev page reports the match start (setrwgames, as the lobby does), the client's
+    // robot breaks down, both tabs report the round (the loser too: arenaFixes.bothReport)
+    // and the server records it once, for both robots.
+    const card = async (id) => {
+      const t = await mainAsp({ action: 'getrobotall', robotid: id });
+      const [, win, lose] = t.match(/#Win: (\d+), #lose: (\d+)/).map(Number);
+      return { win, lose };
+    };
+    const before = [await card(1003), await card(1005)];
+    const lose = `client|(() => { for (const n of [10, 20]) { const b = __player.sprite(n).scriptInstanceList.find((x) => x.MakeLoser); if (b && b.robotNumber === 1) { b.MakeLoser(); return n; } } return 0; })()|8000`;
+    const r = await arenaMatch('match-ranked', { RANKED: '1', SECONDS: '14', STEP: lose });
+    const after = [await card(1003), await card(1005)];
+    const playing = started(startStates(r.out));
+    const counted = after[0].win === before[0].win + 1 && after[1].lose === before[1].lose + 1 && after[0].lose === before[0].lose && after[1].win === before[1].win;
+    const lines = [
+      `  ${playing ? 'ok  ' : 'FAIL'} the ranked match started`,
+      `  ${counted ? 'ok  ' : 'FAIL'} the round is recorded once, for both: Crusher ${before[0].win}-${before[0].lose} -> ${after[0].win}-${after[0].lose}, Rival ${before[1].win}-${before[1].lose} -> ${after[1].win}-${after[1].lose}`,
+    ];
+    return { ok: playing && counted, out: lines.join('\n') };
+  }
+  if (kind === 'transport') {
+    // Matches go over a direct WebRTC DataChannel between the tabs (the relay only
+    // signals); with ?p2p=relay, or with ICE broken (?p2p=fail: no candidates, falls
+    // back after 5 s), they stay on the relay and still start and play.
+    const info = (who) => `${who}|(() => { const i = __player.globals.muInstance.transportInfo(); return 'transport=' + i.transport + ' (' + i.reason + ') delay=' + Number(__player.globals.gdelay).toFixed(1); })()|200`;
+    const lines = [];
+    let ok = true;
+    for (const [query, want] of [['', 'direct'], ['p2p=relay', 'relay'], ['p2p=fail', 'relay']]) {
+      const r = await arenaMatch(`match-transport-${want}${query ? '-' + query.slice(4) : ''}`, { QUERY: query, SECONDS: '14', STEP: `host|0|2000§${info('host')}§${info('client')}` });
+      const res = [...r.out.matchAll(/^step (?:host|client) .*? => "([^"\n]*)"$/gm)].map((m) => m[1]);
+      const st = startStates(r.out);
+      const on = res.length === 2 && res.every((x) => x.startsWith(`transport=${want} `));
+      const playing = started(st);
+      ok &&= on && playing;
+      lines.push(`  ${on ? 'ok  ' : 'FAIL'} ${query ? `?${query}` : 'default'}: both tabs on the ${want} transport (${res.join(' | ') || 'no answer'})`);
+      lines.push(`  ${playing ? 'ok  ' : 'FAIL'} ${query ? `?${query}` : 'default'}: the match started (states ${st.join(' / ') || 'none'})`);
+    }
+    return { ok, out: lines.join('\n') };
+  }
+  // Read the host's input delay (docs/port-issues.md #36), and that clicks anywhere on
+  // the SURRENDER label (205, Background Transparent text with only a locZ behavior)
+  // reach the button under it (204), as Adobe's player lets them through (#3).
+  const label = `(() => { const b = __player.sprite(205).bounds; let n = 0, hit = 0;
+    for (let x = b.left; x < b.right; x += 2) for (let y = b.top; y < b.bottom; y += 2) { n++; if (__player.spriteAt(x, y) === 204) hit++; }
+    return 'takes=' + Math.round((100 * hit) / n); })()`.replace(/\s*\n\s*/g, ' ');
+  const r = await arenaMatch('match-input-delay', { SECONDS: '14', STEP: `host|0|3000§host|String(Number(__player.globals.gdelay))|300§host|${label}|100` });
+  // gdelay can be an integral Lingo float (an LFloat box): Number() unboxes it.
+  const m = r.out.match(/step host .*gdelay\)\) => "([^"]*)"/);
+  if (!m || m[1] === '' || !Number.isFinite(Number(m[1]))) return { ok: false, out: '  FAIL the match never started (start sync, #1)' };
+  const d = Number(m[1]);
+  const takes = r.out.match(/=> "takes=(\d+)"/)?.[1];
+  const lines = [`  ${d < 5 ? 'ok  ' : 'FAIL'} host input delay ${d} ms`, `  ${takes === '100' ? 'ok  ' : 'FAIL'} clicks anywhere on the SURRENDER label go to the button (${takes}%)`];
+  return { ok: d < 5 && takes === '100', out: lines.join('\n') };
+}
 
 // ------------------------------------------------------------------ fixture
 
@@ -492,7 +888,9 @@ async function startFixture() {
   symlinkSync(join(ROOT, 'public/game'), join(dir, 'public/game'));
   symlinkSync(join(ROOT, 'public/dirplayer'), join(dir, 'public/dirplayer'));
   copyFileSync(join(ROOT, 'public/index.html'), join(dir, 'public/index.html'));
-  const env = { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(dir, 'data'), PUBLIC_DIR: join(dir, 'public') };
+  // ICE_SERVERS empty: direct matches between the suite's tabs use host candidates, no outside STUN server.
+  // ADMIN_TOKEN: the admin grant, for checks that need credits (garage-super-credits).
+  const env = { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(dir, 'data'), PUBLIC_DIR: join(dir, 'public'), ICE_SERVERS: '', ADMIN_TOKEN };
   children.push(spawn('node', ['server/index.mjs'], { cwd: ROOT, env, stdio: 'ignore' }));
   await waitFor(`http://127.0.0.1:${SERVER_PORT}/game/main.ini`);
   children.push(
@@ -509,12 +907,13 @@ function stopFixture() {
 process.on('exit', stopFixture);
 process.on('SIGINT', () => process.exit(130));
 
-const selected = CHECKS.filter((c) => (!filters.length || filters.some((f) => c.name.includes(f))) && !(fast && c.slow));
+const named = (c) => filters.some((f) => c.name.includes(f));
+const selected = CHECKS.filter((c) => (!filters.length || named(c)) && !(fast && c.slow) && !(c.full && !full && !named(c)));
 if (!live) await startFixture();
 let failed = 0;
 for (const c of selected) {
   const t0 = Date.now();
-  const r = c.cmd ? await run(c.cmd, c.cwd) : c.match ? await match() : await flow(c);
+  const r = c.cmd ? await run(c.cmd, c.cwd, c.timeout) : c.match ? await match(c.match) : await flow(c);
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   console.log(`${r.ok ? 'PASS' : 'FAIL'} ${c.name} (${secs}s)`);
   if (!r.ok || c.steps || c.match) {
