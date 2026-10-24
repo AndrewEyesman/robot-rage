@@ -160,6 +160,9 @@ async function main() {
     follow.step(robotPos(pose), robot.angle);
     follow.snap();
     lastMap = '00000000';
+    // The frame script's #init state: count from zero and show the readings.
+    counter = 0;
+    hud.update(robot.energy, robot.pansar);
   }
   restart();
 
@@ -178,8 +181,7 @@ async function main() {
     wheels.exitFrame(robot.speed, robot.dx, robot.dy);
     pose = robot.pose();
     counter++;
-    if (counter % 16 === 0) hud.battery = robot.energy;
-    hud.armour = robot.pansar;
+    if (counter % 16 === 0) hud.update(robot.energy, robot.pansar);
     if (gameOverAt && now() - gameOverAt > 3000) restart();
   }
 

@@ -13,6 +13,6 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp/home -e CARGO_HOME=/cache/ca
     set -e
     export PATH=/usr/local/cargo/bin:$PATH RUSTUP_HOME=/usr/local/rustup
     cargo build --quiet
-    for m in arena104.dcr robotwars.cct; do
+    for m in arena104.dcr robotwars.cct texter.cct; do
       ./target/debug/rr-extract /repo/public/game/$m /repo/port/assets/${m%.*}
     done'

@@ -1,6 +1,8 @@
 // The arena's 2D layer: the frame bitmap around the 3D view, the player's name,
 // armour meter and battery (sprites 40, 45, 70-72 of the Training frame).
 
+import { AliasedText, BitmapFont } from './text';
+
 const STAGE_W = 800;
 const STAGE_H = 600;
 
@@ -16,7 +18,9 @@ export class Hud {
   private readonly ctx = this.canvas.getContext('2d')!;
   battery = 100;
   armour = 0;
-  private blink = false;
+  /** Opacity of the battery (sprite 70) and armour meter (71), set by `update`. */
+  private batteryBlend = 100;
+  private armourBlend = 100;
   private left = 0;
   private top = 0;
   private scale = 1;
@@ -29,18 +33,40 @@ export class Hud {
     private readonly meter: HTMLImageElement,
     private readonly armourLabel: HTMLImageElement,
     private readonly button: HTMLImageElement,
+    private readonly impact14: BitmapFont,
   ) {}
+
+  /** The player's name: Verdana 9 bold (a Windows font, not embedded; Director sizes are pixels). */
+  private readonly nameText = new AliasedText('bold 9px Verdana, "DejaVu Sans", sans-serif');
 
   static async load(assets: string): Promise<Hud> {
     const bm = (n: number) => image(`${assets}/arena104/bitmaps/1-${n}.png`);
-    const [frame, panel, meter, label, button] = await Promise.all([
+    const [frame, panel, meter, label, button, impact14] = await Promise.all([
       bm(182), // arena1: the Training frame
       bm(183), // pl1: the player's panel
       bm(170),
       bm(171),
       image(`${assets}/robotwars/bitmaps/1-69.png`),
+      BitmapFont.load(assets, 'robotwars', 'Impact *', 14),
     ]);
-    return new Hud(frame, panel, meter, label, button);
+    return new Hud(frame, panel, meter, label, button, impact14);
+  }
+
+  private armourLocH() {
+    return (145 * this.armour) / 249.0 - 36;
+  }
+
+  /**
+   * updateBattery (every 16 ticks): set the readings. UpdateBatteryHeight and
+   * UpdatePansarWidth blink a nearly empty battery or a low armour meter by toggling
+   * its blend between 50 and 0 on each call.
+   */
+  update(battery: number, armour: number) {
+    this.battery = battery;
+    this.armour = armour;
+    const blink = (blend: number) => (blend === 50 ? 0 : 50);
+    this.batteryBlend = battery / 2.1 < 10 ? blink(this.batteryBlend) : 100;
+    this.armourBlend = this.armourLocH() < 28 ? blink(this.armourBlend) : 100;
   }
 
   /** Place the stage: its top-left corner on the window and its scale. */
@@ -80,32 +106,28 @@ export class Hud {
     else ctx.drawImage(this.frame, 0, 0);
     ctx.drawImage(this.panel, 182 - 171, 539 - 54);
 
-    // The Training buttons (not clickable yet).
-    ctx.font = '15px Impact, "Arial Narrow", sans-serif';
-    ctx.textBaseline = 'top';
+    // The Training buttons (not clickable yet): labels in the embedded Impact, in
+    // their sprites' foreColor rgb(204, 204, 0).
     ['WORKSHOP', 'LOBBY', 'GARAGE'].forEach((label, i) => {
       ctx.drawImage(this.button, 400 - 57, 506 + 30 * i - 14);
-      ctx.fillStyle = '#e8e000';
-      ctx.fillText(label, 354, 498 + 30 * i);
+      this.impact14.draw(ctx, label, 353, 498 + 30 * i, '#cccc00');
     });
 
-    // Battery (sprite 70): its height is the energy; it blinks when nearly empty.
+    // Battery (sprite 70): its height is the energy. It's a Flash shape in its
+    // sprite's colour, rgb(179, 190, 38).
     const h = this.battery / 2.1;
-    if (h < 10) this.blink = !this.blink;
-    if (!(h < 10 && this.blink)) {
-      ctx.fillStyle = h < 10 ? 'rgba(200,40,20,0.5)' : '#c8c800';
-      ctx.fillRect(259, 469 + 89 - h, 25, h);
-    }
+    ctx.globalAlpha = this.batteryBlend / 100;
+    ctx.fillStyle = '#b3be26';
+    ctx.fillRect(259, 469 + 89 - h, 25, h);
 
     // Armour meter (sprite 71) slides right as armour grows; the label (72) covers its left end.
-    const locH = (145 * this.armour) / 249.0 - 36;
-    ctx.drawImage(this.meter, locH - 105, 529 - 3);
+    ctx.globalAlpha = this.armourBlend / 100;
+    ctx.drawImage(this.meter, this.armourLocH() - 105, 529 - 3);
+    ctx.globalAlpha = 1;
     ctx.drawImage(this.armourLabel, 36 - 36, 529 - 6);
 
-    ctx.fillStyle = '#00ff00';
-    ctx.font = 'bold 11px "Courier New", monospace';
-    ctx.textBaseline = 'top';
-    ctx.fillText(name, 74, 502);
+    // The member's white text shows in the sprite's backColor, rgb(0, 255, 0).
+    this.nameText.draw(ctx, name, 74, 504, '#00ff00');
     ctx.restore();
   }
 }

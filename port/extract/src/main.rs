@@ -32,6 +32,7 @@ fn main() {
     let out = PathBuf::from(&args[2]);
     fs::create_dir_all(out.join("bitmaps")).unwrap();
     fs::create_dir_all(out.join("w3d")).unwrap();
+    fs::create_dir_all(out.join("fonts")).unwrap();
 
     // Score parsing evaluates behavior parameters with the Lingo evaluator, which
     // needs the global player; the native test harness sets one up.
@@ -98,6 +99,33 @@ fn main() {
                     }
                 }
                 _ => {}
+            }
+            for xm in def.children.iter().filter_map(|c| match c {
+                Some(Chunk::XMedia(x)) => Some(x),
+                _ => None,
+            }) {
+                if xm.is_pfr_font() {
+                    if let Some(pfr) = xm.parse_pfr_font() {
+                        entry["font"] = export_font(&pfr, &out.join("fonts"), &name);
+                    }
+                } else if let Some(t) = xm.parse_styled_text() {
+                    entry["text"] = json!({
+                        "text": t.text,
+                        "alignment": format!("{:?}", t.alignment),
+                        "wordWrap": t.word_wrap,
+                        "fixedLineSpace": t.fixed_line_space,
+                        "size": [t.width, t.height],
+                        "spans": t.styled_spans.iter().map(|sp| json!({
+                            "text": sp.text,
+                            "font": sp.style.font_face,
+                            "size": sp.style.font_size,
+                            "color": sp.style.color.map(|c| format!("#{:06x}", c)),
+                            "bold": sp.style.bold,
+                            "italic": sp.style.italic,
+                            "underline": sp.style.underline,
+                        })).collect::<Vec<_>>(),
+                    });
+                }
             }
             // Shockwave 3D members are Xtra members (read as type Ole); find them by
             // their W3D payload.
@@ -213,6 +241,97 @@ fn export_jpeg_bitmap(
         }
     }
     rgba.save(path).map_err(|e| e.to_string())
+}
+
+/// An embedded (PFR) font, rasterised by dirplayer at each size text is likely to use:
+/// one glyph-grid PNG per size, white glyphs on transparent, with the advances.
+fn export_font(pfr: &vm_rust::director::chunks::xmedia::PfrFont, dir: &Path, member_name: &str) -> Value {
+    use vm_rust::director::chunks::pfr1::{parse_pfr1_font_with_target, rasterizer};
+    let parsed = parse_pfr1_font_with_target(&pfr.raw_data, 0).unwrap_or_else(|_| pfr.parsed.clone());
+    let base = safe_name(if member_name.is_empty() { &pfr.font_name } else { member_name });
+    let mut sizes = serde_json::Map::new();
+    for size in 6..=36usize {
+        let r = rasterizer::rasterize_pfr1_font(&parsed, size, 0);
+        if r.bitmap_width == 0 || r.bitmap_height == 0 {
+            continue;
+        }
+        let Some(mut img) = image::RgbaImage::from_raw(r.bitmap_width as u32, r.bitmap_height as u32, r.bitmap_data.clone()) else { continue };
+        for p in img.pixels_mut() {
+            p.0[0] = 255;
+            p.0[1] = 255;
+            p.0[2] = 255;
+        }
+        let file = format!("fonts/{}-{}.png", base, size);
+        img.save(dir.join(format!("{}-{}.png", base, size))).unwrap();
+        sizes.insert(size.to_string(), json!({
+            "png": file, "cell": [r.cell_width, r.cell_height], "columns": r.grid_columns,
+            "firstChar": r.first_char, "widths": r.char_widths, "advances": r.char_widths_frac,
+        }));
+    }
+    json!({ "name": pfr.font_name, "pixelFont": parsed.is_pixel_font, "sizes": sizes })
+}
+
+/// Faces meeting at less than this angle share a smoothed normal (see `smooth_normals`).
+const SMOOTH_ANGLE_DEG: f32 = 135.0;
+
+/// Per-vertex normals that blend across shared corners, like the files' authored
+/// smoothing.
+///
+/// dirplayer's decoder can't read the normals stored in CLOD meshes (it recovers the
+/// polar angle but not the azimuth), so it rebuilds them from the faces using each
+/// vertex. These models store a separate copy of every corner per face, so those
+/// rebuilt normals are flat per face, and the robots looked faceted where Adobe's
+/// player shades them smoothly. Here every vertex takes the area-weighted normals of
+/// all faces touching its position whose normal is within `max_angle` of its own
+/// face's.
+fn smooth_normals(positions: &[[f32; 3]], faces: &[[u32; 3]], max_angle_deg: f32) -> Vec<[f32; 3]> {
+    use std::collections::HashMap;
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |u: [f32; 3], v: [f32; 3]| [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let norm = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if l > 1e-12 { [v[0] / l, v[1] / l, v[2] / l] } else { [0.0, 0.0, 0.0] }
+    };
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let key = |p: [f32; 3]| [(p[0] * 1000.0).round() as i64, (p[1] * 1000.0).round() as i64, (p[2] * 1000.0).round() as i64];
+    // Area-weighted (unnormalised) and unit face normals.
+    let mut weighted = vec![];
+    let mut unit = vec![];
+    let mut at: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    let mut own: Vec<Vec<usize>> = vec![vec![]; positions.len()];
+    for (fi, f) in faces.iter().enumerate() {
+        let (Some(&a), Some(&b), Some(&c)) = (positions.get(f[0] as usize), positions.get(f[1] as usize), positions.get(f[2] as usize)) else {
+            weighted.push([0.0; 3]);
+            unit.push([0.0; 3]);
+            continue;
+        };
+        let n = cross(sub(b, a), sub(c, a));
+        weighted.push(n);
+        unit.push(norm(n));
+        for &v in f {
+            at.entry(key(positions[v as usize])).or_default().push(fi);
+            own[v as usize].push(fi);
+        }
+    }
+    let cos_max = max_angle_deg.to_radians().cos();
+    (0..positions.len())
+        .map(|v| {
+            // The vertex's own direction: its faces' normals averaged.
+            let mut mine = [0.0f32; 3];
+            for &fi in &own[v] {
+                for k in 0..3 { mine[k] += weighted[fi][k] }
+            }
+            let mine = norm(mine);
+            let mut sum = [0.0f32; 3];
+            for &fi in at.get(&key(positions[v])).map(|l| l.as_slice()).unwrap_or(&[]) {
+                if dot(unit[fi], mine) >= cos_max {
+                    for k in 0..3 { sum[k] += weighted[fi][k] }
+                }
+            }
+            let n = norm(sum);
+            if n == [0.0, 0.0, 0.0] { mine } else { n }
+        })
+        .collect()
 }
 
 struct Bin(Vec<u8>);
@@ -334,7 +453,7 @@ fn export_scene(scene: &W3dScene, dir: &Path, base: &str) {
                 json!({
                     "shader": binding,
                     "positions": bin.f32s(m.positions.iter().flatten().copied()),
-                    "normals": bin.f32s(m.normals.iter().flatten().copied()),
+                    "normals": bin.f32s(smooth_normals(&m.positions, &m.faces, SMOOTH_ANGLE_DEG).iter().flatten().copied()),
                     "uvs": m.tex_coords.iter().map(|layer| bin.f32s(layer.iter().flatten().copied())).collect::<Vec<_>>(),
                     "colors": if m.diffuse_colors.is_empty() { Value::Null } else { bin.f32s(m.diffuse_colors.iter().flatten().copied()) },
                     "faces": bin.u32s(m.faces.iter().flatten().copied()),
@@ -346,6 +465,7 @@ fn export_scene(scene: &W3dScene, dir: &Path, base: &str) {
             json!({
                 "meshes": meshes,
                 "uvGen": info.and_then(|r| r.uv_gen_mode),
+                "crease": info.map(|r| r.normal_crease),
                 "bindings": info.map(|r| r.shader_bindings.iter().map(|b| json!({
                     "name": b.name.to_string(),
                     "meshes": b.mesh_bindings.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
