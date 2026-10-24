@@ -90,15 +90,13 @@ const LIST_TO_GARAGE = [
   ['wait', 1500],
 ];
 const TO_GARAGE = [...LOGIN, ...LIST_TO_GARAGE];
-/** A tab opened after a login in the same browser: the login tab has the email already. */
-const REMEMBERED_TO_GARAGE = [
-  ['expect', 'the login tab has the remembered email', `p.frameLabel === 'login' && p.member('username_box').text === 'tester@home.lan'`],
-  ['click', 400, 260],
-  ['type', 'rage2005'],
-  ['click', 475, 309],
-  ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
+/** A tab opened after a login in the same browser: the kept login (gameFixes.keepLogin) goes straight to the robot list. */
+const KEPT_TO_GARAGE = [
+  ['expect', 'the kept login goes straight to the robot list', `p.movie.name === 'login013_' && p.member('robotname1').text === 'Crusher'`, 15000],
   ...LIST_TO_GARAGE,
 ];
+/** The browser's kept login (gameFixes.keepLogin). */
+const KEPT = `localStorage.getItem('rr-login')`;
 
 /** In the lobby: the point on a name's line in the room's user list (sprite 9, 13 px lines). */
 const LINE_OF = (name) => `(() => { const b = p.sprite(9).bounds; const i = p.member('rvtext').text.split('\\r').findIndex((l) => l.startsWith('${name}\\t')); return [b.left + 40, b.top + 13 * i + 6]; })()`;
@@ -317,9 +315,7 @@ const CHECKS = [
       ['expect', 'the TRAINING door saves the robot', `p.movie?.name === 'arena104'`, 20000],
       ['wait', 2000],
       ['tab', 'reload', '/game.html'],
-      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
-      ['wait', 500],
-      ...REMEMBERED_TO_GARAGE,
+      ...KEPT_TO_GARAGE,
       [
         'expect',
         'the paint map comes back pixel for pixel',
@@ -368,6 +364,41 @@ const CHECKS = [
       ['type', 'rage2005'],
       ['click', 475, 309],
       ['expect', 'logs in with it', `p.member('robotname1').text === 'Crusher'`, 15000],
+    ],
+  },
+  {
+    // Staying logged in (gameFixes.keepLogin, #66): a login is kept in the browser, so a
+    // reload goes straight to the robot list; QUIT forgets it, a dead session is
+    // forgotten, and ?quirks=keeplogin keeps nothing.
+    name: 'login-keep',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ...LOGIN,
+      ['expect', 'the login is kept', `JSON.parse(${KEPT}).email === 'tester@home.lan'`],
+      ['tab', 'reload', '/game.html'],
+      ['expect', 'a reload goes straight to the robot list', `p.movie.name === 'login013_' && p.member('robotname1').text === 'Crusher' && p.globals.gMyEmail === 'tester@home.lan'`, 15000],
+      ['click', 690, 553],
+      ['expect', 'QUIT logs out and forgets the login', `p.frameLabel === 'login' && !${KEPT} && p.member('username_box').text === 'tester@home.lan'`, 5000],
+      ['tab', 'after-quit', '/game.html'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_' && p.frameLabel === 'login'`, 15000],
+      ['wait', 1500],
+      ['expect', 'after QUIT a reload asks to log in', `p.frameLabel === 'login'`],
+      ['eval', `localStorage.setItem('rr-login', JSON.stringify({ sid: 'expired', id: 1001, email: 'tester@home.lan' }))`],
+      ['tab', 'dead', '/game.html'],
+      ['expect', 'a dead session is forgotten and the login screen stays', `p.movie.name === 'login013_' && !${KEPT}`, 15000],
+      ['wait', 1000],
+      ['expect', 'still on the login screen, with no message', `p.frameLabel === 'login' && p.member('gcom_STATE').text === ''`],
+      ['tab', 'quirk', '/game.html?quirks=keeplogin'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ['expect', 'the email is still remembered', `p.frameLabel === 'login' && p.member('username_box').text === 'tester@home.lan'`],
+      ['click', 400, 260],
+      ['type', 'rage2005'],
+      ['click', 475, 309],
+      ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
+      ['expect', 'with ?quirks=keeplogin nothing is kept', `!${KEPT}`],
     ],
   },
   {
@@ -566,8 +597,7 @@ const CHECKS = [
       ['tab', 'nosession', '/game.html?quirks=mapsession'],
       ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
       ['eval', MAP_SAVES],
-      ['wait', 500],
-      ...REMEMBERED_TO_GARAGE,
+      ...KEPT_TO_GARAGE,
       ['click', 175, 15],
       ['expect', 'paintshop opens', `p.frameLabel === 'paint'`, 3000],
       ['wait', 1500],

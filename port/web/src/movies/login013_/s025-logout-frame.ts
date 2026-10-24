@@ -1,6 +1,8 @@
 // login013_ behavior "logoutFrame": logs out of the server, then back to frame 1.
+// With gameFixes.keepLogin it forgets the kept login first.
 
 import { Behavior, G, go, member, put, the } from '../../director';
+import { forgetLogin } from '../fixes';
 import { EMPTY, num, point, propList, sym, type LPropList, type LSymbol } from '../../lingo';
 
 export class LogoutFrame extends Behavior {
@@ -15,6 +17,7 @@ export class LogoutFrame extends Behavior {
     G.gCom.checkNetMessages();
     switch (this.pState) {
       case sym('init'):
+        forgetLogin();
         member('gcom_STATE').text = 'Please Wait!\rLogout.';
         G.gCom.send(
           'main.asp',

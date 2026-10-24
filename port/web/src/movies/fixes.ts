@@ -65,6 +65,12 @@
 //   and while the mouse drags, so a selection it didn't see made (Tab into the field
 //   selects all of it) deleted nothing and put the caret at the start, where the next
 //   typing went in front of the old text. It now deletes the field's selection.
+// - Staying logged in (?quirks=keeplogin, #66): the login screen kept only the email,
+//   so every reload of the page asked for the password again. A login now keeps its
+//   session in the browser (keptLogin); the login screen checks it with the server
+//   (getmyrobots) and, while it's alive, goes straight to the robot list. Logging out
+//   (QUIT on the robot list or in the garage, the lobby's idle timeout) forgets it,
+//   and so does the server's "logged out" (18) for an expired or ended session.
 // - The remembered email (?quirks=scrolltext, #67): the login screen fills the email box
 //   with the remembered address in its frame script's beginSprite, after the box's
 //   behavior (login013_ 97) read the still empty field as its full text, so the first key
@@ -96,6 +102,7 @@ export const gameFixes = {
   mapEdge: !quirks.includes('mapedge'),
   scrollSelect: !quirks.includes('scrollselect'),
   scrollText: !quirks.includes('scrolltext'),
+  keepLogin: !quirks.includes('keeplogin'),
 };
 
 /**
@@ -117,6 +124,32 @@ export function scrolledFieldText(name: string): string {
     }
   }
   return m.text;
+}
+
+/** gameFixes.keepLogin: the last login's session, member id and email, kept in the browser. */
+export interface KeptLogin {
+  sid: string;
+  id: LValue;
+  email: string;
+}
+const KEPT_LOGIN = 'rr-login';
+
+export function keptLogin(): KeptLogin | undefined {
+  if (!gameFixes.keepLogin) return undefined;
+  try {
+    const k = JSON.parse(localStorage.getItem(KEPT_LOGIN) ?? 'null') as KeptLogin | null;
+    return k && typeof k.sid === 'string' && k.sid ? k : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function keepLogin(sid: LValue, id: LValue, email: string) {
+  if (gameFixes.keepLogin && typeof sid === 'string' && sid) localStorage.setItem(KEPT_LOGIN, JSON.stringify({ sid, id, email }));
+}
+
+export function forgetLogin() {
+  localStorage.removeItem(KEPT_LOGIN);
 }
 
 /**
