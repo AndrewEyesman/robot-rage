@@ -10,10 +10,11 @@
 // answers, or declines when it is relay-only; candidates trickle both ways.
 //
 // Handover, per direction, so no message is lost or reordered: until the channel is
-// open at both ends, messages go over the relay. Each end says {h: 1} on the channel
-// when its end opens; a sender switches once the other end's word has come, so its
-// first channel messages can't arrive before that end is listening (the answerer's end
-// opens first, and on a slower machine its first messages were lost, #69). It writes a
+// open at both ends, messages go over the relay. The answerer's end opens first, and
+// on a slower machine what it sent before the offerer's end opened was lost (#69). So
+// the offerer says {h: 1} on the channel when its end opens, the answerer says it back
+// when that comes, and each switches once it has heard the other: nothing goes on the
+// channel before the end receiving it is listening. The sender then writes a
 // {t: "switch"} marker on the relay, then sends everything on the channel. The receiver
 // delivers relayed messages as they come and holds channel messages until that
 // sender's marker arrives (the relay keeps text and binary frames in order), then
@@ -248,10 +249,7 @@ export class DirectLink {
     dc.onmessage = (e) => {
       if (typeof e.data === 'string') {
         const m = JSON.parse(e.data) as { a?: number; h?: number };
-        if (m.h) {
-          this.peerOpen = true;
-          return this.opened();
-        }
+        if (m.h) return this.peerOpened();
         const a = Number(m.a);
         if (a > this.acked) {
           this.unacked.splice(0, a - this.acked);
@@ -272,16 +270,27 @@ export class DirectLink {
     if (dc.readyState === 'open') this.channelOpen();
   }
 
-  /** This end of the channel is open: say so to the other end. */
+  /** This end of the channel is open: the offerer says so first. */
   private channelOpen() {
     if (this.closed || this.ownOpen) return;
     this.ownOpen = true;
+    if (this.o.offerer) this.sayOpen();
+    this.opened();
+  }
+
+  /** The other end said its end is open: the answerer says so back. */
+  private peerOpened() {
+    this.peerOpen = true;
+    if (!this.o.offerer) this.sayOpen();
+    this.opened();
+  }
+
+  private sayOpen() {
     try {
       this.dc?.send(JSON.stringify({ h: 1 }));
     } catch {
-      return this.fail('channel closed');
+      this.fail('channel closed');
     }
-    this.opened();
   }
 
   /** Switch to the channel once it's open at both ends. */
