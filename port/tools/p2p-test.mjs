@@ -12,6 +12,9 @@
 // STUN), which Chrome names by mDNS. Where mDNS doesn't resolve (GitHub's runners),
 // P2P_PLAIN_IPS=1 has Chrome give its plain local addresses instead.
 import { chromium } from 'playwright-core';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [APP = 'http://127.0.0.1:8092'] = process.argv.slice(2);
 if (APP.includes(':8090')) throw new Error('8090 is the shared server');
@@ -22,17 +25,25 @@ const browser = await chromium.launch({
   args: ['--headless=new', '--mute-audio', ...(process.env.P2P_PLAIN_IPS === '1' ? ['--disable-features=WebRtcHideLocalIpsWithMdns'] : [])],
 });
 let failed = 0;
+// Every tab's console, time-stamped, for a failure's story (CI prints it).
+const T0 = Date.now();
+const consoleLog = [];
+const LOG_FILE = join(dirname(fileURLToPath(import.meta.url)), '../../.cache/regress/out/multiuser-p2p-console.txt');
 const check = (ok, what) => {
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
 };
 
 /** A tab with a Multiuser instance in window.mu, its received messages in window.got. */
-async function tab(ctx, query) {
+async function tab(ctx, query, label) {
   const page = await ctx.newPage();
   const logs = [];
-  page.on('console', (m) => logs.push(m.text()));
-  page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+  const log = (text) => {
+    logs.push(text);
+    consoleLog.push(`${((Date.now() - T0) / 1000).toFixed(3)} ${label}: ${text}`);
+  };
+  page.on('console', (m) => log(m.text()));
+  page.on('pageerror', (e) => log(`pageerror: ${e.message}`));
   // Any page of the dev server: the Xtra builds its socket URLs from the location.
   await page.goto(`${APP}/game/main.ini?${query}`);
   await page.evaluate(async () => {
@@ -83,8 +94,8 @@ const roundTrip = (t, to, n = 40) => t.page.evaluate(async ([to, n]) => {
 
 async function pair(query, label, joinQuery = query) {
   const ctx = await browser.newContext();
-  const host = await tab(ctx, query);
-  const join = await tab(ctx, joinQuery);
+  const host = await tab(ctx, query, `${label} host`);
+  const join = await tab(ctx, joinQuery, `${label} joiner`);
   await host.page.evaluate(() => window.mu.waitForNetConnection('HostBot'));
   await sleep(300);
   const hostAddr = await host.page.evaluate(() => sessionStorage.rrAddress);
@@ -172,4 +183,6 @@ const rtt = {};
 }
 console.log(`round trip (median of 40, joiner -> host -> joiner): direct ${rtt.direct} ms, relay ${rtt.relay} ms`);
 await browser.close();
+mkdirSync(dirname(LOG_FILE), { recursive: true });
+writeFileSync(LOG_FILE, consoleLog.join('\n') + '\n');
 process.exit(failed ? 1 : 0);

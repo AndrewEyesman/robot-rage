@@ -43,3 +43,6 @@ jobs:
           UNIT_SKIP: text layout
           # mDNS host candidates don't resolve on the runners (port/tools/p2p-test.mjs).
           P2P_PLAIN_IPS: "1"
+      - name: Direct-connection logs
+        if: failure()
+        run: cat .cache/regress/out/multiuser-p2p-console.txt || true

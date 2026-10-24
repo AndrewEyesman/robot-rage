@@ -157,6 +157,7 @@ export class DirectLink {
       } else if (m.t === 'decline' || m.t === 'unsupported') {
         this.fail(m.t === 'decline' ? 'declined by the other side' : 'the other side has no direct connections', false);
       } else if (m.t === 'switch') {
+        console.log(`Multiuser: ${this.who} switched to the direct channel (${this.early.length} channel messages held)`);
         this.in = 'direct';
         for (const f of this.early.splice(0)) this.o.deliver(f);
       } else if (m.t === 'back') {
@@ -165,6 +166,7 @@ export class DirectLink {
         for (const f of this.early.splice(0)) this.o.deliver(f);
         const base = Number(m.base);
         const frames = (m.frames as string[]).map(unb64);
+        console.log(`Multiuser: ${this.who} fell back: resends ${frames.length} from channel message ${base}, ${this.got} got here`);
         for (let i = this.got - base; i < frames.length; i++) {
           this.got++;
           this.o.deliver(frames[i]);
@@ -218,6 +220,11 @@ export class DirectLink {
 
   private control(m: Control) {
     this.o.control(this.name ? { ...m, to: this.name } : m);
+  }
+
+  /** The other side, for the log. */
+  private get who() {
+    return this.name || 'the host';
   }
 
   private async remoteReady() {
@@ -300,7 +307,7 @@ export class DirectLink {
   private set(t: Transport, reason: string) {
     this.transport = t;
     this.reason = reason;
-    console.log(`Multiuser: ${t === 'direct' ? 'direct connection' : 'relay'}${this.name ? ` to ${this.name}` : ' to the host'} (${reason})`);
+    console.log(`Multiuser: ${t === 'direct' ? 'direct connection' : 'relay'} to ${this.who} (${reason})`);
     this.o.onChange?.(this);
   }
 }
