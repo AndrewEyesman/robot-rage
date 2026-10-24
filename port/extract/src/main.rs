@@ -250,7 +250,7 @@ fn export_font(pfr: &vm_rust::director::chunks::xmedia::PfrFont, dir: &Path, mem
     let parsed = parse_pfr1_font_with_target(&pfr.raw_data, 0).unwrap_or_else(|_| pfr.parsed.clone());
     let base = safe_name(if member_name.is_empty() { &pfr.font_name } else { member_name });
     let mut sizes = serde_json::Map::new();
-    for size in 6..=36usize {
+    for size in 6..=64usize {
         let r = rasterizer::rasterize_pfr1_font(&parsed, size, 0);
         if r.bitmap_width == 0 || r.bitmap_height == 0 {
             continue;

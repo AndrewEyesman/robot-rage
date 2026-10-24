@@ -96,18 +96,15 @@ attribute vec2 uv1;
 #endif
 varying vec3 vColor;
 varying vec3 vSpecular;
+varying vec3 vBackColor;
+varying vec3 vBackSpecular;
 varying vec2 vUv[${MAX_LAYERS}];
 
-void main() {
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  vec3 n = normalize(transpose(inverse(mat3(modelMatrix))) * normal);
-  // Light the side facing the viewer: the files' normals face either way (every
-  // model sits under a mirroring scene root), and dirplayer's match to Adobe's
-  // player does the same.
-  if (dot(n, cameraPosition - wp.xyz) < 0.0) n = -n;
+// Fixed-function lighting for one side of the surface (normal n).
+void light(vec3 wp, vec3 n, out vec3 color, out vec3 spec) {
   vec3 d = vec3(0.0);
   vec3 sp = vec3(0.0);
-  vec3 V = normalize(cameraPosition - wp.xyz);
+  vec3 V = normalize(cameraPosition - wp);
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= uNumLights) break;
     vec3 L;
@@ -115,7 +112,7 @@ void main() {
     if (uLightType[i] == ${DIRECTIONAL}) {
       L = -uLightDir[i];
     } else {
-      vec3 v = uLightPos[i] - wp.xyz;
+      vec3 v = uLightPos[i] - wp;
       float dist = length(v);
       L = v / max(dist, 1e-6);
       att = 1.0 / max(uLightAtt[i].x + uLightAtt[i].y * dist + uLightAtt[i].z * dist * dist, 1e-6);
@@ -124,8 +121,22 @@ void main() {
     d += uLightColor[i] * max(ndl, 0.0) * att;
     if (uShininess > 0.0 && ndl > 0.0) sp += uLightColor[i] * pow(max(dot(n, normalize(L + V)), 0.0), uShininess) * att;
   }
-  vColor = clamp(uEmissive + uAmbientLight * uAmbient + d * uDiffuse, 0.0, 1.0);
-  vSpecular = clamp(sp * uSpecular, 0.0, 1.0);
+  color = clamp(uEmissive + uAmbientLight * uAmbient + d * uDiffuse, 0.0, 1.0);
+  spec = clamp(sp * uSpecular, 0.0, 1.0);
+}
+
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec3 n = normalize(transpose(inverse(mat3(modelMatrix))) * normal);
+  // Two-sided lighting: light both sides per vertex and let each pixel take the side
+  // it shows (gl_FrontFacing). The normals are rebuilt from each face's winding (the
+  // decoder can't read the stored ones), and winding doesn't say which side the
+  // files' authored normals face: the arena floor is wound facing down yet lit from
+  // above. Flipping the normal per vertex toward the camera instead made lighting
+  // pop on smoothed models as the camera moved. Known miss: a model drawn inside
+  // out (the arena's barrel, #back) gets lit where Adobe's player leaves it dark.
+  light(wp.xyz, n, vColor, vSpecular);
+  light(wp.xyz, -n, vBackColor, vBackSpecular);
 
   vec3 vn = normalize(normalMatrix * normal);
   for (int i = 0; i < ${MAX_LAYERS}; i++) {
@@ -157,6 +168,8 @@ uniform int uBlendSrc[${MAX_LAYERS}];
 uniform float uBlendConst[${MAX_LAYERS}];
 varying vec3 vColor;
 varying vec3 vSpecular;
+varying vec3 vBackColor;
+varying vec3 vBackSpecular;
 varying vec2 vUv[${MAX_LAYERS}];
 
 vec4 combine(vec4 col, vec4 t, int i) {
@@ -169,13 +182,13 @@ vec4 combine(vec4 col, vec4 t, int i) {
 }
 
 void main() {
-  vec4 col = vec4(vColor, uOpacity);
+  vec4 col = vec4(gl_FrontFacing ? vColor : vBackColor, uOpacity);
   if (uNumLayers > 0) col = combine(col, texture2D(uTex0, vUv[0]), 0);
   if (uNumLayers > 1) col = combine(col, texture2D(uTex1, vUv[1]), 1);
   if (uNumLayers > 2) col = combine(col, texture2D(uTex2, vUv[2]), 2);
   if (col.a < 0.004) discard;
   // Fixed-function specular is added after texturing.
-  gl_FragColor = vec4(clamp(col.rgb + vSpecular, 0.0, 1.0), col.a);
+  gl_FragColor = vec4(clamp(col.rgb + (gl_FrontFacing ? vSpecular : vBackSpecular), 0.0, 1.0), col.a);
 }
 `;
 

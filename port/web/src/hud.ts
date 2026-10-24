@@ -1,7 +1,7 @@
 // The arena's 2D layer: the frame bitmap around the 3D view, the player's name,
 // armour meter and battery (sprites 40, 45, 70-72 of the Training frame).
 
-import { AliasedText, BitmapFont } from './text';
+import { BitmapFont, SystemText } from './text';
 
 const STAGE_W = 800;
 const STAGE_H = 600;
@@ -37,7 +37,7 @@ export class Hud {
   ) {}
 
   /** The player's name: Verdana 9 bold (a Windows font, not embedded; Director sizes are pixels). */
-  private readonly nameText = new AliasedText('bold 9px Verdana, "DejaVu Sans", sans-serif');
+  private readonly nameText = new SystemText('bold', 9, 'Verdana, "DejaVu Sans", sans-serif');
 
   static async load(assets: string): Promise<Hud> {
     const bm = (n: number) => image(`${assets}/arena104/bitmaps/1-${n}.png`);
