@@ -41,3 +41,5 @@ jobs:
         env:
           # Text layout measures the game's fonts, extracted from its files.
           UNIT_SKIP: text layout
+          # mDNS host candidates don't resolve on the runners (port/tools/p2p-test.mjs).
+          P2P_PLAIN_IPS: "1"

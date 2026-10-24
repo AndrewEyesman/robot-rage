@@ -7,12 +7,20 @@
 // timeout). Prints the message round trip on each transport.
 //
 //   node port/tools/p2p-test.mjs [app=http://127.0.0.1:8092]    (dev server; never 8090)
+//
+// The tabs find each other by their host candidates alone (the suite's server has no
+// STUN), which Chrome names by mDNS. Where mDNS doesn't resolve (GitHub's runners),
+// P2P_PLAIN_IPS=1 has Chrome give its plain local addresses instead.
 import { chromium } from 'playwright-core';
 
 const [APP = 'http://127.0.0.1:8092'] = process.argv.slice(2);
 if (APP.includes(':8090')) throw new Error('8090 is the shared server');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-stable', headless: true, args: ['--headless=new', '--mute-audio'] });
+const browser = await chromium.launch({
+  executablePath: '/usr/bin/google-chrome-stable',
+  headless: true,
+  args: ['--headless=new', '--mute-audio', ...(process.env.P2P_PLAIN_IPS === '1' ? ['--disable-features=WebRtcHideLocalIpsWithMdns'] : [])],
+});
 let failed = 0;
 const check = (ok, what) => {
   if (!ok) failed++;
@@ -116,7 +124,7 @@ const rtt = {};
   await startStream(p.host, 'JoinBot');
   await sleep(300);
   // Abruptly: the joiner's peer connection goes away without a word on the relay.
-  await p.join.page.evaluate(() => { const l = window.mu.links.get(''); l.pc.close(); l.dc.onclose?.(); });
+  await p.join.page.evaluate(() => { const l = window.mu.links.get(''); l.pc?.close(); l.dc?.onclose?.(); });
   await sleep(1500);
   const [bh, bj] = [await transport(p.host), await transport(p.join)];
   check(bh.transport === 'relay' && bj.transport === 'relay', `channel lost: both back on the relay (host: ${bh.links[0]?.reason}; joiner: ${bj.links[0]?.reason})`);
