@@ -5,6 +5,7 @@
 import { DColor, DImage, G, dot, go, gotoNetMovie, member, the } from '../../director';
 import { EMPTY, LPropList, char, charToNum, item, itemDelimiter, lf, lingoString, numToChar, setItemDelimiter, stringp, symbol, type LValue } from '../../lingo';
 import { eq } from './util';
+import { gameFixes } from '../fixes';
 
 /** JumpMovie("login") / JumpMovie("factory", "start"). */
 export function JumpMovie(m: string, f?: LValue) {
@@ -67,7 +68,10 @@ export function image2text(im: DImage): string {
   while (y < h) {
     let c = paletteIndexAt(im, x, y);
     let dcounter = 1;
-    while (paletteIndexAt(im, x + 1, y) === c && dcounter < 213) {
+    // Fix (gameFixes.mapEdge, #63): the original also reads past the row's end, where
+    // every pixel is index 0, so a run of index 0 at the right edge counted pixels that
+    // aren't there and the rest of the map came back shifted.
+    while ((!gameFixes.mapEdge || x + 1 < w) && paletteIndexAt(im, x + 1, y) === c && dcounter < 213) {
       x = x + 1;
       dcounter = dcounter + 1;
       if (x === w - 1) {

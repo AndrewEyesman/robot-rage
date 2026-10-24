@@ -35,6 +35,10 @@
 //   at the back (turned round when mounted) shot forward with the head pointing back.
 //   The port flies every spear head first and forward, from either mount (?quirks=spear
 //   restores the original).
+// - Power axe at the front: the axe is modelled to sit at the back (mounting there turns
+//   it round) and swing forward over the robot; at the front or on top it swung
+//   backwards, over its own robot, while the hit is checked in front of the robot. The
+//   port swings it forward from every mount (?quirks=axe restores the original).
 // - Ranked results from both players: after each ranked round only the winner reported
 //   the result (the host alone for a tie), and the server believed it. Now the loser
 //   reports too (and both report ties), so the server counts a round only when both
@@ -58,6 +62,7 @@ export const arenaFixes = {
   tabSwitch: !quirks.includes('speedgear'),
   trainingRespawn: !quirks.includes('pit'),
   spearForward: !quirks.includes('spear'),
+  axeForward: !quirks.includes('axe'),
   bothReport: !quirks.includes('results'),
 };
 if (!arenaFixes.ambient) mutedSounds.add('ambient sound');

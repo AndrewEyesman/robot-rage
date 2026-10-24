@@ -34,6 +34,7 @@ Add a line whenever something is verified to work, and an automated check to
 | With no saved email the create-account tab opens; the screen matches Adobe's | `loader-to-login` (screenshot) |
 | LOG IN tab switches; the password field shows stars while the real password is kept hidden | `login-robot-list` |
 | Logging in loads the member's robots into the list ("Crusher" in yellow Impact, as in Adobe) | `login-robot-list` |
+| An email address wider than its box scrolls and still logs in whole (the original sent it without its first letters; `?quirks=longemail`) | `login-long-email` |
 | No caret is left blinking in a label after the fields go (the focus goes with its sprite) | `login-robot-list`, `runtime-unit` |
 | Clicking a robot selects it with the highlight bar | `login-robot-list` (screenshot) |
 | Settings tab opens; CHAT toggles and is saved | `login-robot-list` |
@@ -55,6 +56,7 @@ Add a line whenever something is verified to work, and an automated check to
 | Remove puts a part in the inventory; the sell room offers it with its sell box; Use this part installs it back | `garage-parts-sell` |
 | STATS and HIGHSCORE tabs (clicks through their labels); the TRAINING door goes to the arena | `garage-tabs-doors` |
 | The garage's paint map save (the TRAINING door, after the paintshop) carries the session, a server requiring one (`MAP_REQUIRE_SESSION=1`) keeps it, and it comes back byte for byte (Latin-1, bytes above 127 too); without the session (`?quirks=mapsession`) that server refuses it | `garage-map-session` |
+| A paint job comes back pixel for pixel after a reload, every Paintshop colour included (forms and replies go as Windows-1252 bytes) | `garage-map-reload` |
 | Selling and buying back really saves the robot (setrobot); the GARAGE, LOBBY and QUIT doors reach their movies | by hand |
 
 ## Arena (arena104)
@@ -70,6 +72,7 @@ Add a line whenever something is verified to work, and an automated check to
 | A two-tab match plays over the direct DataChannel; with `?p2p=relay`, or with ICE broken (`?p2p=fail`), it starts and plays over the relay | `match-transport` |
 | A hidden tab keeps playing: 25 s hidden, it runs its frames and both players stay in the match; a tab switch or stall never strikes the robot for speed hacking (`?quirks=speedgear` restores the strike) | `match-hidden-tab` |
 | Every weapon and its shots move, hit and spend ammo, energy and armour tick for tick as in the original (dirplayer), 11 Training scenarios covering all 27 weapons; the spear gun fires all 5 spears | `weapon-trace` (`--full`) |
+| The power axe at the front or back swings forward (the original swung a front axe backwards over its own robot; `?quirks=axe`) | `axe-swings-forward-front`, `axe-swings-forward-back` |
 | A spear gun at the front or back fires forward, head first (the original flew spears tail first, and a front gun's out of the robot's back; `?quirks=spear`) | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
 | Training starts again 3 s after the robot falls into the pit, off the roof or loses its armour (the original left it lying there; `?quirks=pit` restores that) | `training-respawn` |
 | A ranked two-tab match records a round once both players report it (the loser reports too; `?quirks=results` restores the winner-only report), the same for both robots | `match-ranked` |

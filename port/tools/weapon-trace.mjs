@@ -257,7 +257,7 @@ async function ported(browser, sc, orig, fixes = false) {
   });
   page.on('pageerror', (e) => logs.push('pageerror ' + e.message));
   // The port's enhancements that change weapons are off for the comparison (?quirks=).
-  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard${fixes ? '' : '&quirks=spear'}`);
+  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard${fixes ? '' : '&quirks=spear,axe'}`);
   await page.waitForFunction(() => window.__player?.movie?.name === 'arena104', null, { timeout: 60000 });
   await sleep(1500);
   const result = await page.evaluate(

@@ -14,7 +14,7 @@
 // - TAB in a text member moves to the next tab stop: the paragraph's own (left,
 //   center, right) and then every 24 px; in a field it is a .notdef box glyph.
 
-import { drawRun, measure, metrics, notdefAdvance, positions, type TextStyle } from './fonts';
+import { deviceScale, drawRun, measure, metrics, notdefAdvance, positions, type TextStyle } from './fonts';
 
 export interface Run {
   start: number;
@@ -344,12 +344,26 @@ export function charPosToLoc(lines: Line[], i: number): { x: number; y: number; 
  * `antialiasFrom` pixels up are anti-aliased (text members' antiAliasThreshold);
  * Infinity draws everything aliased, as fields are.
  */
+const fieldTextFix = !(typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('quirks') ?? '').split(',').includes('fieldtext');
+
 export function drawLines(ctx: CanvasRenderingContext2D, lines: Line[], x: number, y: number, colorOverride?: string, antialiasFrom: number | boolean = Infinity) {
+  // Enhancement (?quirks=fieldtext restores the original, #61): on a scaled stage the
+  // browser draws each glyph from its outline, so a field's hinted GDI advances only
+  // spread the letters out ("Gizm o"), the clip cut the last one off and the caret,
+  // placed by the layout, sat inside it. Scaled, fields draw at the layout's positions.
+  const gdi = !fieldTextFix || Math.abs(deviceScale(ctx) - 1) < 0.01;
   for (const l of lines) {
     // GDI draws a field's line in one go with the fonts' hinted advances, wider than
     // the layout's, and Director clips it to the line's laid-out width: the end of a
     // line can lose a glyph or two (as in Director).
     let hx = 0;
+    if (l.field && !gdi) {
+      for (const p of l.pieces) {
+        const m = metrics(p.style);
+        drawRun(ctx, p.style, p.tab ? '\x7f' : p.text, x + l.x + p.x, y + l.top + l.ascent - m.ascent, colorOverride ?? p.color, false, false, false);
+      }
+      continue;
+    }
     if (l.field) {
       ctx.save();
       ctx.beginPath();

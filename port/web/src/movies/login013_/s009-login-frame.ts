@@ -4,6 +4,7 @@
 import { Behavior, G, getPref, go, gotoNetPage, member, put, setPref, sprite, the } from '../../director';
 import { EMPTY, LPropList, num, point, propList, sym, type LSymbol } from '../../lingo';
 import { callGlobal, dot as dget } from '../../director';
+import { scrolledFieldText } from '../fixes';
 
 
 export class LoginFrame extends Behavior {
@@ -28,8 +29,8 @@ export class LoginFrame extends Behavior {
       case sym('CreateMember'):
         break;
       case sym('listRobots'):
-        G.gMyEmail = member('username_box').text;
-        setPref('RobotRageEmail1', member('username_box').text);
+        G.gMyEmail = scrolledFieldText('username_box');
+        setPref('RobotRageEmail1', scrolledFieldText('username_box'));
         go('listrobots');
         break;
       case sym('logout'):
@@ -47,8 +48,8 @@ export class LoginFrame extends Behavior {
     switch (num(L.prop('err'))) {
       case 0:
         if (sprite(11).visible && the.frameLabel === 'create') {
-          put('skicka mail' + member('username_box').text);
-          const tjola = 'http://i.mb00.net/cgi-bin/pmg_subscribe.pl?list=Miniclip&sublist=37&email_address=' + member('username_box').text;
+          put('skicka mail' + scrolledFieldText('username_box'));
+          const tjola = 'http://i.mb00.net/cgi-bin/pmg_subscribe.pl?list=Miniclip&sublist=37&email_address=' + scrolledFieldText('username_box');
           gotoNetPage(`JavaScript:subscribeToNewsletter('${tjola}');`);
         }
         G.gLobby.setaProp(sym('miniclipid'), L.prop('id'));
@@ -84,7 +85,7 @@ export class LoginFrame extends Behavior {
       member('gcom_STATE').text = 'Please Wait!';
       G.gCom.send(
         'main.asp',
-        propList('action', 'loginmember', 'password', member('visiblePassword').text, 'membername', member('username_box').text, 'uniquecode', G.gUser.uniqueCode),
+        propList('action', 'loginmember', 'password', member('visiblePassword').text, 'membername', scrolledFieldText('username_box'), 'uniquecode', G.gUser.uniqueCode),
         sym('done'), this, 0, propList(sym('loc'), point(554, 394)),
       );
       this.pState = sym('wait');
@@ -94,14 +95,14 @@ export class LoginFrame extends Behavior {
   CreateMember() {
     if (this.pState === sym('done')) {
       put('CreateMember');
-      const tEmail = member('username_box').text;
+      const tEmail = scrolledFieldText('username_box');
       if (!callGlobal('isAnEmailAddress', tEmail)) {
         member('gcom_STATE').text = 'Not a proper email address!';
       } else {
         member('gcom_STATE').text = 'Please Wait! Creating member';
         G.gCom.send(
           'main.asp',
-          propList('action', 'createmember', 'password', member('visiblePassword').text, 'membername', member('username_box').text, 'uniquecode', G.gUser.uniqueCode),
+          propList('action', 'createmember', 'password', member('visiblePassword').text, 'membername', scrolledFieldText('username_box'), 'uniquecode', G.gUser.uniqueCode),
           sym('done'), this, 0, propList(sym('loc'), point(554, 394)),
         );
         this.pState = sym('wait');

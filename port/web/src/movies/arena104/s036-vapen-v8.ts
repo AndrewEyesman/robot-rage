@@ -9,7 +9,9 @@ import { LList, add, lingoString, mul, num, point, rgb, sym, vector, type LPoint
 import { playsound } from '../robotwars/s030-soundscript';
 import { GetAngle, getDist } from '../robotwars/s007-jump-movie';
 import { PointToVector } from './s006-arena-3d';
-import { DEG, sp, world } from './weapon-util';
+import { DEG, eq, sp, world } from './weapon-util';
+import { monteringsplats } from '../robotwars/s006-3d-scripts';
+import { arenaFixes } from './enhancements';
 
 // global gPartDescription, world
 
@@ -26,6 +28,8 @@ export class VapenV8 {
   weaponNumber: number;
   sp: number;
   robot2Sp: number;
+  /** Which way the swing turns the model: the original's 1, -1 for the fix in fire(); 0 until the first swing. */
+  swing = 0;
 
   constructor(sp0: number, rn: number, rsp: number, n: number) {
     this.sp = sp0;
@@ -86,6 +90,12 @@ export class VapenV8 {
   /** No buttondown argument: releasing the key swings too, if the last swing is over. */
   fire(_buttondown?: LValue) {
     if (this.state === sym('idle')) {
+      // Enhancement (enhancements.ts, ?quirks=axe): the axe is modelled to sit at the
+      // back and swing forward over the robot. Mounted anywhere else it isn't turned
+      // round, so the original swung it backwards, over its own robot, while the hit is
+      // checked in front; the fix swings it the other way, forward. (The robot's parts
+      // are only known once it's built, after this behavior's constructor.)
+      if (!this.swing) this.swing = arenaFixes.axeForward && !eq(monteringsplats(sp(this.robotSp, 'robotRD'), sym('v8')), sym('b')) ? -1 : 1;
       this.angle = 0;
       this.dangle = 1;
       this.state = sym('hit');
@@ -98,7 +108,7 @@ export class VapenV8 {
       case sym('hit'):
         this.angle = this.angle + this.dangle;
         this.dangle = this.dangle + 4.2;
-        this.m.rotate(vector(0, 0, 100), vector(1, 0, 0), this.dangle);
+        this.m.rotate(vector(0, 0, 100), vector(1, 0, 0), this.swing * this.dangle);
         {
           const ra = num(sp(this.robotSp, 'angle'));
           sprite(this.sp).loc = add(sprite(this.robotSp).loc, point(34 * Math.cos(ra * DEG), 34 * Math.sin(ra * DEG))) as LPoint;
@@ -140,7 +150,7 @@ export class VapenV8 {
         }
         break;
       case sym('moveBack'):
-        this.m.rotate(vector(0, 0, 100), vector(1, 0, 0), -this.dangle);
+        this.m.rotate(vector(0, 0, 100), vector(1, 0, 0), -this.swing * this.dangle);
         this.dangle = this.dangle - 4.2;
         this.angle = this.angle - this.dangle;
         sprite(this.sp).loc = point(-1000, -1000);

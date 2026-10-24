@@ -66,6 +66,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------------ the checks
 
+/** An account for login-long-email: an address wider than the login screen's box. */
+const LONG_EMAIL = 'a.rather.long.address@example.com';
+const LONG_PASSWORD = 'horse-battery-staple'; // the box takes 20 characters (login013_ 28)
+
 const LOGIN = [
   ['click', 310, 148],
   ['expect', 'login tab', `p.frameLabel === 'login'`],
@@ -114,7 +118,7 @@ const SAVE_ROBOT = `(async () => { const L = await import('/src/lingo/index.ts')
 const MAP_SAVES = `(() => { window.__maps = []; const f = window.fetch; window.fetch = async (url, init) => { const r = await f(url, init);
   const body = typeof init?.body === 'string' ? init.body : '';
   const field = (k) => (body.match(new RegExp('(?:^|&)' + k + '=([^&]*)'))?.[1] ?? '').replace(/\\+/g, ' ').replace(/%([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-  if (/(^|&)action=setrobotmap/i.test(body)) window.__maps.push({ session: /(^|&)sessionid=[^&]/i.test(body), map: field('map'), reply: await r.clone().text() });
+  if (/(^|&)action=setrobotmap/i.test(body)) window.__maps.push({ session: /(^|&)sessionid=[^&]/i.test(body), map: field('map'), reply: await r.clone().text(), movie: p.movie?.name, frame: p.frameLabel });
   return r; }; return 1; })()`;
 /** The paint map the server holds for the page's robot (getrobotmap), read byte for byte, into window.__stored. */
 const STORED_MAP = `(async () => { const g = p.globals; const body = new URLSearchParams({ action: 'getrobotmap', sessionid: String(g.gLobby.getaProp(sym('session'))), robotid: String(g.gGameGlobals.getaProp(sym('userID'))) });
@@ -169,6 +173,32 @@ function spearHeadFirst(pos) {
   };
 }
 
+/**
+ * The power axe mounted at the front or back (arenaFixes.axeForward, docs/port-issues.md
+ * #62): it swings forward (Training's robot starts facing -z), its up axis tipping
+ * toward -z; at the front the original swung it backwards over its own robot.
+ */
+function axeForward(pos) {
+  return {
+    name: `axe-swings-forward-${pos === 'f' ? 'front' : 'back'}`,
+    url: `/index.html?layout=original&parts=r1,h2,ma1,b1,v8&pos=${pos}&pansar=50&name=Crusher`,
+    steps: [
+      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      [
+        'eval',
+        `window.__axeUp = () => {
+          const b = p.sprites.flatMap((s) => s?.scriptInstanceList ?? []).find((b) => b.constructor.name === 'VapenV8');
+          b.m.obj.updateWorldMatrix(true, true);
+          const e = b.m.obj.matrixWorld.elements, n = Math.hypot(e[4], e[5], e[6]);
+          return [e[4] / n, e[5] / n, e[6] / n];
+        }`,
+      ],
+      ['hold', 'z', 60],
+      ['expect', 'the axe swings forward', `(() => { const [, y, z] = window.__axeUp(); return y < 0.5 && z < -0.5; })()`, 2000],
+    ],
+  };
+}
+
 const CHECKS = [
   { name: 'typecheck', cmd: ['npx', 'tsc', '--noEmit'], cwd: 'port/web' },
   { name: 'lingo-unit', cmd: ['npx', 'tsx', 'src/lingo/test.ts'], cwd: 'port/web' },
@@ -190,6 +220,74 @@ const CHECKS = [
       ['expect', 'login movie running', `p.movie.name === 'login013_' && p.frameLabel === 'create'`, 15000],
       ['wait', 800],
       ['shot', 'login-create'],
+    ],
+  },
+  {
+    // An email address wider than the login screen's box (#59): the box scrolls it by
+    // cutting its front off the field's text, which logging in used to read.
+    name: 'login-long-email',
+    url: '/game.html',
+    setup: () => ensureAccount(LONG_EMAIL, LONG_PASSWORD, 'Longmail'),
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ['click', 310, 148],
+      ['expect', 'login tab', `p.frameLabel === 'login'`],
+      ['click', 400, 222],
+      ['type', LONG_EMAIL],
+      ['expect', 'the box shows the address scrolled', `p.member('username_box').text !== '${LONG_EMAIL}'`, 2000],
+      ['click', 400, 260],
+      ['type', LONG_PASSWORD],
+      ['click', 475, 309],
+      ['expect', 'logged in with the whole address and password', `p.member('robotname1').text === 'Longmail'`, 15000],
+    ],
+  },
+  {
+    // A paint job survives a reload (#60): the map is painted with every colour of the
+    // Paintshop's palette (codes 128-159 among them, which went as '?') and up to its
+    // right edge, saved by the TRAINING door, then loaded in a new tab.
+    name: 'garage-map-reload',
+    url: '/game.html',
+    setup: saveCrusherMap,
+    teardown: restoreCrusherMap,
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['click', 175, 15],
+      ['expect', 'paintshop opens', `p.frameLabel === 'paint'`, 3000],
+      ['wait', 1500],
+      [
+        'eval',
+        `(() => {
+          const px = (im) => { const a = []; for (let y = 0; y < im.height; y++) for (let x = 0; x < im.width; x++) { const c = im.getPixel(x, y); a.push(typeof c === 'number' ? c : c.paletteIndex(im.palette)); } return a; };
+          const s = p.sprites.find((s) => s?.scriptInstanceList.some((b) => b.constructor.name === 'PaletteBehavior'));
+          const pim = s.member.image, im = p.member('map1A').image, w = im.width, h = im.height;
+          const sw = [];
+          for (let y = 4; y < pim.height; y += 9) for (let x = 4; x < pim.width; x += 8) { const c = pim.getPixel(x, y); sw.push(typeof c === 'number' ? c : c.paletteIndex(im.palette)); }
+          // bands of every swatch, runs of different lengths, and a column at the right edge
+          for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) im.setPixel(x, y, sw[(Math.floor(x / (3 + (y % 5))) + y) % sw.length]);
+          for (let y = 0; y < h; y++) im.setPixel(w - 1, y, sw[(y * 7) % sw.length]);
+          localStorage.setItem('regress-map', JSON.stringify(px(im)));
+          return 1;
+        })()`,
+      ],
+      ['click', 60, 15],
+      ['expect', 'back in the workshop', `p.frameLabel === 'build'`, 4000],
+      ['wait', 1500],
+      ['click', 731, 501],
+      ['expect', 'the TRAINING door saves the robot', `p.movie?.name === 'arena104'`, 20000],
+      ['wait', 2000],
+      ['tab', 'reload', '/game.html'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ...TO_GARAGE,
+      [
+        'expect',
+        'the paint map comes back pixel for pixel',
+        `(() => { const px = (im) => { const a = []; for (let y = 0; y < im.height; y++) for (let x = 0; x < im.width; x++) { const c = im.getPixel(x, y); a.push(typeof c === 'number' ? c : c.paletteIndex(im.palette)); } return a; }; const want = JSON.parse(localStorage.getItem('regress-map')); const got = px(p.member('map1A').image); return want.length === got.length && want.every((c, i) => c === got[i]); })()`,
+        5000,
+      ],
     ],
   },
   {
@@ -480,6 +578,7 @@ const CHECKS = [
     ],
   },
   ...['f', 'b'].map(spearHeadFirst),
+  ...['f', 'b'].map(axeForward),
   {
     // The paintshop's grid button with no chassis (#40): it used to fail before toggling.
     name: 'garage-grid-nochassis',
@@ -593,6 +692,17 @@ async function latin1Post(url, fields) {
   return Buffer.from(await r.arrayBuffer()).toString('latin1');
 }
 
+let crusherMap;
+/** Crusher's paint map as the server holds it (garage-map-reload repaints it; restoreCrusherMap puts it back). */
+async function saveCrusherMap() {
+  const sid = JSON.parse(lingoField(await mainAsp({ action: 'loginmember', membername: 'tester@home.lan', password: 'rage2005' }), 'sid'));
+  crusherMap = { sid, map: await mainAsp({ action: 'getrobotmap', robotid: 1003, sessionid: sid }) };
+}
+async function restoreCrusherMap() {
+  const r = await mainAsp({ action: 'setrobotmap', robotid: 1003, robotname: 'Crusher', sessionid: crusherMap.sid, map: crusherMap.map });
+  if (!/#err: 0/.test(r)) throw new Error(`Crusher's map not restored: ${r.slice(0, 80)}`);
+}
+
 let crusherSaved;
 /** Crusher's saved data, then its money set to `money` with the admin grant (paid when the robot next loads). */
 async function grantCrusher(money) {
@@ -638,6 +748,17 @@ function lingoField(text, key) {
 }
 
 /** regress@home.lan with a saved robot "Regress" (a copy of Crusher's data and paint map). */
+/** An account with one robot, created on the fixture server if it isn't there. */
+async function ensureAccount(email, password, robot) {
+  let login = await mainAsp({ action: 'loginmember', membername: email, password });
+  if (lingoField(login, 'err') !== '0') {
+    await mainAsp({ action: 'createmember', membername: email, password });
+    login = await mainAsp({ action: 'loginmember', membername: email, password });
+  }
+  const sid = JSON.parse(lingoField(login, 'sid'));
+  if (!new RegExp(`robotname: "${robot}"`).test(await mainAsp({ action: 'getmyrobots', sessionid: sid }))) await mainAsp({ action: 'createrobot', robotname: robot, sessionid: sid });
+}
+
 async function ensureRegressAccount() {
   const email = 'regress@home.lan';
   let login = await mainAsp({ action: 'loginmember', membername: email, password: 'rage2005' });

@@ -48,8 +48,20 @@
 //   they were and the lobby waiting, as after a good reply. For a clicked robot it
 //   showed a card of nothing; it now says the robot couldn't be loaded, as for a failed
 //   request.
+// - Long email addresses (?quirks=longemail, #59): the login screen's email box scrolls
+//   sideways (login013_ 97, James Newton's library behavior) by cutting the characters
+//   that don't fit off the front of the field's text and keeping the whole text itself,
+//   but logging in and creating an account read the field's text: an address wider than
+//   the box (about 27 characters) went without its first letters, so it couldn't log in
+//   (or made an account under the cut address). They now read the behavior's full text.
+// - The paint map encoder's right edge (?quirks=mapedge, #63): image2text (robotwars)
+//   compares each pixel with the next one along the row, and at the row's end with
+//   pixels past the edge, which read as index 0, so a row ending in index 0 counted
+//   pixels that don't exist and the rest of the map loaded shifted. The Paintshop's
+//   palette has no index 0, but a map could hold one; the run now stops at the edge
+//   (the format is unchanged).
 
-import { G, TextualMember, dot, member, netDone, netError, netTextResult } from '../director';
+import { G, TextualMember, dot, member, netDone, netError, netTextResult, player } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
 import { rocket_encrypt } from './robotwars/s072-rocket-encrypt';
 import { emptyRobotProplist } from './robotwars/s011-purl';
@@ -68,7 +80,26 @@ export const gameFixes = {
   ircAuth: !quirks.includes('ircauth'),
   mapSession: !quirks.includes('mapsession'),
   robotReply: !quirks.includes('robotreply'),
+  longEmail: !quirks.includes('longemail'),
+  mapEdge: !quirks.includes('mapedge'),
 };
+
+/**
+ * gameFixes.longEmail: the whole text of a field member that a "Horizontal scroll
+ * (field)" behavior (login013_ 97) scrolls, which keeps it as myFullText while the
+ * field shows only the part that fits; the field's text when no sprite scrolls it.
+ */
+export function scrolledFieldText(name: string): string {
+  const m = member(name) as TextualMember;
+  if (gameFixes.longEmail) {
+    for (const s of player.sprites) {
+      if (s?.member !== m) continue;
+      const b = s.scriptInstanceList.find((i) => typeof (i as { getText?: unknown }).getText === 'function') as { getText(): string } | undefined;
+      if (b) return b.getText();
+    }
+  }
+  return m.text;
+}
 
 /**
  * gameFixes.economy: after a save (setrobot, net operation `id`) the server's reply

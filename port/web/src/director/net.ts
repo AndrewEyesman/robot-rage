@@ -1,6 +1,9 @@
 // Director's network Lingo: getNetText, postNetText and preloadNetThing start an
 // operation and return its id; scripts poll netDone(id) and read netTextResult(id)
-// and netError(id) ("OK" or an error number). Text is Latin-1, as the game sends it.
+// and netError(id) ("OK" or an error number). Text goes a byte per character, the
+// bytes Windows-1252 as the port's strings are (lingo/charset.ts).
+
+import { byteToChar, charToByte } from '../lingo/charset';
 
 interface NetOp {
   url: string;
@@ -15,11 +18,14 @@ let nextId = 1;
 let lastId = 0;
 
 function latin1Encode(s: string): string {
-  // application/x-www-form-urlencoded with Latin-1 bytes (what Director sends).
+  // application/x-www-form-urlencoded with a byte per character, as Director sends: the
+  // port's strings hold Windows-1252 characters (numToChar(158) is 'ž', U+017E), so those
+  // go back to their bytes. Latin-1 alone sent 128-159 as '?', which corrupted every paint
+  // map using those codes (#60).
   let out = '';
   for (const ch of s) {
-    let c = ch.charCodeAt(0);
-    if (c > 255) c = 63;
+    let c = charToByte(ch);
+    if (c < 0) c = ch.charCodeAt(0) > 255 ? 63 : ch.charCodeAt(0);
     if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || '-_.*'.includes(ch)) out += ch;
     else if (c === 32) out += '+';
     else out += '%' + c.toString(16).toUpperCase().padStart(2, '0');
@@ -27,12 +33,15 @@ function latin1Encode(s: string): string {
   return out;
 }
 
-/** A response's body as Latin-1 text, a character per byte (the game server answers main.asp so). */
+/**
+ * A response's body as text, a character per byte (the game server answers main.asp so),
+ * the bytes read as Windows-1252 like the rest of the port's strings (byteToChar).
+ */
 export async function latin1Text(r: Response): Promise<string> {
   const buf = new Uint8Array(await r.arrayBuffer());
   let s = '';
   for (let i = 0; i < buf.length; i += 8192) s += String.fromCharCode(...buf.subarray(i, i + 8192));
-  return s;
+  return s.replace(/[\x80-\x9f]/g, (c) => byteToChar(c.charCodeAt(0)));
 }
 
 /** The login screen's country lookup is a hardcoded Shockplay URL; the game server answers it. */
