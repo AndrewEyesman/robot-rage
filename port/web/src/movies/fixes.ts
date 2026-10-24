@@ -65,6 +65,13 @@
 //   and while the mouse drags, so a selection it didn't see made (Tab into the field
 //   selects all of it) deleted nothing and put the caret at the start, where the next
 //   typing went in front of the old text. It now deletes the field's selection.
+// - The remembered email (?quirks=scrolltext, #67): the login screen fills the email box
+//   with the remembered address in its frame script's beginSprite, after the box's
+//   behavior (login013_ 97) read the still empty field as its full text, so the first key
+//   typed in the box replaced the whole address with that key; and with the longemail
+//   fix, logging in without retyping it sent no email ("Not a valid email/password!").
+//   The behavior now takes the field's text when a script set it behind its back, and
+//   logging in reads that text.
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult, player } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -88,12 +95,15 @@ export const gameFixes = {
   longEmail: !quirks.includes('longemail'),
   mapEdge: !quirks.includes('mapedge'),
   scrollSelect: !quirks.includes('scrollselect'),
+  scrollText: !quirks.includes('scrolltext'),
 };
 
 /**
  * gameFixes.longEmail: the whole text of a field member that a "Horizontal scroll
  * (field)" behavior (login013_ 97) scrolls, which keeps it as myFullText while the
- * field shows only the part that fits; the field's text when no sprite scrolls it.
+ * field shows only the part that fits (its end); the field's text when no sprite
+ * scrolls it, or (gameFixes.scrollText) when a script set the text behind the
+ * behavior's back.
  */
 export function scrolledFieldText(name: string): string {
   const m = member(name) as TextualMember;
@@ -101,7 +111,9 @@ export function scrolledFieldText(name: string): string {
     for (const s of player.sprites) {
       if (s?.member !== m) continue;
       const b = s.scriptInstanceList.find((i) => typeof (i as { getText?: unknown }).getText === 'function') as { getText(): string } | undefined;
-      if (b) return b.getText();
+      if (!b) continue;
+      const full = b.getText();
+      return !gameFixes.scrollText || (m.text && full.endsWith(m.text)) ? full : m.text;
     }
   }
   return m.text;

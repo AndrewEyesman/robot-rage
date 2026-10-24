@@ -54,6 +54,7 @@ export class HorizontalScrollField extends Behavior {
   }
 
   keyDown() {
+    if (gameFixes.scrollText) this.adoptFieldText();
     switch (the.keyCode) {
       case 36:
         sendSprite(this.spriteNum, 'validate', this.myFullText);
@@ -101,6 +102,20 @@ export class HorizontalScrollField extends Behavior {
 
   getText() {
     return this.myFullText;
+  }
+
+  /**
+   * gameFixes.scrollText (#67): take the field's text when a script set it behind the
+   * behavior's back (the field always shows the end of myFullText otherwise). The login
+   * screen fills in the remembered email after beginSprite read the empty field, so the
+   * first key typed there replaced the whole address.
+   */
+  adoptFieldText() {
+    const text = String(this.myMember.text);
+    if (!text || this.myFullText.endsWith(text)) return;
+    this.myFullText = text;
+    this.myVisibleText = text;
+    this.myClippedChars = 0;
   }
 
   setText(newText: string) {

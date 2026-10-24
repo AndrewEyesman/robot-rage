@@ -82,13 +82,22 @@ const LOGIN = [
   ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
   ['expect', 'no caret left in a label (the focus went with the password field)', `p.keyboardFocusSprite === -1 || p.isEditable(p.sprite(p.keyboardFocusSprite))`, 2000],
 ];
-const TO_GARAGE = [
-  ...LOGIN,
+const LIST_TO_GARAGE = [
   ['click', 300, 235],
   ['expect', 'robot selected', `p.globals.gLobby.getaProp(sym('selectedid')) === 1`],
   ['click', 480, 375],
   ['expect', 'garage loaded', `p.movie.name === 'factory0604' && p.frameLabel === 'build'`, 25000],
   ['wait', 1500],
+];
+const TO_GARAGE = [...LOGIN, ...LIST_TO_GARAGE];
+/** A tab opened after a login in the same browser: the login tab has the email already. */
+const REMEMBERED_TO_GARAGE = [
+  ['expect', 'the login tab has the remembered email', `p.frameLabel === 'login' && p.member('username_box').text === 'tester@home.lan'`],
+  ['click', 400, 260],
+  ['type', 'rage2005'],
+  ['click', 475, 309],
+  ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
+  ...LIST_TO_GARAGE,
 ];
 
 /** In the lobby: the point on a name's line in the room's user list (sprite 9, 13 px lines). */
@@ -310,7 +319,7 @@ const CHECKS = [
       ['tab', 'reload', '/game.html'],
       ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
       ['wait', 500],
-      ...TO_GARAGE,
+      ...REMEMBERED_TO_GARAGE,
       [
         'expect',
         'the paint map comes back pixel for pixel',
@@ -335,6 +344,30 @@ const CHECKS = [
       ['eval', `window.__chat = Number(p.globals.gCHat)`],
       ['click', 300, 237],
       ['expect', 'chat toggled', `Number(p.globals.gCHat) === 1 - window.__chat`],
+    ],
+  },
+  {
+    // The remembered email (gameFixes.scrollText, #67): the login screen fills the email
+    // box after its behavior read the empty field, so the first key typed replaced the
+    // address, and logging in without retyping it sent no email.
+    name: 'login-remembered-email',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['eval', `localStorage.setItem('rr-pref:robotrageemail1', 'tester@home.lan')`],
+      ['tab', 'remembered', '/game.html'],
+      ['expect', 'the login tab opens with the remembered email', `p.movie.name === 'login013_' && p.frameLabel === 'login' && p.member('username_box').text === 'tester@home.lan'`, 15000],
+      ['wait', 500],
+      ['click', 480, 222],
+      ['key', 'Backspace'],
+      ['expect', 'Backspace deletes one character of the remembered email', `p.member('username_box').text === 'tester@home.la'`, 2000],
+      ['type', 'nx'],
+      ['expect', 'typing adds to it', `p.member('username_box').text === 'tester@home.lanx'`, 2000],
+      ['key', 'Backspace'],
+      ['click', 400, 260],
+      ['type', 'rage2005'],
+      ['click', 475, 309],
+      ['expect', 'logs in with it', `p.member('robotname1').text === 'Crusher'`, 15000],
     ],
   },
   {
@@ -534,7 +567,7 @@ const CHECKS = [
       ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
       ['eval', MAP_SAVES],
       ['wait', 500],
-      ...TO_GARAGE,
+      ...REMEMBERED_TO_GARAGE,
       ['click', 175, 15],
       ['expect', 'paintshop opens', `p.frameLabel === 'paint'`, 3000],
       ['wait', 1500],
