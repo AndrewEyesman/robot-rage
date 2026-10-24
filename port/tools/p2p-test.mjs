@@ -113,7 +113,7 @@ const rtt = {};
   const p = await pair('', 'direct');
   await sleep(2500);
   const [th, tj] = [await transport(p.host), await transport(p.join)];
-  check(th.transport === 'direct' && tj.transport === 'direct', `auto: both on the direct channel (host ${th.transport}, joiner ${tj.transport}: ${tj.links[0]?.reason})`);
+  check(th.transport === 'direct' && tj.transport === 'direct', `auto: both on the direct channel (host ${th.transport}: ${th.links[0]?.reason}; joiner ${tj.transport}: ${tj.links[0]?.reason})`);
   check(tj.links[0]?.sentDirect > 0 && tj.links[0]?.gotDirect > 0, `auto: messages went over the channel (joiner sent ${tj.links[0]?.sentDirect}, got ${tj.links[0]?.gotDirect})`);
   await finish(p, 'switch to direct');
   rtt.direct = await roundTrip(p.join, 'HostBot');
