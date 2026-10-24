@@ -33,6 +33,7 @@ fn main() {
     fs::create_dir_all(out.join("bitmaps")).unwrap();
     fs::create_dir_all(out.join("w3d")).unwrap();
     fs::create_dir_all(out.join("fonts")).unwrap();
+    fs::create_dir_all(out.join("sounds")).unwrap();
 
     // Score parsing evaluates behavior parameters with the Lingo evaluator, which
     // needs the global player; the native test harness sets one up.
@@ -99,6 +100,33 @@ fn main() {
                     }
                 }
                 _ => {}
+            }
+            let is_sound = matches!(def.chunk.member_type, MemberType::Sound);
+            let swa = def.children.iter().flatten().filter(|_| is_sound).find_map(|c| match c {
+                Chunk::Media(m) if m.is_compressed && !m.audio_data.is_empty() => Some(m),
+                _ => None,
+            });
+            if let Some(m) = swa {
+                // Shockwave Audio: an MP3 stream, possibly after a few header bytes.
+                let data = &m.audio_data;
+                let start = (0..data.len().saturating_sub(1).min(4096))
+                    .find(|&i| data[i] == 0xFF && data[i + 1] & 0xE0 == 0xE0)
+                    .unwrap_or(0);
+                let file = format!("sounds/{}-{}.mp3", lib, num);
+                fs::write(out.join(&file), &data[start..]).unwrap();
+                entry["sound"] = json!({ "file": file, "codec": "swa", "rate": m.sample_rate });
+            } else if let Some(snd) = sound_of(def).filter(|_| is_sound) {
+                let mp3 = snd.codec() == "mp3";
+                let file = format!("sounds/{}-{}.{}", lib, num, if mp3 { "mp3" } else { "wav" });
+                fs::write(out.join(&file), if mp3 { snd.data() } else { snd.to_wav() }).unwrap();
+                let cues = def.children.iter().find_map(|c| match c {
+                    Some(Chunk::CuePoints(c)) => Some(c.times_ms.clone()),
+                    _ => None,
+                });
+                entry["sound"] = json!({
+                    "file": file, "codec": snd.codec(), "rate": snd.sample_rate(),
+                    "channels": snd.channels(), "bits": snd.bits_per_sample(), "cuePoints": cues,
+                });
             }
             for xm in def.children.iter().filter_map(|c| match c {
                 Some(Chunk::XMedia(x)) => Some(x),
@@ -175,6 +203,11 @@ fn main() {
                     "scripts": s.scripts.iter().map(|r| json!([r.cast_lib, r.cast_member])).collect::<Vec<_>>(),
                 })
             })
+            .collect();
+        index["soundChannels"] = score
+            .sound_channel_data
+            .iter()
+            .map(|(f, ch, d)| json!({"frame": f + 1, "channel": ch, "member": d.cast_member}))
             .collect();
         index["sprites"] = score
             .channel_initialization_data
@@ -332,6 +365,26 @@ fn smooth_normals(positions: &[[f32; 3]], faces: &[[u32; 3]], max_angle_deg: f32
             if n == [0.0, 0.0, 0.0] { mine } else { n }
         })
         .collect()
+}
+
+/// A sound member's audio, found the way dirplayer finds it: a `snd ` chunk, a media
+/// chunk (Shockwave Audio), or a sndH header with sndS samples.
+fn sound_of(def: &vm_rust::director::chunks::cast_member::CastMemberDef) -> Option<vm_rust::director::chunks::sound::SoundChunk> {
+    use vm_rust::director::chunks::sound::SoundChunk;
+    for c in def.children.iter().flatten() {
+        match c {
+            Chunk::Sound(s) => return Some(s.clone()),
+            Chunk::Media(m) if !m.audio_data.is_empty() => {
+                let mut sc = SoundChunk::new(m.audio_data.clone());
+                sc.set_metadata(m.sample_rate, 1, if m.is_compressed { 0 } else { 16 });
+                return Some(sc);
+            }
+            _ => {}
+        }
+    }
+    let header = def.children.iter().flatten().find_map(|c| match c { Chunk::SndHeader(h) => Some(h), _ => None })?;
+    let samples = def.children.iter().flatten().find_map(|c| match c { Chunk::SndSamples(d) => Some(d), _ => None })?;
+    Some(SoundChunk::from_snd_header_and_samples(header, samples))
 }
 
 struct Bin(Vec<u8>);

@@ -29,6 +29,10 @@ layout and widescreen, R restarts. The robot comes from the URL, e.g.
 - `src/director-material.ts`: Shockwave 3D's #standard shading: per-vertex lighting,
   texture layers with their blend functions, CLOD texture coordinates.
 - `src/parts.ts`: the part table (names, weights, energy use, models).
+- `src/sound.ts`: playsound's channels 3-8, playing the game's own sound members.
+- `src/particles.ts`, `src/firepit.ts`: Shockwave 3D particle systems, and the fire
+  pit's smoke and flames (InitFirePit, initFire/stopFire).
+- `src/text.ts`: the game's embedded fonts (and Verdana), drawn at display resolution.
 
 The game logic ticks at the original's 20 fps; drawing runs at the display's rate and
 places the robot and camera between the last two ticks. Widescreen widens the view at
@@ -45,6 +49,6 @@ tick. First run: 229 ticks identical, including a wall hit.
 
 ## Not done yet
 
-Weapons, the opponent, sounds, the fire pit's flames and smoke, damage marks on the
-paint map, the robot's saved paint map from the server, the menus, and everything
-outside the arena.
+Weapons, the opponent, the explosion and breakdown smoke, damage marks on the paint
+map, the robot's saved paint map from the server, the menus, and everything outside
+the arena.

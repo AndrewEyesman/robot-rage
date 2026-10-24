@@ -14,6 +14,8 @@ import { LightRig } from './director-material';
 import { Hud } from './hud';
 import { applyPaintMap, buildRobot, placeRobot, RobotBehavior, Wheels, type Pose, type RobotDescription } from './robot';
 import { parts } from './parts';
+import { firePit } from './firepit';
+import { Sound } from './sound';
 import { W3dMember } from './w3d';
 
 const ASSETS = '/assets';
@@ -98,6 +100,11 @@ async function main() {
     pit: new MapSprite(pitM, 29, 29, [14, 14], 44, 92, [1200, 91]),
   };
 
+  const sound = await Sound.load(ASSETS, ['arena104', 'robotwars']);
+  sound.preload(['regular_krock', 'fence_krock', 'flamethrow', 'krasch11']);
+  const pit = await firePit(ASSETS);
+  scene.add(pit.smoke.mesh, pit.fire.mesh);
+
   const wheels = new Wheels(robotDescription, model, '1');
   let gameOverAt = 0;
   // The game's clock (the milliSeconds) advances one tempo step per tick, so timing
@@ -110,8 +117,8 @@ async function main() {
     sprites,
     wheels,
     {
-      sound: () => {},
-      fire: () => {},
+      sound: (name, volume) => sound.playsound(name, volume),
+      fire: (on) => (on ? pit.initFire() : pit.stopFire()),
       gameOver: () => {
         if (!gameOverAt) gameOverAt = now();
       },
@@ -226,6 +233,8 @@ async function main() {
   let frames = 0;
   let fpsTime = last;
   function frame(t: number) {
+    // Particles are only for looks, so they move at the display's rate.
+    pit.update(Math.min(0.1, (t - last) / 1000));
     acc += t - last;
     last = t;
     if (acc > 250) acc = 250;
@@ -249,7 +258,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // For automated checks.
-  Object.assign(window, { __port: { robot, follow, sprites, scene, camera3d, renderer, tick } });
+  Object.assign(window, { __port: { robot, follow, sprites, scene, camera3d, renderer, tick, pit, sound } });
 }
 
 main().catch((e) => {
