@@ -31,10 +31,17 @@ export const PRIZE_PER_ROUND = 10;
 export function createResults(store, log, { onRound }) {
   const matches = () => (store.db.matches ||= {});
 
-  function prune(now) {
+  /** Drops match records with no activity for MATCH_KEEP_MS. Returns how many. */
+  function prune(now = Date.now()) {
+    let n = 0;
     for (const [id, m] of Object.entries(matches())) {
-      if (now - m.last > MATCH_KEEP_MS) delete matches()[id];
+      if (now - m.last > MATCH_KEEP_MS) {
+        delete matches()[id];
+        n++;
+      }
     }
+    if (n) store.save();
+    return n;
   }
 
   const isOpen = (m, now) => !m.closed && now - m.last <= MATCH_TTL_MS;
@@ -139,5 +146,5 @@ export function createResults(store, log, { onRound }) {
     return prizes;
   }
 
-  return { start, report, settle, openMatchOf };
+  return { start, report, settle, openMatchOf, prune };
 }

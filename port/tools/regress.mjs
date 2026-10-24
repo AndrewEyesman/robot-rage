@@ -5,7 +5,7 @@
 //
 //   node port/tools/regress.mjs                  everything
 //   node port/tools/regress.mjs login garage     only checks whose name contains a word
-//   node port/tools/regress.mjs --fast           skip the slow checks (two-tab matches, traces): a couple of minutes
+//   node port/tools/regress.mjs --fast           skip the slow checks (two-tab matches, traces, the production build): a couple of minutes
 //   node port/tools/regress.mjs --full           also the weapons against the original (weapon-trace, 10-30 min)
 //   node port/tools/regress.mjs --approve        re-record the approved screenshots
 //   node port/tools/regress.mjs --live           use the running dev server (8092) and test server (8091)
@@ -16,6 +16,10 @@
 // all password rage2005) and its own dev server (another free port) talking to it, so every run
 // starts from the same state and never touches 8091 or 8090. Both are stopped at the
 // end.
+//
+// The game server runs the hosted configuration (docker-compose.yml): IRC_REQUIRE_SESSION=1
+// and MAP_REQUIRE_SESSION=1, so every lobby and garage check also checks the client sends
+// its session where the original sent none (gameFixes.ircAuth, gameFixes.mapSession).
 //
 // The lobby check uses its own account (regress@home.lan, robot "Regress", created on
 // first run as a copy of Crusher) so it never collides with someone playing on the
@@ -106,16 +110,77 @@ const SAVE_ROBOT = `(async () => { const L = await import('/src/lingo/index.ts')
     proplist: L.lingoString(g.gUserData.getaProp(sym('propertyList'))), economy: '1' });
   window.__saved = await (await fetch('/api/main.asp', { method: 'POST', body })).text(); return 1; })()`;
 
+/** Records the page's paint map saves (setrobotmap) in window.__maps: whether each carried a session, the map (Latin-1, as sent) and the reply. */
+const MAP_SAVES = `(() => { window.__maps = []; const f = window.fetch; window.fetch = async (url, init) => { const r = await f(url, init);
+  const body = typeof init?.body === 'string' ? init.body : '';
+  const field = (k) => (body.match(new RegExp('(?:^|&)' + k + '=([^&]*)'))?.[1] ?? '').replace(/\\+/g, ' ').replace(/%([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  if (/(^|&)action=setrobotmap/i.test(body)) window.__maps.push({ session: /(^|&)sessionid=[^&]/i.test(body), map: field('map'), reply: await r.clone().text() });
+  return r; }; return 1; })()`;
+/** The paint map the server holds for the page's robot (getrobotmap), read byte for byte, into window.__stored. */
+const STORED_MAP = `(async () => { const g = p.globals; const body = new URLSearchParams({ action: 'getrobotmap', sessionid: String(g.gLobby.getaProp(sym('session'))), robotid: String(g.gGameGlobals.getaProp(sym('userID'))) });
+  const buf = new Uint8Array(await (await fetch('/api/main.asp', { method: 'POST', body })).arrayBuffer());
+  let s = ''; for (let i = 0; i < buf.length; i += 8192) s += String.fromCharCode(...buf.subarray(i, i + 8192)); window.__stored = s; return 1; })()`;
+
 /** Each check: a command, or a flow of steps in a fresh browser context. */
+/**
+ * The spear gun mounted at the front or back (arenaFixes.spearForward, docs/port-issues.md
+ * #53): its spear flies forward (Training's robot starts facing -z), head first. The
+ * head is the wide end of the spear model, at its -z; the original flew it along +z.
+ */
+function spearHeadFirst(pos) {
+  return {
+    name: `spear-head-first-${pos === 'f' ? 'front' : 'back'}`,
+    url: `/index.html?layout=original&parts=r1,h2,ma1,b1,v24&pos=${pos}&pansar=50&name=Crusher`,
+    steps: [
+      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      [
+        'eval',
+        `window.__spear = () => {
+          const s = p.sprites.find((s) => s.scriptInstanceList.some((b) => b.constructor.name === 'SpearBehavior'));
+          const o = s?.scriptInstanceList.find((b) => b.constructor.name === 'SpearBehavior').m?.obj;
+          if (!o) return null;
+          o.updateWorldMatrix(true, true);
+          let rPos = 0, rNeg = 0;
+          o.traverse((c) => {
+            const a = c.geometry?.attributes?.position;
+            for (let i = 0; a && i < a.count; i++) {
+              const r = Math.hypot(a.getX(i), a.getY(i));
+              if (a.getZ(i) > 0) rPos = Math.max(rPos, r); else rNeg = Math.max(rNeg, r);
+            }
+          });
+          const e = o.matrixWorld.elements, n = Math.hypot(e[8], e[9], e[10]), k = rPos > rNeg ? 1 : -1;
+          return { pos: [e[12], e[13], e[14]], head: [e[8], e[9], e[10]].map((v) => (k * v) / n) };
+        }`,
+      ],
+      ['hold', 'z', 150],
+      [
+        'expect',
+        'the spear flies forward, head first',
+        `(() => {
+          const s = window.__spear();
+          if (!s) return false;
+          if (!window.__s0) return (window.__s0 = s), false;
+          const d = s.pos.map((v, i) => v - window.__s0.pos[i]), n = Math.hypot(...d);
+          return n > 1 && d[2] / n < -0.9 && d.reduce((a, v, i) => a + (v / n) * s.head[i], 0) > 0.9;
+        })()`,
+        3000,
+      ],
+    ],
+  };
+}
+
 const CHECKS = [
   { name: 'typecheck', cmd: ['npx', 'tsc', '--noEmit'], cwd: 'port/web' },
   { name: 'lingo-unit', cmd: ['npx', 'tsx', 'src/lingo/test.ts'], cwd: 'port/web' },
   { name: 'runtime-unit', cmd: ['node', 'port/tools/unit-tests.mjs', APP] },
-  { name: 'multiuser', cmd: ['npx', 'tsx', '../tools/multiuser-test.mts', String(SERVER_PORT)], cwd: 'port/web' },
+  // On the fixture, as the seed's Lobbyist with its session (the server requires one).
+  { name: 'multiuser', cmd: ['npx', 'tsx', '../tools/multiuser-test.mts', String(SERVER_PORT), ...(live ? [] : ['lobbytest@home.lan', 'rage2005', 'Lobbyist'])], cwd: 'port/web' },
   // Direct (WebRTC) connections: the switch and a fall back mid-stream lose and reorder nothing; ?p2p=relay, ?p2p=fail.
   { name: 'multiuser-p2p', cmd: ['node', 'port/tools/p2p-test.mjs', APP] },
   { name: 'physics-trace', cmd: ['node', 'port/tools/physics-trace.mjs', String(SERVER_PORT), APP], slow: true },
   { name: 'check3d', cmd: ['node', 'port/tools/check3d.mjs', APP], slow: true },
+  // The production build served by the game server alone (APP_DIR, no Vite): loader to Training, compression, caching (~30 s).
+  { name: 'prod-build', cmd: ['node', 'port/tools/prod-test.mjs'], slow: true },
   // The arena's weapons against the original in dirplayer, tick by tick (11 scenarios, ~12 min).
   { name: 'weapon-trace', cmd: ['node', 'port/tools/weapon-trace.mjs', `--server=${SERVER_PORT}`, `--app=${APP}`], slow: true, full: true, timeout: 2400000 },
   {
@@ -315,6 +380,45 @@ const CHECKS = [
     ],
   },
   {
+    // Paint map saves carry the session (gameFixes.mapSession, docs/port-issues.md #57):
+    // the fixture refuses session-less ones (MAP_REQUIRE_SESSION=1). Entering the
+    // paintshop marks the map to be saved; the TRAINING door saves the robot, then the
+    // map (setrobotmap, watched in the page's fetch). With ?quirks=mapsession the map
+    // goes without the session and is refused.
+    name: 'garage-map-session',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['eval', MAP_SAVES],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['click', 175, 15],
+      ['expect', 'paintshop opens and marks the map to be saved', `p.frameLabel === 'paint' && p.globals.gUserData.getaProp(sym('propertyList')).getaProp(sym('saveMap')) === 1`, 3000],
+      ['wait', 1500],
+      ['click', 60, 15],
+      ['expect', 'back in the workshop', `p.frameLabel === 'build'`, 4000],
+      ['wait', 1500],
+      ['click', 731, 501],
+      ['expect', 'the TRAINING door saves the map with the session, and the server takes it', `p.movie?.name === 'arena104' && window.__maps.length === 1 && window.__maps[0].session && /#err: 0/.test(window.__maps[0].reply)`, 20000],
+      // The game's forms and replies are Latin-1 (server/index.mjs): the map's bytes above 127 come back as sent.
+      ['eval', STORED_MAP],
+      ['expect', 'the server holds the map byte for byte as sent (bytes above 127 too)', `window.__stored.length > 0 && window.__stored === window.__maps[0].map && /[\\x80-\\xff]/.test(window.__stored)`, 3000],
+      ['tab', 'nosession', '/game.html?quirks=mapsession'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['eval', MAP_SAVES],
+      ['wait', 500],
+      ...TO_GARAGE,
+      ['click', 175, 15],
+      ['expect', 'paintshop opens', `p.frameLabel === 'paint'`, 3000],
+      ['wait', 1500],
+      ['click', 60, 15],
+      ['expect', 'back in the workshop', `p.frameLabel === 'build'`, 4000],
+      ['wait', 1500],
+      ['click', 731, 501],
+      ['expect', 'with ?quirks=mapsession the map goes without the session, and the server refuses it', `p.movie?.name === 'arena104' && window.__maps.length === 1 && !window.__maps[0].session && /#err: -1/.test(window.__maps[0].reply)`, 20000],
+    ],
+  },
+  {
     name: 'garage-tabs-doors',
     url: '/game.html',
     steps: [
@@ -344,7 +448,22 @@ const CHECKS = [
     name: 'lobby-entry',
     url: '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress',
     setup: ensureRegressAccount,
-    steps: [['expect', 'lobby reached the country list', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000], ['wait', 1000], ['shot', 'lobby-countries']],
+    steps: [
+      ['expect', 'lobby reached the country list', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1000],
+      ['shot', 'lobby-countries'],
+      // docs/port-issues.md #57 (gameFixes.ircAuth): the server let the nick in (IRC_REQUIRE_SESSION=1) with the login session as PASS.
+      ['expect', 'the lobby registered with its session as the IRC password', `String(p.globals.gIRC.pIRCUserPassword) === String(p.globals.gLobby.getaProp(sym('session'))) && p.globals.gIRC.pIRCUserPassword.length > 0`, 1000],
+      // gameFixes.robotReply: an error reply to the lobby's getrobotall for its own robot (#err -1, robot 0) leaves it waiting, stats unchanged, no script error.
+      ['eval', `(async () => { const d = await import('/src/director/index.ts'); const L = await import('/src/lingo/index.ts'); window.__L = L;
+        const fs = p.frameScript; window.__stats = L.lingoString(p.globals.gUserData.getaProp(sym('GameStats')));
+        const info = new L.LPropList(); info.addProp(sym('action'), 'getrobotall'); info.addProp(sym('robotid'), 0);
+        fs.netId = d.postNetText(L.lingoString(p.globals.gUrl) + 'main.asp', info); fs.pState = sym('waitmyData'); return 1; })()`],
+      ['expect', "an error reply to the lobby's own getrobotall leaves it waiting, stats unchanged", `String(p.frameScript.pState) === '#waiting' && window.__L.lingoString(p.globals.gUserData.getaProp(sym('GameStats'))) === window.__stats`, 5000],
+      // With the original's empty PASS (?quirks=ircauth) the server refuses the nick; the lobby tries again.
+      ['tab', 'nopass', '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress&quirks=ircauth'],
+      ['expect', 'with ?quirks=ircauth the nick is refused (Session required)', `p.movie.name === 'lobby060_' && /Session required/.test(p.globals.gIRC?.pLog ?? '')`, 20000],
+    ],
   },
   {
     // Training restarts after a crash (docs/port-issues.md #7): the robot tips into the
@@ -360,6 +479,7 @@ const CHECKS = [
       ['expect', 'the robot is ready to drive again', `p.frame === 20 && String(p.sprite(10).getProp('state')) === '#move'`, 15000],
     ],
   },
+  ...['f', 'b'].map(spearHeadFirst),
   {
     // The paintshop's grid button with no chassis (#40): it used to fail before toggling.
     name: 'garage-grid-nochassis',
@@ -462,8 +582,15 @@ const ADMIN_TOKEN = live ? process.env.ADMIN_TOKEN ?? '' : `regress-${process.pi
 
 /** main.asp on the game server itself (not through the dev server's proxy): the admin grant answers only local, direct requests. */
 async function gameAsp(fields) {
-  const r = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/main.asp`, { method: 'POST', body: new URLSearchParams(fields) });
-  return r.text();
+  return latin1Post(`http://127.0.0.1:${SERVER_PORT}/api/main.asp`, fields);
+}
+
+/** A form post and its reply in Latin-1, as the game sends and reads them (paint maps have bytes above 127). */
+async function latin1Post(url, fields) {
+  const enc = (v) => String(v).replace(/[^A-Za-z0-9*._-]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+  const body = Object.entries(fields).map(([k, v]) => `${enc(k)}=${enc(v)}`).join('&');
+  const r = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  return Buffer.from(await r.arrayBuffer()).toString('latin1');
 }
 
 let crusherSaved;
@@ -484,8 +611,7 @@ async function restoreCrusher() {
 }
 
 async function mainAsp(fields) {
-  const r = await fetch(`${APP}/api/main.asp`, { method: 'POST', body: new URLSearchParams(fields) });
-  return r.text();
+  return latin1Post(`${APP}/api/main.asp`, fields);
 }
 
 /** The value of `#key: ...` in a Lingo property list literal (balanced brackets, quotes skipped). */
@@ -890,7 +1016,8 @@ async function startFixture() {
   copyFileSync(join(ROOT, 'public/index.html'), join(dir, 'public/index.html'));
   // ICE_SERVERS empty: direct matches between the suite's tabs use host candidates, no outside STUN server.
   // ADMIN_TOKEN: the admin grant, for checks that need credits (garage-super-credits).
-  const env = { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(dir, 'data'), PUBLIC_DIR: join(dir, 'public'), ICE_SERVERS: '', ADMIN_TOKEN };
+  // IRC_REQUIRE_SESSION, MAP_REQUIRE_SESSION: as hosted (docker-compose.yml), so the lobby and garage checks run that way.
+  const env = { ...process.env, PORT: String(SERVER_PORT), DATA_DIR: join(dir, 'data'), PUBLIC_DIR: join(dir, 'public'), ICE_SERVERS: '', ADMIN_TOKEN, IRC_REQUIRE_SESSION: '1', MAP_REQUIRE_SESSION: '1' };
   children.push(spawn('node', ['server/index.mjs'], { cwd: ROOT, env, stdio: 'ignore' }));
   await waitFor(`http://127.0.0.1:${SERVER_PORT}/game/main.ini`);
   children.push(

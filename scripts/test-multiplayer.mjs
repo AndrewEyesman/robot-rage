@@ -1,10 +1,15 @@
 // End-to-end check of the lobby (IRC) and match relay, driving two players
 // the way the game does: registration, room list, opponent lookup, challenge,
-// P2P handshake, arena traffic, disconnects and the score report.
+// P2P handshake, arena traffic, disconnects and the score report; then the
+// hardening for a public server: robot data checks, kicks and bans, the lobby's
+// identity (a session as IRC PASS), (on a second server with low limits, behind a
+// pretend proxy) every limit and session expiry, and (on a third, hosted as
+// docker-compose.yml: IRC_REQUIRE_SESSION=1, MAP_REQUIRE_SESSION=1) the sessions those
+// require.
 //
 //   node scripts/test-multiplayer.mjs
 //
-// Starts its own server on a free port with a throwaway DATA_DIR.
+// Starts its own servers on free ports with throwaway DATA_DIRs.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -14,6 +19,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { buildMessage, parseEnvelope } from "../server/relay.mjs";
+import { parseLingo } from "../server/lingo.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PORT = 18000 + Math.floor(Math.random() * 1000);
@@ -34,9 +40,9 @@ async function waitFor(check, what, timeout = 2000) {
   }
 }
 
-function startServer(dataDir) {
+function startServer(dataDir, port = PORT, env = {}) {
   const child = spawn(process.execPath, [join(ROOT, "server/index.mjs")], {
-    env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, ICE_SERVERS: "stun:stun.test.invalid:3478, stun:other.test.invalid", ADMIN_TOKEN },
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ICE_SERVERS: "stun:stun.test.invalid:3478, stun:other.test.invalid", ADMIN_TOKEN, ...env },
     stdio: ["ignore", "pipe", "inherit"],
   });
   let output = "";
@@ -44,12 +50,18 @@ function startServer(dataDir) {
     output += chunk;
     if (process.env.VERBOSE) process.stdout.write(chunk);
   });
-  return { child, ready: waitFor(() => output.includes("Robot Rage server on"), "server start", 5000) };
+  return { child, output: () => output, ready: waitFor(() => output.includes("Robot Rage server on"), "server start", 5000) };
 }
 
-async function mainAsp(fields) {
-  const res = await fetch(`${HTTP}/api/main.asp`, { method: "POST", body: new URLSearchParams(fields) });
-  return res.text();
+// Forms and replies in Latin-1, as the game sends and reads them (a character per byte).
+const latin1Form = (fields) =>
+  Object.entries(fields)
+    .map((pair) => pair.map((v) => String(v).replace(/[^A-Za-z0-9*._-]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"))).join("="))
+    .join("&");
+
+async function mainAsp(fields, http = HTTP) {
+  const res = await fetch(`${http}/api/main.asp`, { method: "POST", body: latin1Form(fields), headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+  return Buffer.from(await res.arrayBuffer()).toString("latin1");
 }
 
 const prop = (text, name) => text.match(new RegExp(`#${name}: ("[^"]*"|-?\\d+)`))?.[1]?.replace(/"/g, "");
@@ -65,9 +77,9 @@ function open(url) {
 // One lobby connection, written like the game's IRC object: lines end in
 // LF CR, replies are matched on the words the game reads.
 class Irc {
-  static async connect(addr) {
+  static async connect(addr, ws = WS) {
     const irc = new Irc();
-    irc.ws = await open(`${WS}/ws/irc?addr=${addr}`);
+    irc.ws = await open(`${ws}/ws/irc?addr=${addr}`);
     irc.lines = [];
     irc.closed = false;
     irc.ws.on("message", (data) => irc.lines.push(...String(data).split(/\r?\n/).filter(Boolean)));
@@ -79,8 +91,9 @@ class Irc {
     this.ws.send(`${line}\n\r`);
   }
 
-  async login(nick) {
-    this.send("PASS ");
+  // `pass`: the original sends an empty PASS, the port's lobby its session (gameFixes.ircAuth).
+  async login(nick, pass = "") {
+    this.send(`PASS ${pass}`);
     this.send(`NICK ${nick}`);
     this.send(`USER Shockplay 0 * ${nick}`);
     await this.expect((w) => w[1] === "376", "376");
@@ -165,6 +178,7 @@ async function step(name, fn) {
 
 const dataDir = mkdtempSync(join(tmpdir(), "robotrage-test-"));
 const server = startServer(dataDir);
+let server2, server3;
 
 try {
   await server.ready;
@@ -593,13 +607,411 @@ try {
     assert.equal(prop(await res.text(), "err"), "0");
   });
 
+  // ---------------------------------------------------------------- robot data
+  await step("robot data: unparsable, oversized, unexpected or mistyped robot data is refused", async () => {
+    const reply = (await stored(a)).text;
+    const [, , start, end] = parseLingo(reply).entry("propertyList");
+    const before = reply.slice(start, end);
+    const send = (proplist) => mainAsp({ action: "setrobot", sessionid: a.sid, robotid: a.robotid, proplist, economy: 1 });
+    const bad = {
+      unparsable: before.slice(0, -1),
+      "a string": '"[#robotDescription: []]"',
+      "a plain list": "[1, 2, 3]",
+      "an unexpected property": before.replace("#space:", '#note: "hi", #space:'),
+      "a mistyped property": before.replace(/#space: \d+/, '#space: "100"'),
+      "a non-part inventory": before.replace("#inventory: []", "#inventory: [1, 2]"),
+      "a property twice": before.replace("#space:", "#money: 99999, #space:"),
+      "an unexpected slot": before.replace("#special: []", "#special: [], #extra: []"),
+      "too large": before.replace("#soldweapons: []", `#soldweapons: [${Array(3000).fill("#v7").join(", ")}]`),
+      "nested too deep": `[#robotDescription: [#ram: ${"[".repeat(5000)}${"]".repeat(5000)}]]`,
+    };
+    for (const [what, text] of Object.entries(bad)) {
+      assert.notEqual(text, before, what);
+      assert.equal(prop(await send(text), "err"), "-1", what);
+    }
+    assert.equal((await stored(a)).text, reply, "refused saves change nothing");
+    assert.equal(prop(await send(before), "err"), "0", "the stored data itself passes");
+  });
+
+  await step("robot data: bad robot names and paint maps are refused; the garage's session-less map save works", async () => {
+    for (const robotname of ['Quote"Bot', "[Bracket]", "x".repeat(25), "Tab\tBot"]) {
+      assert.equal(prop(await mainAsp({ action: "createrobot", sessionid: b.sid, robotname }), "err"), "-1", robotname);
+    }
+    const map = (m, extra = {}) => mainAsp({ action: "setrobotmap", robotid: a.robotid, robotname: a.robotname, map: m, ...extra });
+    assert.equal(prop(await map("**\u0001**", { sessionid: a.sid }), "err"), "-1", "a control character");
+    assert.equal(prop(await map("**\t**\t**", { sessionid: a.sid }), "err"), "-1", "three maps");
+    assert.equal(prop(await map("*".repeat(300 * 1024), { sessionid: a.sid }), "err"), "-1", "too large");
+    // The garage's own save: no session, right after the owner's setrobot from the same address.
+    // Bytes above 127 are one character each (Latin-1), both ways.
+    const painted = "(*\u00ff*+,\u00e9\t(+P";
+    assert.equal(prop(await map(painted), "err"), "0");
+    assert.equal(await mainAsp({ action: "getrobotmap", sessionid: a.sid, robotid: a.robotid }), painted);
+    // The port's save (gameFixes.mapSession): with the session.
+    assert.equal(prop(await map(`${painted}*`, { sessionid: a.sid }), "err"), "0");
+    assert.equal(await mainAsp({ action: "getrobotmap", sessionid: a.sid, robotid: a.robotid }), `${painted}*`);
+    assert.equal(prop(await map("****", { sessionid: b.sid }), "err"), "-1", "another member's session");
+    // The garage's unused Spara (setrobotmapNew) takes the same.
+    assert.equal(prop(await mainAsp({ action: "setrobotmapNew", sessionID: a.sid, robotid: a.robotid, robotname: a.robotname, map: painted }), "err"), "0");
+  });
+
+  // ---------------------------------------------------------------- lobby identity
+  await step("lobby identity: a nick with its owner's session is taken, another member's session is refused, an empty PASS is taken", async () => {
+    const own = await Irc.connect("10.3.3.1");
+    await own.login("_R0Crusher0000", a.sid);
+    own.ws.close();
+    const other = await Irc.connect("10.3.3.2");
+    other.send(`PASS ${b.sid}`);
+    other.send("NICK _R0Crusher0000");
+    await waitFor(() => other.closed, "a session that doesn't own the robot refused");
+    assert.ok(other.lines.some((l) => /^ERROR .*Not your robot/.test(l)), other.lines.join("\n"));
+    const unknown = await Irc.connect("10.3.3.3");
+    unknown.send(`PASS ${b.sid}`);
+    unknown.send("NICK _R0Nobody_20Here0000");
+    await waitFor(() => unknown.closed, "a session naming a robot that doesn't exist refused");
+    // The original's empty PASS, and "nopwd", aren't sessions: taken without IRC_REQUIRE_SESSION.
+    const old = await Irc.connect("10.3.3.4");
+    await old.login("_R0Smasher0000");
+    old.ws.close();
+    const nopwd = await Irc.connect("10.3.3.5");
+    await nopwd.login("_R0Oldclient0000", "nopwd");
+    nopwd.ws.close();
+  });
+
+  // ---------------------------------------------------------------- moderation
+  const admin = (fields) => mainAsp({ token: ADMIN_TOKEN, ...fields });
+  const moderate = (args, env = { ADMIN_TOKEN }) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(ROOT, "scripts/moderate.mjs"), ...args], { env: { ...process.env, ...env } });
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => resolve({ code, out }));
+    });
+  const rowdy = { email: "rowdy@test", robotname: "Rowdy Bot", nick: "_R0Rowdy_20Bot4F2A", addr: "10.7.7.7" };
+
+  await step("moderation: a kick ends the player's sessions and closes its lobby and match sockets", async () => {
+    rowdy.sid = prop(await mainAsp({ action: "createmember", membername: rowdy.email, password: "pw" }), "sid");
+    assert.equal(prop(await mainAsp({ action: "createrobot", sessionid: rowdy.sid, robotname: rowdy.robotname }), "err"), "0");
+    const irc = await Irc.connect(rowdy.addr);
+    await irc.login(rowdy.nick);
+    const host = await Peer.listen(rowdy.addr, rowdy.robotname);
+    assert.equal(prop(await mainAsp({ action: "adminkick", who: rowdy.email }), "err"), "-1", "no token, no kick");
+    const kicked = await admin({ action: "adminkick", who: rowdy.robotname });
+    assert.equal(prop(kicked, "err"), "0");
+    assert.equal(prop(kicked, "sockets"), "2");
+    assert.equal(prop(kicked, "sessions"), "1");
+    await waitFor(() => irc.closed && host.closed, "the kicked player's sockets closing");
+    assert.ok(irc.lines.some((l) => l.startsWith("ERROR")), "the lobby says why");
+    assert.equal(prop(await mainAsp({ action: "getmyrobots", sessionid: rowdy.sid }), "err"), "18", "logged out");
+  });
+
+  await step("moderation: a banned account can't log in, join the lobby or listen for a match; unbanned, it can", async () => {
+    const sid = prop(await mainAsp({ action: "loginmember", membername: rowdy.email, password: "pw" }), "sid");
+    const banned = await moderate(["ban", rowdy.email, "--days", "2", "--reason", "spamming the lobby", "--url", HTTP]);
+    assert.equal(banned.code, 0, banned.out);
+    assert.equal(prop(await mainAsp({ action: "loginmember", membername: rowdy.email, password: "pw" }), "err"), "-1");
+    assert.equal(prop(await mainAsp({ action: "getmyrobots", sessionid: sid }), "err"), "18", "its session ended");
+    const irc = await Irc.connect(rowdy.addr);
+    irc.send(`NICK ${rowdy.nick}`);
+    await waitFor(() => irc.closed, "the banned nick refused");
+    const host = await Peer.listen(rowdy.addr, rowdy.robotname);
+    await waitFor(() => host.closed, "the banned robot's listener closed");
+    const list = await moderate(["list", "--url", HTTP]);
+    assert.match(list.out, /account rowdy@test .*until .*spamming the lobby/);
+    assert.notEqual((await moderate(["list", "--url", HTTP], { ADMIN_TOKEN: "" })).code, 0, "no token, no list");
+    const unbanned = await moderate(["unban", rowdy.robotname, "--url", HTTP]);
+    assert.equal(unbanned.code, 0, unbanned.out);
+    assert.equal(prop(await mainAsp({ action: "loginmember", membername: rowdy.email, password: "pw" }), "err"), "0");
+    const again = await Irc.connect(rowdy.addr);
+    await again.login(rowdy.nick);
+    again.ws.close();
+  });
+
+  await step("moderation: the tool offline, on a data file", async () => {
+    const file = join(dataDir, "moderate-test.json");
+    writeFileSync(file, JSON.stringify({
+      nextId: 50,
+      members: { "pest@test": { id: 7, name: "pest@test" } },
+      robots: { 8: { robotid: 8, memberId: 7, robotname: "Pest" } },
+      sessions: { s1: { memberId: 7, name: "pest@test", created: Date.now() }, s2: { memberId: 9, name: "other@test", created: Date.now() } },
+    }));
+    const ban = await moderate(["ban", "Pest", "--reason", "cheating", "--data", file]);
+    assert.equal(ban.code, 0, ban.out);
+    await sleep(400);
+    let db = JSON.parse(readFileSync(file, "utf8"));
+    assert.deepEqual(db.bans.map((x) => [x.account, x.reason, x.expires]), [["pest@test", "cheating", undefined]]);
+    assert.deepEqual(Object.keys(db.sessions), ["s2"]);
+    assert.equal((await moderate(["ban", "ip:192.0.2.7", "--days", "1", "--data", file])).code, 0);
+    assert.match((await moderate(["list", "--data", file])).out, /account pest@test .*for good.*\n.*address 192\.0\.2\.7 .*until/);
+    const id = JSON.parse(readFileSync(file, "utf8")).bans[0].id;
+    assert.equal((await moderate(["unban", "--id", String(id), "--data", file])).code, 0);
+    await sleep(400);
+    db = JSON.parse(readFileSync(file, "utf8"));
+    assert.deepEqual(db.bans.map((x) => x.address), ["192.0.2.7"]);
+    assert.notEqual((await moderate(["kick", "nobody@test", "--data", file])).code, 0);
+  });
+
+  await step("logs: no passwords or session ids", async () => {
+    const logged = server.output();
+    assert.ok(!/"pw"|password: "?pw|=pw\b/.test(logged), "no password in the log");
+    for (const who of [a, b]) assert.ok(!logged.includes(who.sid), "no session id in the log");
+    assert.match(logged, /main\.asp loginmember \(127\.0\.0\.1\) -> \[#err: 0, #id: \d+, #sid: "<redacted>"\]/);
+  });
+
   ircB.ws.close();
   hostA.ws.close();
+
+  // ---------------------------------------------------------------- limits
+  // A second server behind a pretend proxy (TRUST_PROXY=xff: each test claims its own
+  // address), with every limit set low.
+  const PORT2 = PORT + 1000;
+  const HTTP2 = `http://127.0.0.1:${PORT2}`;
+  const WS2 = `ws://127.0.0.1:${PORT2}`;
+  const dataDir2 = join(dataDir, "limits");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(dataDir2);
+  const now = Date.now();
+  writeFileSync(join(dataDir2, "db.json"), JSON.stringify({
+    nextId: 5000, members: {}, robots: {},
+    sessions: { stale: { memberId: 1, name: "gone@test", created: 0 }, fresh: { memberId: 1, name: "gone@test", created: now } },
+    matches: { 1: { id: "1", last: now - 30 * 24 * 3600e3, closed: true }, 2: { id: "2", last: now } },
+    bans: [{ id: 1, address: "192.0.2.1", created: 0, expires: 1 }],
+  }));
+  server2 = startServer(dataDir2, PORT2, {
+    TRUST_PROXY: "xff",
+    LOGIN_FAILS_PER_ACCOUNT: "3", LOGIN_FAILS_PER_ADDRESS: "5", LOGIN_LOCK_MIN: "0.02",
+    ACCOUNTS_PER_DAY: "2", API_PER_MIN: "40",
+    WS_PER_ADDRESS: "3", WS_NEW_PER_MIN: "6", WS_MAX_PAYLOAD_KB: "8", WS_PING_SEC: "0.5",
+    IRC_LINES_PER_10S: "30", IRC_CHAT_PER_10S: "3", IRC_MAX_LINE: "300", IRC_REGISTER_SEC: "1",
+    RELAY_MSGS_PER_SEC: "20", RELAY_PEERS_PER_HOST: "2",
+    SESSION_DAYS: String(2.5 / 86400), // 2.5 s
+  });
+  await server2.ready;
+  const asp = async (fields, from) => {
+    const headers = from ? { "X-Forwarded-For": `198.51.100.1, ${from}` } : {};
+    const res = await fetch(`${HTTP2}/api/main.asp`, { method: "POST", body: new URLSearchParams(fields), headers });
+    const text = await res.text();
+    return { status: res.status, text, err: res.status === 200 ? prop(text, "err") : undefined };
+  };
+  const ws2 = (path, from, options = {}) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${WS2}${path}`, { headers: { "X-Forwarded-For": from }, ...options });
+      ws.closed = false;
+      ws.lines = [];
+      ws.on("message", (data) => ws.lines.push(...String(data).split(/\r?\n/).filter(Boolean)));
+      ws.on("close", (code) => Object.assign(ws, { closed: true, code }));
+      ws.once("open", () => resolve(ws));
+      ws.once("unexpected-response", (req, res) => reject(new Error(`HTTP ${res.statusCode}`)));
+      ws.once("error", reject);
+    });
+  const ircLogin = async (ws, nick) => {
+    for (const line of ["PASS ", `NICK ${nick}`, `USER Shockplay 0 * ${nick}`]) ws.send(`${line}\n\r`);
+    await waitFor(() => ws.lines.some((l) => l.split(" ")[1] === "376"), "376");
+  };
+
+  await step("startup prunes expired sessions and bans and long-finished matches", async () => {
+    await sleep(400);
+    const db = JSON.parse(readFileSync(join(dataDir2, "db.json"), "utf8"));
+    assert.deepEqual(Object.keys(db.sessions), ["fresh"]);
+    assert.deepEqual(Object.keys(db.matches), ["2"]);
+    assert.deepEqual(db.bans, []);
+  });
+
+  await step("sessions expire when unused and each use refreshes them", async () => {
+    const { text } = await asp({ action: "createmember", membername: "idle@test", password: "pw" }, "10.0.0.1");
+    const sid = prop(text, "sid");
+    for (let i = 0; i < 7; i++) {
+      assert.equal((await asp({ action: "getmyrobots", sessionid: sid }, "10.0.0.1")).err, "0", `use ${i}`);
+      await sleep(500);
+    }
+    await sleep(3000);
+    assert.equal((await asp({ action: "getmyrobots", sessionid: sid }, "10.0.0.1")).err, "18");
+  });
+
+  await step("limits: failed logins lock the account name, growing; the right password works after", async () => {
+    assert.equal((await asp({ action: "createmember", membername: "lock@test", password: "right" }, "10.0.1.1")).err, "0");
+    for (let i = 2; i <= 4; i++) assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "wrong" }, `10.0.1.${i}`)).err, "-1");
+    const locked = await asp({ action: "loginmember", membername: "LOCK@test", password: "right" }, "10.0.1.5");
+    assert.equal(locked.status, 429, "locked, from any address and in any case");
+    await sleep(1300);
+    // Unlocked after 1.2 s; three more failures lock it for twice as long.
+    for (let i = 2; i <= 4; i++) assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "wrong" }, `10.0.1.${i}`)).err, "-1");
+    await sleep(1300);
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.1.5")).status, 429, "the second lockout is longer");
+    await sleep(1300);
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.1.5")).err, "0");
+    // Locked again by a stranger: its owner still gets in from where it logged in before.
+    for (let i = 2; i <= 4; i++) assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "wrong" }, `10.0.1.${i}`)).err, "-1");
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.1.6")).status, 429);
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.1.5")).err, "0");
+  });
+
+  await step("limits: failed logins lock the address", async () => {
+    for (let i = 0; i < 5; i++) assert.equal((await asp({ action: "loginmember", membername: `nobody${i}@test`, password: "x" }, "10.0.2.1")).err, "-1");
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.2.1")).status, 429);
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.2.2")).err, "0", "other addresses aren't");
+  });
+
+  await step("limits: accounts per address per day", async () => {
+    assert.equal((await asp({ action: "createmember", membername: "n1@test", password: "pw" }, "10.0.3.1")).err, "0");
+    assert.equal((await asp({ action: "createmember", membername: "n2@test", password: "pw" }, "10.0.3.1")).err, "0");
+    assert.equal((await asp({ action: "createmember", membername: "n1@test", password: "pw" }, "10.0.3.1")).err, "-103", "a taken name still says so");
+    assert.equal((await asp({ action: "createmember", membername: "n3@test", password: "pw" }, "10.0.3.1")).status, 429);
+    assert.equal((await asp({ action: "createmember", membername: "n3@test", password: "pw" }, "10.0.3.2")).err, "0");
+  });
+
+  await step("limits: main.asp requests per address per minute", async () => {
+    for (let i = 0; i < 40; i++) assert.equal((await asp({ action: "PingPayMember" }, "10.0.4.1")).status, 200, `request ${i}`);
+    assert.equal((await asp({ action: "PingPayMember" }, "10.0.4.1")).status, 429);
+    assert.equal((await asp({ action: "PingPayMember" }, "10.0.4.2")).status, 200);
+  });
+
+  await step("limits: a session-less paint map save from another address than the owner's is refused", async () => {
+    const sid = prop((await asp({ action: "createmember", membername: "painter@test", password: "pw" }, "10.0.5.1")).text, "sid");
+    const robotid = prop((await asp({ action: "createrobot", sessionid: sid, robotname: "Painter" }, "10.0.5.1")).text, "robotid");
+    const map = { action: "setrobotmap", robotid, robotname: "Painter", map: "****" };
+    assert.equal((await asp(map, "10.0.5.2")).err, "-1");
+    assert.equal((await asp(map, "10.0.5.1")).err, "0");
+  });
+
+  await step("bans by address: no login and no sockets from it", async () => {
+    const ban = await asp({ action: "adminban", who: "ip:10.0.6.1", reason: "test", token: ADMIN_TOKEN });
+    assert.equal(ban.err, "0", ban.text);
+    assert.equal((await asp({ action: "adminban", who: "ip:10.0.6.9", token: ADMIN_TOKEN }, "10.0.6.9")).err, "-1", "admin only unproxied");
+    assert.equal((await asp({ action: "loginmember", membername: "lock@test", password: "right" }, "10.0.6.1")).err, "-1");
+    await assert.rejects(ws2("/ws/irc?addr=1.1.1.1", "10.0.6.1"), /403/);
+    (await ws2("/ws/irc?addr=1.1.1.1", "10.0.6.2")).close();
+    assert.match((await asp({ action: "adminbans", token: ADMIN_TOKEN })).text, /#address: "10\.0\.6\.1", #reason: "test"/);
+  });
+
+  await step("limits: WebSocket connections per address, new ones per minute", async () => {
+    const open3 = [];
+    for (let i = 0; i < 3; i++) open3.push(await ws2("/ws/irc?addr=1.1.1.1", "10.0.7.1"));
+    await assert.rejects(ws2("/ws/irc?addr=1.1.1.1", "10.0.7.1"), /429/);
+    (await ws2("/ws/irc?addr=1.1.1.1", "10.0.7.2")).close();
+    for (const ws of open3) ws.close();
+    for (let i = 0; i < 6; i++) {
+      const ws = await ws2("/ws/irc?addr=1.1.1.1", "10.0.8.1");
+      ws.close();
+      await waitFor(() => ws.closed, "closed");
+    }
+    await assert.rejects(ws2("/ws/irc?addr=1.1.1.1", "10.0.8.1"), /429/);
+  });
+
+  await step("limits: message size, the heartbeat, and the lobby's registration timeout", async () => {
+    const big = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.1");
+    big.send("x".repeat(9 * 1024));
+    await waitFor(() => big.closed, "an oversized message closing the socket");
+    assert.equal(big.code, 1009);
+    const dead = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.2", { autoPong: false });
+    const alive = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.3");
+    await ircLogin(alive, "_R0Alive4F2A");
+    await waitFor(() => dead.closed, "a socket that doesn't answer pings closing", 3000);
+    const silent = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.4");
+    await waitFor(() => silent.closed, "an unregistered lobby connection closing", 3000);
+    assert.ok(!alive.closed, "a live, registered connection stays");
+    alive.close();
+  });
+
+  await step("limits: lobby line length, flood and chat", async () => {
+    const long = await ws2("/ws/irc?addr=1.1.1.1", "10.0.10.1");
+    long.send(`PRIVMSG #room :${"x".repeat(400)}\n\r`);
+    await waitFor(() => long.closed, "a too-long line closing the connection");
+    assert.ok(long.lines.some((l) => /^ERROR .*Line too long/.test(l)));
+    const flood = await ws2("/ws/irc?addr=1.1.1.1", "10.0.10.2");
+    await ircLogin(flood, "_R0Flood4F2A");
+    flood.send("PING x\n\r".repeat(40));
+    await waitFor(() => flood.closed, "a flood closing the connection");
+    assert.ok(flood.lines.some((l) => /^ERROR .*Excess Flood/.test(l)));
+    const talker = await ws2("/ws/irc?addr=1.1.1.1", "10.0.10.3");
+    const listener = await ws2("/ws/irc?addr=1.1.1.1", "10.0.10.4");
+    await ircLogin(talker, "_R0Talker4F2A");
+    await ircLogin(listener, "_R0Listener4F2A");
+    for (const ws of [talker, listener]) ws.send("JOIN #rw1e\n\r");
+    await waitFor(() => talker.lines.some((l) => l.includes(" JOIN ") && l.includes("Listener")), "both in the room");
+    for (let i = 0; i < 8; i++) talker.send(`PRIVMSG #rw1e :hello ${i}\n\r`);
+    talker.send("PRIVMSG _R0Listener4F2A :SMUS_SendIP  \n\r");
+    await waitFor(() => listener.lines.some((l) => l.includes("SMUS_SendIP")), "the private message after the chat");
+    assert.equal(listener.lines.filter((l) => l.includes("PRIVMSG #rw1e")).length, 3, "chat beyond the limit is dropped");
+    assert.ok(!talker.closed, "but the talker stays");
+    talker.close();
+    listener.close();
+  });
+
+  await step("limits: relay frame size, message rate and peers per host", async () => {
+    const frame = (sender, subject, content = "") => buildMessage({ subject, sender, recipients: ["Host"], contentString: content });
+    const host = await ws2("/ws/p2p/listen?addr=10.9.0.1&user=Host", "10.0.11.1");
+    const guest = async (name, from) => {
+      const ws = await ws2("/ws/p2p/connect?addr=10.9.0.1", from);
+      ws.send(frame(name, "Logon", "x"));
+      return ws;
+    };
+    // A frame claiming 4 GB.
+    const liar = await guest("Liar", "10.0.11.2");
+    liar.send(Buffer.from([0x72, 0x00, 0xff, 0xff, 0xff, 0xff, 0, 0]));
+    await waitFor(() => liar.closed, "an oversized frame closing the socket");
+    assert.equal(liar.code, 1008);
+    // A match's traffic passes; a flood doesn't.
+    const fast = await guest("Fast", "10.0.11.3");
+    for (let i = 0; i < 30; i++) fast.send(frame("Fast", "pos", "1,2,3"));
+    await sleep(200);
+    assert.ok(!fast.closed, "30 messages at once pass (the burst is 2 s of the rate)");
+    for (let i = 0; i < 30; i++) fast.send(frame("Fast", "pos", "1,2,3"));
+    await waitFor(() => fast.closed, "a flood closing the socket");
+    // Two peers per host here; a third is turned away.
+    const p1 = await guest("One", "10.0.11.4");
+    const p2 = await guest("Two", "10.0.11.5");
+    const p3 = await guest("Three", "10.0.11.6");
+    await waitFor(() => p3.closed, "a third peer turned away");
+    assert.ok(!p1.closed && !p2.closed);
+    for (const ws of [host, p1, p2]) ws.close();
+  });
+
+  // ---------------------------------------------------------------- hosted
+  // A third server as docker-compose.yml runs it: the lobby and paint map saves need a session.
+  const PORT3 = PORT + 2000;
+  const HTTP3 = `http://127.0.0.1:${PORT3}`;
+  const dataDir3 = join(dataDir, "hosted");
+  mkdirSync(dataDir3);
+  server3 = startServer(dataDir3, PORT3, { IRC_REQUIRE_SESSION: "1", MAP_REQUIRE_SESSION: "1" });
+  await server3.ready;
+  const host = { email: "host@test", robotname: "Hosted" };
+  host.sid = prop(await mainAsp({ action: "createmember", membername: host.email, password: "pw" }, HTTP3), "sid");
+  host.robotid = prop(await mainAsp({ action: "createrobot", sessionid: host.sid, robotname: host.robotname }, HTTP3), "robotid");
+  const stranger = prop(await mainAsp({ action: "createmember", membername: "stranger@test", password: "pw" }, HTTP3), "sid");
+
+  await step("IRC_REQUIRE_SESSION: a nick with its owner's session is taken; an empty PASS, nopwd or another's session is refused", async () => {
+    const WS3 = `ws://127.0.0.1:${PORT3}`;
+    const own = await Irc.connect("10.4.4.1", WS3);
+    await own.login("_R0Hosted0000", host.sid);
+    own.ws.close();
+    for (const [pass, why] of [["", /Session required/], ["nopwd", /Session required/], ["0123456789abcdef01234567", /Session required/], [stranger, /Not your robot/]]) {
+      const irc = await Irc.connect("10.4.4.2", WS3);
+      irc.send(`PASS ${pass}`);
+      irc.send("NICK _R0Hosted0000");
+      irc.send("USER Shockplay 0 * _R0Hosted0000");
+      await waitFor(() => irc.closed, `PASS ${JSON.stringify(pass)} refused`);
+      assert.ok(irc.lines.some((l) => why.test(l)) && !irc.lines.some((l) => l.split(" ")[1] === "001"), `PASS ${JSON.stringify(pass)}: ${irc.lines.join(" | ")}`);
+    }
+  });
+
+  await step("MAP_REQUIRE_SESSION: paint map saves need the owner's session, even from its address", async () => {
+    const map = (extra = {}) => mainAsp({ action: "setrobotmap", robotid: host.robotid, robotname: host.robotname, map: "(*\u00ff*", ...extra }, HTTP3);
+    // The owner's session was just used from this address, which would do without the setting.
+    assert.equal(prop(await mainAsp({ action: "getmyrobots", sessionid: host.sid }, HTTP3), "err"), "0");
+    assert.equal(prop(await map(), "err"), "-1", "no session");
+    assert.equal(prop(await map({ sessionid: stranger }), "err"), "-1", "another member's session");
+    assert.equal(prop(await map({ sessionid: host.sid }), "err"), "0", "its owner's session");
+    assert.equal(await mainAsp({ action: "getrobotmap", sessionid: host.sid, robotid: host.robotid }, HTTP3), "(*\u00ff*");
+  });
+
   console.log(`\n${results.length} checks passed`);
 } catch (err) {
   console.error(`\nFAILED after ${results.length} checks:`, err);
   process.exitCode = 1;
 } finally {
   server.child.kill();
+  server2?.child.kill();
+  server3?.child.kill();
   rmSync(dataDir, { recursive: true, force: true });
 }

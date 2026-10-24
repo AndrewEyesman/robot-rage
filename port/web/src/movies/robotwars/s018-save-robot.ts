@@ -6,6 +6,7 @@ import { LPropList, TAB, duplicate, lingoString, sym, type LSymbol, type LValue 
 import { image2text } from './s007-jump-movie';
 import { RobotWarsReceive, RobotWarsSend, setMessage } from './s019-net-lingo';
 import { cleanSpace, md5, StringToCapital } from './s098-md5';
+import { gameFixes } from '../fixes';
 
 export class SaveRobot extends Behavior {
   state: LSymbol | undefined;
@@ -59,6 +60,9 @@ export class SaveRobot extends Behavior {
       infoList.addProp('map', txtdata);
       infoList.setaProp('robotid', dot(G.gGameGlobals, 'userID'));
       infoList.setaProp('robotname', dot(G.gGameGlobals, 'robotname'));
+      // Only the robot's id and name in the original; the port's fix (movies/fixes.ts,
+      // gameFixes.mapSession) adds the session, so the server needn't trust the address.
+      if (gameFixes.mapSession) infoList.setaProp('sessionid', dot(G.gLobby, 'session'));
       // A local here (no `global gStartSendTime`), so RobotWarsReceive's 20 s timeout
       // still counts from the last RobotWarsSend.
       const gStartSendTime: LValue = the.milliSeconds;

@@ -6,10 +6,15 @@
     <style>
       html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
       #stage { position: absolute; inset: 0; touch-action: none; user-select: none; }
+      /* In the black bars beside (or under) the 4:3 stage only: hidden when the window has none. */
+      #privacy { display: none; position: fixed; right: 8px; bottom: 6px; z-index: 1; font: 12px sans-serif; color: #555; text-decoration: none; }
+      #privacy:hover { color: #aaa; }
+      @media (min-aspect-ratio: 3/2), (max-aspect-ratio: 1/1) { #privacy { display: block; } }
     </style>
   </head>
   <body>
     <div id="stage"></div>
+    <a id="privacy" href="/privacy.html" target="_blank" rel="noopener">Privacy</a>
     <script type="module" src="/src/game.ts"></script>
   </body>
 </html>

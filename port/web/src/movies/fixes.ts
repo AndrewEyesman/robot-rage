@@ -35,6 +35,19 @@
 //   agree with the server.
 // - Match starts with a session (?quirks=results, like the arena's fix): the host's
 //   setrwgames carries its session, so the server knows the start is the host's own.
+// - The lobby's identity (?quirks=ircauth, #57): the lobby logged on to IRC with an
+//   empty PASS and a nick made from its robot's name, so anyone could take any robot's
+//   nick. It now sends its login session as PASS, which the server checks against the
+//   nick's robot (and requires with IRC_REQUIRE_SESSION=1, as hosted).
+// - Paint map saves with a session (?quirks=mapsession, #57): the garage's and lobby's
+//   setrobotmap carried only the robot's id and name, so the server had to trust the
+//   owner's address. It now carries the session too (MAP_REQUIRE_SESSION=1 needs it).
+// - Robot data error replies in the lobby (?quirks=robotreply, #57): the lobby read its
+//   getrobotall replies without checking #err. For its own robot that was a script error
+//   every frame (the reply stays done); an error reply now leaves the score and stats as
+//   they were and the lobby waiting, as after a good reply. For a clicked robot it
+//   showed a card of nothing; it now says the robot couldn't be loaded, as for a failed
+//   request.
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -52,6 +65,9 @@ export const gameFixes = {
   doorClose: !quirks.includes('doors'),
   economy: !quirks.includes('economy'),
   matchSession: !quirks.includes('results'),
+  ircAuth: !quirks.includes('ircauth'),
+  mapSession: !quirks.includes('mapsession'),
+  robotReply: !quirks.includes('robotreply'),
 };
 
 /**

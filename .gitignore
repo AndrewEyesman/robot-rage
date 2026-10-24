@@ -13,3 +13,7 @@ __pycache__/
 port/assets/
 port/extract/target/
 port/web/dist/
+# The Cloudflare tunnel token (deploy/tunnel.env.example).
+deploy/tunnel.env
+# docker compose settings (TRUST_PROXY, BIND, ...).
+.env

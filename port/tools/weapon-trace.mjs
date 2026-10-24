@@ -1,7 +1,7 @@
 // Check the port's weapons against the game's own Lingo, tick by tick.
 //
 //   node port/tools/weapon-trace.mjs [scenario ...] [--server=8091] [--app=http://127.0.0.1:8092] [--ticks=N]
-//        [--verbose] [--dump=/tmp/prefix] [--reuse=/tmp/prefix] [--eval-at=N --eval=js]
+//        [--verbose] [--dump=/tmp/prefix] [--reuse=/tmp/prefix] [--eval-at=N --eval=js] [--shot=out.png]
 //
 // Scenarios (see SCENARIOS below) give Training's robot a set of weapons and a key
 // schedule. For each one:
@@ -498,6 +498,13 @@ async function ported(browser, sc, orig, fixes = false) {
   );
   // --eval-at=N --eval=js: stop after N ticks and print a page expression (window.__wt has the harness).
   if (opt('eval')) console.log('eval:', await page.evaluate(opt('eval')));
+  // --shot=/tmp/x.png (with --eval-at): a screenshot there, -fix added with the port's fixes on.
+  if (opt('shot')) {
+    await sleep(300);
+    const path = fixes ? opt('shot').replace(/(\.png)?$/, '-fix.png') : opt('shot');
+    await page.screenshot({ path });
+    console.log('screenshot:', path);
+  }
   await page.close();
   return { ...result, logs };
 }

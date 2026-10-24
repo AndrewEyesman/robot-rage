@@ -1,0 +1,68 @@
+# Robot Rage hosted from one container (see README.md, Hosting).
+#
+#   docker compose up -d --build                     the server on 127.0.0.1:8080, daily backups
+#   docker compose --profile tunnel up -d --build    and the Cloudflare tunnel (deploy/tunnel.env)
+#
+# The game's files and the assets extracted from them are bind-mounted read-only from
+# this checkout (scripts/fetch-game.sh, port/extract.sh): never part of the image.
+services:
+  robotrage:
+    build: .
+    image: robotrage
+    pull_policy: build
+    restart: unless-stopped
+    init: true
+    ports:
+      # Local only by default; the tunnel reaches the server over the compose network.
+      - "${BIND:-127.0.0.1}:${HOST_PORT:-8080}:8080"
+    environment:
+      ICE_SERVERS: ${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      # cloudflare: the client's address from CF-Connecting-IP. Only behind the tunnel,
+      # with the port above not reachable from outside.
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      # Enables the admin tools against the running server, from inside the container:
+      #   docker compose exec robotrage node scripts/moderate.mjs kick <who> --url http://127.0.0.1:8080
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # Only the port is hosted, and it sends its session where the original sent none:
+      # the lobby's nick (IRC PASS) and paint map saves need one (server/index.mjs).
+      IRC_REQUIRE_SESSION: "1"
+      MAP_REQUIRE_SESSION: "1"
+    # The server also writes a log file per day under /data/logs, kept LOG_DAYS (14).
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+    volumes:
+      - data:/data
+      - ${ASSETS_PATH:-./port/assets}:/srv/assets:ro
+      # The server serves only the files the port fetches from here (badlanguage.txt).
+      - ${GAME_PATH:-./public/game}:/srv/game:ro
+
+  backup:
+    # The same image (built once, from the cache), for its backup script.
+    build: .
+    image: robotrage
+    pull_policy: build
+    restart: unless-stopped
+    init: true
+    depends_on: [robotrage]
+    command: ["scripts/backup-db.sh", "--daily", "/data", "/backups"]
+    healthcheck:
+      disable: true
+    volumes:
+      - data:/data:ro
+      - backups:/backups
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [tunnel]
+    restart: unless-stopped
+    depends_on: [robotrage]
+    # TUNNEL_TOKEN=... (the tunnel's token from the Cloudflare dashboard).
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file:
+      - path: deploy/tunnel.env
+        required: false
+
+volumes:
+  data:
+  backups:

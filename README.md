@@ -29,6 +29,62 @@ STUN servers the browsers use to find each other: comma-separated URLs, or a JSO
 `RTCIceServer` list (default `stun:stun.l.google.com:19302`; empty for none, enough
 on one machine or LAN). No TURN server: the relay is the fallback.
 
+## Hosting
+
+The port runs for players from the game server alone, without Vite. The host needs the
+game files and the assets extracted from them, made locally and never put in the image:
+
+```sh
+scripts/fetch-game.sh        # game files -> public/game/
+port/extract.sh              # their assets and fonts -> port/assets/ (needs Docker)
+```
+
+**Docker** (`Dockerfile`, `docker-compose.yml`): the image holds the server and the
+built frontend; `port/assets` and `public/game` are mounted read-only, `db.json` lives in
+the `data` volume.
+
+```sh
+docker compose up -d --build     # http://127.0.0.1:8080
+```
+
+**Plain Node:**
+
+```sh
+(cd port/web && npm ci && npm run build)      # -> port/web/dist
+APP_DIR=port/web/dist PORT=8080 npm start
+```
+
+| Variable | |
+| --- | --- |
+| `APP_DIR` | the built frontend; set, the server serves the port (`/` is the game) instead of `public/` |
+| `ASSETS_DIR` | the extracted assets, served as `/assets` (default `port/assets`) |
+| `GAME_DIR` | the game files (default `public/game`); only `badlanguage.txt` is served, never the movies |
+| `DATA_DIR` | where `db.json` lives (default `data`; `/data` in the image) |
+| `PORT`, `ICE_SERVERS`, `ADMIN_TOKEN` | as above |
+| `TRUST_PROXY=cloudflare` | take the client's address from `CF-Connecting-IP`: only behind the tunnel |
+
+The bundle (`/app/`, hashed) is cached for a year, the assets for a day, the page and the
+API not at all; text, fonts and meshes go out brotli- or gzip-compressed (compressed once,
+kept in memory). Players may see old assets for up to a day after `port/extract.sh` runs
+again. `node port/tools/prod-test.mjs` builds and checks all of it (also in
+`npm run test:port`).
+
+**Cloudflare tunnel** (no open port on the host): create a tunnel in Cloudflare Zero
+Trust (Networks > Tunnels, connector Docker), give its public hostname the service
+`http://robotrage:8080`, put its token in `deploy/tunnel.env` (see
+`deploy/tunnel.env.example`; never committed), set `TRUST_PROXY=cloudflare` in `.env`,
+and start with `docker compose --profile tunnel up -d`. WebSockets (lobby, matches) go
+through the tunnel as they are; the WebRTC match traffic goes directly between the
+players. With `TRUST_PROXY=cloudflare` the server takes the player's address from
+`CF-Connecting-IP`, so keep the published port local (`BIND`, default `127.0.0.1`):
+anyone reaching it directly could fake that header.
+
+**Backups:** the `backup` service writes a gzipped copy of `db.json` to the `backups`
+volume once a day and keeps 14 days (`docker compose cp backup:/backups .` fetches
+them). Without Docker, `scripts/backup-db.sh <data dir> <backup dir>` does one; from cron:
+`15 4 * * * /path/to/robotrage/scripts/backup-db.sh /path/to/data /path/to/backups`.
+To restore, stop the server and unzip a copy over `db.json`.
+
 ## Results and money (anti-cheat)
 
 The server doesn't take the client's word for results or money.
@@ -70,6 +126,42 @@ start it with `ADMIN_TOKEN=<secret>` and run the tool with that variable set and
 `--url http://127.0.0.1:<port>`; the server answers that only from its own machine,
 never through a proxy (`X-Forwarded-For`), and without `ADMIN_TOKEN` it has no admin
 action at all. Don't set it on a public server unless you need it.
+
+## Moderation and limits
+
+Kicks and bans, without a UI (`scripts/moderate.mjs`); `<who>` is a login, a robot's name
+or id (its owner's account), or `ip:<address>`:
+
+```sh
+node scripts/moderate.mjs list
+node scripts/moderate.mjs kick <who> [--ip]                          # running server only
+node scripts/moderate.mjs ban <who> [--days 7] [--reason "..."] [--ip]
+node scripts/moderate.mjs unban <who>        # or: unban --id <ban id from list>
+```
+
+A kick ends the account's sessions and closes its lobby and match sockets; a ban does that
+and keeps it out: a banned account can't log in or join the lobby, a banned address can't
+log in, create accounts or connect at all. `--ip` adds the address the account last used
+(the server keeps that in memory only). Like the credit tool, it edits `data/db.json`
+(server stopped) or, with `ADMIN_TOKEN` set and `--url http://127.0.0.1:<port>`, asks the
+running server, from its own machine only. Bans are stored in `db.json`. In Docker, run
+the tools inside the container (from the host they'd arrive from Docker's network):
+`docker compose exec robotrage node scripts/moderate.mjs kick <who> --url http://127.0.0.1:8080`.
+
+The server also limits, per client address (`TRUST_PROXY`), logins (a growing lockout
+after failures, also per account name), new accounts per day, API requests, lobby floods
+and WebSocket connections and traffic; expired sessions and old matches are pruned. Every
+limit and its default is in `server/limits.mjs` and the header of `server/index.mjs`. The
+players' privacy note is `port/web/privacy.html`.
+
+Two settings close what the original game left open, at the cost of the original itself
+(dirplayer) and old clients, so they're off by default and on in `docker-compose.yml`:
+`IRC_REQUIRE_SESSION=1` lets a lobby nick in only with the login session of its robot's
+owner as the IRC password, and `MAP_REQUIRE_SESSION=1` takes paint map saves only with a
+session. The port sends both (`gameFixes.ircAuth` and `gameFixes.mapSession` in
+`port/web/src/movies/fixes.ts`). Without them, a session sent is still checked against the
+robot, and a lobby nick without one, or a session-less paint map from the address its
+robot's owner last used (within 30 minutes), is taken.
 
 ## How it fits together
 

@@ -30,10 +30,11 @@
 //   the player had to leave Training and come back. Three seconds after the crash the
 //   port plays Training's entry again, as the garage's door does (?quirks=pit restores
 //   the original).
-// - Spear gun at the front: its spears fly along the gun model's own axis, which points
-//   backwards when the gun is mounted at the front (the back mount turns it round), so a
-//   front gun shot through its own robot and out of the back. The port turns a front
-//   gun's spears round so they fly forward (?quirks=spear restores the original).
+// - Spear gun: the spear model's head is at its -z but the original flies it along +z,
+//   tail first. A gun at the front shot through its own robot and out of the back; a gun
+//   at the back (turned round when mounted) shot forward with the head pointing back.
+//   The port flies every spear head first and forward, from either mount (?quirks=spear
+//   restores the original).
 // - Ranked results from both players: after each ranked round only the winner reported
 //   the result (the host alone for a tie), and the server believed it. Now the loser
 //   reports too (and both report ties), so the server counts a round only when both

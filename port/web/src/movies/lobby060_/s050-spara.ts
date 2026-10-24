@@ -7,6 +7,7 @@ import { image2text } from '../robotwars/s007-jump-movie';
 import { RobotWarsReceive, RobotWarsSend, setMessage } from '../robotwars/s019-net-lingo';
 import { cleanSpace, md5, StringToCapital } from '../robotwars/s098-md5';
 import { eq } from './util';
+import { gameFixes } from '../fixes';
 
 export class Spara50 extends Behavior {
   state: LSymbol | undefined;
@@ -76,6 +77,9 @@ export class Spara50 extends Behavior {
       infoList.addProp('map', txtdata);
       infoList.setaProp('robotid', dot(G.gGameGlobals, 'userID'));
       infoList.setaProp('robotname', dot(G.gGameGlobals, 'robotname'));
+      // Only the robot's id and name in the original; the port's fix (movies/fixes.ts,
+      // gameFixes.mapSession) adds the session, so the server needn't trust the address.
+      if (gameFixes.mapSession) infoList.setaProp('sessionid', dot(G.gLobby, 'session'));
       // gStartSendTime = the milliSeconds: a local.
       sendAllSprites('showDoorMessage', 'Vänta lite...');
       this.pnetId = postNetText(lingoString(G.gUrl) + lingoString(dot(G.gVersionList, 'mainasp', 'version')), infoList);

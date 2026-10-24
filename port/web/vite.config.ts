@@ -1,9 +1,11 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, '..', 'assets');
 // The game server the port talks to (login, robots, lobby, matches). A test server by
 // default; never the shared one on 8090 while developing.
 const server = process.env.RR_SERVER ?? 'http://127.0.0.1:8091';
@@ -23,7 +25,15 @@ export default defineConfig({
       '/ws': { target: server, ws: true, changeOrigin: false },
     },
   },
-  build: { rollupOptions: { input: { arena: 'index.html', game: 'game.html', demo: 'demo.html' } } },
+  // The production build is the game (game.html, from the loader), served by the game
+  // server (server/index.mjs, APP_DIR) as its front page, and the privacy page; the other
+  // pages are dev tools that need the dev server. Its hashed files go to /app: /assets
+  // is the game's.
+  build: {
+    assetsDir: 'app',
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: { input: { game: 'game.html', ...(existsSync(join(here, 'privacy.html')) && { privacy: 'privacy.html' }) } },
+  },
   plugins: [
     {
       name: 'game-assets',

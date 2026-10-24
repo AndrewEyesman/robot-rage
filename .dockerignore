@@ -1,0 +1,13 @@
+# Only what the image needs: the server and the port's frontend source. Everything
+# else stays out, above all the game files (public/game), the extracted assets and
+# fonts (port/assets) and the data (data/): they're mounted at run time, never baked in.
+*
+!package.json
+!package-lock.json
+!server/
+!scripts/backup-db.sh
+!scripts/moderate.mjs
+!scripts/grant-credits.mjs
+!port/web/
+port/web/node_modules/
+port/web/dist/

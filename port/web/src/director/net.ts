@@ -27,7 +27,8 @@ function latin1Encode(s: string): string {
   return out;
 }
 
-async function latin1Text(r: Response): Promise<string> {
+/** A response's body as Latin-1 text, a character per byte (the game server answers main.asp so). */
+export async function latin1Text(r: Response): Promise<string> {
   const buf = new Uint8Array(await r.arrayBuffer());
   let s = '';
   for (let i = 0; i < buf.length; i += 8192) s += String.fromCharCode(...buf.subarray(i, i + 8192));

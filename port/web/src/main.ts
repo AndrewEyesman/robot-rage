@@ -17,6 +17,7 @@
 
 import { G, boot, loadSystemFonts, member, newMultiuser, type MultiuserXtra } from './director';
 import { DImage } from './director/image';
+import { latin1Text } from './director/net';
 import { LList, LPropList, TAB, item, itemCount, lingoString, propList, setItemDelimiter, sym, value, type LValue } from './lingo';
 import './movies';
 import { createPartDescription } from './movies/robotwars/s049-part-description';
@@ -33,7 +34,7 @@ const API = `${location.origin}/api/`;
 async function mainAsp(fields: Record<string, string | number>): Promise<string> {
   const body = new URLSearchParams(Object.entries(fields).map(([k, v]) => [k, String(v)]));
   const r = await fetch(`${API}main.asp`, { method: 'POST', body });
-  return r.text();
+  return latin1Text(r);
 }
 
 const prop = (l: LValue, k: string): LValue => (l instanceof LPropList ? l.getaProp(sym(k)) : undefined);

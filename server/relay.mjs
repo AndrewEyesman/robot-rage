@@ -32,6 +32,14 @@
 // order with the control messages, which is what the switch to a direct
 // connection relies on. A client that never sends text frames (the dirplayer
 // page) never receives one.
+//
+// Limits (limits.mjs), per socket: RELAY_MSGS_PER_SEC messages and RELAY_KB_PER_SEC
+// (each over a 2 s burst; a match sends a few dozen small frames a second), a frame
+// no larger than WS_MAX_PAYLOAD_KB, and RELAY_PEERS_PER_HOST peers per host. A socket
+// over them is closed, which its counterpart sees as the player leaving. A robot
+// that's banned (`admit`, from index.mjs) can't listen or log on.
+
+import { Bucket, LIMITS } from "./limits.mjs";
 
 const MUS_HEADER = 0x7200;
 // Multiuser Xtra "no current connection" error, which the client handles.
@@ -95,8 +103,11 @@ export function buildMessage({ errorCode = 0, timestamp = 0, subject, sender, re
   return Buffer.concat([frame, payload]);
 }
 
-// Split a byte stream into complete SMUS frames, keeping any remainder.
-function takeFrames(state, chunk) {
+class FrameTooLarge extends Error {}
+
+// Split a byte stream into complete SMUS frames, keeping any remainder (a frame
+// larger than `max` throws FrameTooLarge).
+function takeFrames(state, chunk, max = 0) {
   state.buffer = state.buffer.length ? Buffer.concat([state.buffer, chunk]) : chunk;
   const frames = [];
   while (state.buffer.length >= 6) {
@@ -105,6 +116,7 @@ function takeFrames(state, chunk) {
       break;
     }
     const total = 6 + state.buffer.readUInt32BE(2);
+    if (max && total > max) throw new FrameTooLarge(`frame of ${total} bytes`);
     if (state.buffer.length < total) break;
     frames.push(state.buffer.subarray(0, total));
     state.buffer = state.buffer.subarray(total);
@@ -113,11 +125,51 @@ function takeFrames(state, chunk) {
 }
 
 export class Relay {
-  constructor({ log, iceServers = [] }) {
+  constructor({ log, iceServers = [], limits = LIMITS }) {
     this.log = log;
     this.iceServers = iceServers;
+    this.limits = limits;
     this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, peer> }
     this.epoch = Date.now();
+  }
+
+  /**
+   * Watches a socket's traffic against the limits: the returned function takes a
+   * message's size and answers false (having closed the socket) when it's over them.
+   */
+  meter(ws, who) {
+    const { relayMsgsPerSec, relayBytesPerSec } = this.limits;
+    const msgs = new Bucket(relayMsgsPerSec, 2 * relayMsgsPerSec);
+    const bytes = new Bucket(relayBytesPerSec, 2 * relayBytesPerSec);
+    return (size) => {
+      if (msgs.take() && bytes.take(size)) return true;
+      this.overLimit(ws, who(), "rate limit");
+      return false;
+    };
+  }
+
+  overLimit(ws, who, reason) {
+    if (ws.readyState === ws.OPEN) this.log(`relay: ${who} closed (${reason}, ${ws.clientAddress})`);
+    ws.close(1008, reason);
+  }
+
+  /** Closes the sockets of these robots (lowercased names) or from this address. Returns how many. */
+  kick({ names = new Set(), address } = {}) {
+    let n = 0;
+    const hit = (name, ws) => names.has(String(name).toLowerCase()) || (address && ws.clientAddress === address);
+    for (const host of [...this.hosts.values()]) {
+      for (const peer of [...host.peers.values()]) {
+        if (hit(peer.name, peer.ws)) {
+          peer.ws.close(1008, "kicked");
+          n++;
+        }
+      }
+      if (hit(host.user, host.ws)) {
+        host.ws.close(1008, "kicked");
+        n++;
+      }
+    }
+    return n;
   }
 
   isListening(addr) {
@@ -145,17 +197,24 @@ export class Relay {
     peer.ws.close(1000, reason);
   }
 
-  listen(ws, { addr, user }) {
+  // `clientAddress`: the player's real address (for kicks and the log); `admit(user)`
+  // a reason to refuse that robot, or undefined.
+  listen(ws, { addr, user }, { clientAddress = "", admit = () => undefined } = {}) {
     if (!addr || !user) return ws.close(1008, "addr and user required");
+    ws.clientAddress = clientAddress;
+    const refused = admit(user);
+    if (refused) return ws.close(1008, refused);
     const previous = this.hosts.get(addr);
     const host = { ws, user, peers: new Map(), state: { buffer: Buffer.alloc(0) } };
     this.hosts.set(addr, host);
     previous?.ws.close(1000, "replaced");
     this.log(`relay: ${user} listening at ${addr}`);
+    const allowed = this.meter(ws, () => user);
 
     ws.on("message", (data, isBinary) => {
+      if (!allowed(data.length)) return;
       if (!isBinary) return this.control(ws, host, null, data);
-      for (const frame of takeFrames(host.state, Buffer.from(data))) {
+      for (const frame of this.frames(ws, user, host.state, data)) {
         let env;
         try {
           env = parseEnvelope(frame);
@@ -193,10 +252,23 @@ export class Relay {
     return peers.length === 1 ? peers : [];
   }
 
-  connect(ws, { addr }) {
+  /** The complete SMUS frames in a message (none, and the socket closed, for an oversized one). */
+  frames(ws, who, state, data) {
+    try {
+      return takeFrames(state, Buffer.from(data), this.limits.wsMaxPayload);
+    } catch (e) {
+      if (!(e instanceof FrameTooLarge)) throw e;
+      state.buffer = Buffer.alloc(0);
+      this.overLimit(ws, who, e.message);
+      return [];
+    }
+  }
+
+  connect(ws, { addr }, { clientAddress = "", admit = () => undefined } = {}) {
     const host = this.hosts.get(addr);
     const state = { buffer: Buffer.alloc(0) };
     let peer = null;
+    ws.clientAddress = clientAddress;
 
     if (!host) {
       ws.send(buildMessage({
@@ -208,9 +280,11 @@ export class Relay {
       return ws.close(1000, "nobody listening");
     }
 
+    const allowed = this.meter(ws, () => peer?.name ?? `a peer of ${host.user}`);
     ws.on("message", (data, isBinary) => {
+      if (!allowed(data.length)) return;
       if (!isBinary) return this.control(ws, host, peer, data);
-      for (const frame of takeFrames(state, Buffer.from(data))) {
+      for (const frame of this.frames(ws, peer?.name ?? "a peer", state, data)) {
         let env;
         try {
           env = parseEnvelope(frame);
@@ -219,6 +293,12 @@ export class Relay {
         }
         if (!peer) {
           // First frame is the Logon; its sender is the peer's userID.
+          const refused = admit(env.sender);
+          if (refused) return ws.close(1008, refused);
+          const { relayPeersPerHost } = this.limits;
+          if (relayPeersPerHost && host.peers.size >= relayPeersPerHost && !host.peers.has(env.sender.toLowerCase())) {
+            return this.overLimit(ws, env.sender, "too many peers");
+          }
           peer = { ws, name: env.sender, expected: false };
           const key = peer.name.toLowerCase();
           const replaced = host.peers.get(key);

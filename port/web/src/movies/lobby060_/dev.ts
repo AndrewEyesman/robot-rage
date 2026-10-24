@@ -10,6 +10,7 @@
 // different relay address, so two tabs are two players.
 
 import { G, boot, loadSystemFonts } from '../../director';
+import { latin1Text } from '../../director/net';
 import { LList, LPropList, lingoString, sym, value } from '../../lingo';
 import { parseIniFile } from '../loader002/s004-ini';
 import { AspCommunicationObject } from '../login013_/s031-asp-communication-object';
@@ -18,7 +19,7 @@ import '..';
 
 async function call(url: string, fields: Record<string, string>): Promise<LPropList> {
   const r = await fetch(url, { method: 'POST', body: new URLSearchParams(fields) });
-  const v = value(await r.text());
+  const v = value(await latin1Text(r));
   if (!(v instanceof LPropList)) throw new Error(`${fields.action}: unexpected reply`);
   return v;
 }

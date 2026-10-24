@@ -39,6 +39,8 @@ export class SpearBehavior {
   pSTill: LValue = undefined;
   height: LValue = undefined;
   suffix: string;
+  /** Which way along its z the spear flies: the original's +1 flies it tail first. */
+  dir = 1;
 
   constructor(sp0: number, _name: string, _v0: LVector, rsp: number) {
     this.sp = sp0;
@@ -61,9 +63,15 @@ export class SpearBehavior {
     this.m = world().model('speargun' + this.suffix).child[1] as Model;
     this.m.shader = world().model('spear' + this.suffix).shader;
     world().group('world').addChild(this.m, sym('preserveWorld'));
-    // Enhancement (enhancements.ts, ?quirks=spear): a gun at the front fires forward.
-    if (arenaFixes.spearForward && eq(monteringsplats(sp(this.robotSprite, 'robotRD'), sym('v24')), sym('f'))) {
-      this.m.rotate(0, 180, 0);
+    // Enhancement (enhancements.ts, ?quirks=spear): the spear model's head is at its -z,
+    // but the original flies it along +z, tail first: out of the back of a gun at the
+    // front, and forward from a gun at the back with its head pointing back. Fixed, every
+    // spear flies forward head first; a gun at the back still fires forward, as it did.
+    if (arenaFixes.spearForward) {
+      this.dir = -1;
+      if (eq(monteringsplats(sp(this.robotSprite, 'robotRD'), sym('v24')), sym('b'))) {
+        this.m.rotate(0, 180, 0);
+      }
     }
     sprite(this.sp).rotation = sprite(this.robotSprite).rotation - 90;
     this.state = sym('move');
@@ -74,7 +82,7 @@ export class SpearBehavior {
       case sym('move'): {
         const m = this.m!;
         this.pCounter = num(this.pCounter) + 1;
-        m.translate(0, 0, 200);
+        m.translate(0, 0, 200 * this.dir);
         sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
         if (intersects(this.sp, this.robot2Sp)) {
           playsound('hit_33', 255);
@@ -136,11 +144,11 @@ export class SpearBehavior {
     // Quirk kept: the loop exits after its first pass, so the spear backs off at most once.
     while (intersects(this.sp, spri)) {
       steps = steps + 0.5;
-      m.translate(0, 0, -1);
+      m.translate(0, 0, -this.dir);
       sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
       break;
     }
-    m.translate(0, 0, 1 * steps);
+    m.translate(0, 0, this.dir * steps);
     sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
   }
 }

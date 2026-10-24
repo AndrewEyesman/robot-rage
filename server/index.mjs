@@ -1,28 +1,57 @@
 // Robot Rage self-hosted server: static files, the game's HTTP backend, the
 // IRC lobby and the peer relay, all on one port.
 //
-//   PORT=8080 GAME_DIR=./public/game DATA_DIR=./data node server/index.mjs
+//   PORT=8080 DATA_DIR=./data node server/index.mjs     serves public/ (dirplayer)
+//   APP_DIR=port/web/dist ...   serves the port's production build instead (hosting):
+//     ASSETS_DIR (default port/assets) as /assets, and of GAME_DIR (default
+//     public/game) only the files the port reads, never the original movies
 //   ICE_SERVERS=stun:stun.example.org:3478 ...   STUN for direct matches (default Google's; '' for none)
-//   ADMIN_TOKEN=<secret> ...   enables the admingrant action (testing), from this machine only
+//   ADMIN_TOKEN=<secret> ...   enables the admin actions (credits, kicks and bans), from this machine only
+//   TRUST_PROXY=cloudflare|xff ...   the client's address from CF-Connecting-IP or the last
+//     X-Forwarded-For hop (for limits, logs and bans); unset: the socket's
+//   LOG_DIR=./logs LOG_DAYS=14 ...   also log to one file per day, deleted after LOG_DAYS
+//   Limits (server/limits.mjs, defaults in brackets): LOGIN_FAILS_PER_ACCOUNT [5],
+//     LOGIN_FAILS_PER_ADDRESS [20], LOGIN_LOCK_MIN [1, doubling], LOGIN_LOCK_MAX_MIN [60],
+//     LOGIN_FORGET_MIN [60], ACCOUNTS_PER_DAY [5], API_PER_MIN [600], API_MAX_BODY_KB [1024],
+//     WS_PER_ADDRESS [40], WS_TOTAL [2000], WS_NEW_PER_MIN [120], WS_MAX_PAYLOAD_KB [256],
+//     WS_PING_SEC [30], IRC_MAX_LINE [1024], IRC_LINES_PER_10S [200], IRC_CHAT_PER_10S [10],
+//     IRC_REGISTER_SEC [60], RELAY_MSGS_PER_SEC [1000], RELAY_KB_PER_SEC [1024],
+//     RELAY_PEERS_PER_HOST [8], SESSION_DAYS [30]; 0 turns a limit off
+//   IRC_REQUIRE_SESSION=1 ...   the lobby takes a nick only with a session owning its robot as
+//     PASS (the port sends it; the original and dirplayer send none, so they can't join)
+//   MAP_REQUIRE_SESSION=1 ...   paint map saves only with a session (the port sends it), not
+//     on the address of the robot's owner (the original's garage sends none)
 
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import { join, normalize, extname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { Store } from "./store.mjs";
 import { createApi } from "./api.mjs";
-import { IrcServer } from "./irc.mjs";
+import { IrcServer, robotNameOfNick } from "./irc.mjs";
 import { Relay } from "./relay.mjs";
+import { LIMITS, SocketGuard, clientAddress } from "./limits.mjs";
+import { createLog, redact } from "./logs.mjs";
+import { resolveIn, sendFile } from "./static.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PORT = Number(process.env.PORT || 8080);
 const PUBLIC_DIR = resolve(process.env.PUBLIC_DIR || join(ROOT, "public"));
 const DATA_DIR = resolve(process.env.DATA_DIR || join(ROOT, "data"));
+const APP_DIR = process.env.APP_DIR ? resolve(process.env.APP_DIR) : "";
+const ASSETS_DIR = resolve(process.env.ASSETS_DIR || join(ROOT, "port/assets"));
+const GAME_DIR = resolve(process.env.GAME_DIR || join(PUBLIC_DIR, "game"));
+// The game files the port fetches itself (main.ini is generated): the login screen's
+// bad-language list (port/web/src/director/net.ts). The movies are translated.
+const GAME_FILES = new Set(["badlanguage.txt"]);
 
-const log = (...args) => console.log(new Date().toISOString(), ...args);
+const log = createLog();
 const store = new Store(join(DATA_DIR, "db.json"));
-const handleMainAsp = createApi(store, log, { adminToken: process.env.ADMIN_TOKEN || "" });
+const handleMainAsp = createApi(store, log, {
+  adminToken: process.env.ADMIN_TOKEN || "",
+  kick: (who) => irc.kick(who) + relay.kick(who),
+});
 const irc = new IrcServer({ log, motd: ["Welcome to your own Robot Rage server."] });
 // STUN servers the page uses to connect a match's players directly (WebRTC); the
 // relay stays the fallback, so no TURN. Comma-separated URLs, or a JSON
@@ -34,18 +63,6 @@ function iceServers(value = "stun:stun.l.google.com:19302") {
   return [{ urls: v.split(",").map((u) => u.trim()).filter(Boolean) }];
 }
 const relay = new Relay({ log, iceServers: iceServers(process.env.ICE_SERVERS) });
-
-const MIME = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".json": "application/json",
-  ".wasm": "application/wasm",
-  ".dcr": "application/x-director",
-  ".cct": "application/x-director",
-  ".txt": "text/plain; charset=utf-8",
-  ".png": "image/png",
-};
 
 // The game reads its server settings from main.ini. Hostnames ending in
 // .robotrage.local never resolve; the page's socket resolver maps them to
@@ -103,10 +120,32 @@ function mainIni(origin) {
   ].join("\r\n");
 }
 
-async function readBody(req) {
+class TooLarge extends Error {}
+
+async function readBody(req, max = LIMITS.apiMaxBody) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (max && size > max) throw new TooLarge();
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString("latin1");
+}
+
+// The game's text is Latin-1 (Director; port/web/src/director/net.ts): its forms
+// percent-encode one byte per character, and it reads replies byte for byte. So each %XX
+// is one character, not a byte of UTF-8 as URLSearchParams takes it (a paint map's bytes
+// above 127 became U+FFFD), and main.asp replies go back as Latin-1.
+const LATIN1 = "text/plain; charset=iso-8859-1";
+const latin1Decode = (s) => s.replace(/\+/g, " ").replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+function parseForm(text) {
+  return Object.fromEntries(
+    text.replace(/^\?/, "").split("&").filter(Boolean).map((pair) => {
+      const at = pair.indexOf("=");
+      return at < 0 ? [latin1Decode(pair), ""] : [latin1Decode(pair.slice(0, at)), latin1Decode(pair.slice(at + 1))];
+    }),
+  );
 }
 
 function originOf(req) {
@@ -115,10 +154,12 @@ function originOf(req) {
 }
 
 // A request from this machine that didn't come through a proxy (one that adds
-// X-Forwarded-For, as a reverse proxy in front of the server would).
+// X-Forwarded-For, as a reverse proxy in front of the server would, or a Cloudflare
+// Tunnel's CF-Connecting-IP).
 function isLocal(req) {
   const addr = req.socket.remoteAddress || "";
-  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr) && !req.headers["x-forwarded-for"] && !req.headers.forwarded;
+  const h = req.headers;
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr) && !h["x-forwarded-for"] && !h.forwarded && !h["cf-connecting-ip"] && !h["x-real-ip"];
 }
 
 function send(res, status, body, type = "text/plain; charset=utf-8") {
@@ -127,20 +168,25 @@ function send(res, status, body, type = "text/plain; charset=utf-8") {
 }
 
 async function serveStatic(req, res, pathname) {
-  const path = normalize(join(PUBLIC_DIR, decodeURIComponent(pathname)));
-  if (!path.startsWith(PUBLIC_DIR)) return send(res, 403, "forbidden");
-  let file = path;
-  try {
-    if ((await stat(file)).isDirectory()) file = join(file, "index.html");
-    const body = await readFile(file);
-    res.writeHead(200, {
-      "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": "no-cache",
-    });
-    res.end(body);
-  } catch {
-    send(res, 404, "not found");
+  const path = resolveIn(PUBLIC_DIR, pathname);
+  if (!path) return send(res, 403, "forbidden");
+  return sendFile(req, res, path, { index: true });
+}
+
+// The production build (APP_DIR): Vite's hashed files under /app never change, the
+// extracted assets only when they're extracted again, the page itself on every build.
+async function serveApp(req, res, pathname) {
+  const route = (root, rel, cacheControl) => {
+    const path = resolveIn(root, rel);
+    return path ? sendFile(req, res, path, { cacheControl }) : send(res, 403, "forbidden");
+  };
+  if (pathname.startsWith("/assets/")) return route(ASSETS_DIR, pathname.slice("/assets".length), "public, max-age=86400");
+  if (pathname.startsWith("/game/")) {
+    const name = pathname.slice("/game/".length);
+    return GAME_FILES.has(name) ? route(GAME_DIR, name, "no-cache") : send(res, 404, "not found");
   }
+  if (pathname.startsWith("/app/")) return route(APP_DIR, pathname, "public, max-age=31536000, immutable");
+  return route(APP_DIR, pathname === "/" ? "/game.html" : pathname, "no-cache");
 }
 
 const server = createServer(async (req, res) => {
@@ -152,12 +198,24 @@ const server = createServer(async (req, res) => {
       return send(res, 200, mainIni(originOf(req)));
     }
     if (pathname.startsWith("/api/")) {
-      const params = Object.fromEntries(new URLSearchParams(req.method === "POST" ? await readBody(req) : url.search));
+      const address = clientAddress(req, LIMITS.trustProxy, log);
+      let body;
+      try {
+        body = req.method === "POST" ? await readBody(req) : url.search;
+      } catch (err) {
+        if (!(err instanceof TooLarge)) throw err;
+        log(`api: request body too large (${address})`);
+        res.setHeader("Connection", "close");
+        return send(res, 413, "too large");
+      }
+      const params = parseForm(body);
       const name = pathname.slice("/api/".length).toLowerCase();
       switch (name) {
         case "main.asp":
-        case "abuse.asp": // the arena's report button
-          return send(res, 200, handleMainAsp(params, { trusted: isLocal(req) }));
+        case "abuse.asp": { // the arena's report button
+          const reply = handleMainAsp(params, { trusted: isLocal(req), address });
+          return typeof reply === "string" ? send(res, 200, Buffer.from(reply, "latin1"), LATIN1) : send(res, reply.status, reply.body);
+        }
         case "ip.php":
           // The page supplies the real per-tab address as the sw1 param.
           return send(res, 200, "");
@@ -167,34 +225,47 @@ const server = createServer(async (req, res) => {
           // The login screen reads the part after "=".
           return send(res, 200, "country=SE");
         default:
-          log(`api: unhandled ${req.method} ${name}`, params);
+          log(`api: unhandled ${req.method} ${name} (${address})`, redact(params));
           return send(res, 200, "[#err: 0]");
       }
     }
-    return serveStatic(req, res, pathname);
+    return APP_DIR ? serveApp(req, res, pathname) : serveStatic(req, res, pathname);
   } catch (err) {
     log("http error", err);
     send(res, 500, "error");
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
+// Limits on WebSockets (limits.mjs): message size, connections per address and in
+// total, new connections per minute, and a heartbeat that closes dead sockets.
+const wss = new WebSocketServer({ noServer: true, maxPayload: LIMITS.wsMaxPayload || undefined });
+const sockets = new SocketGuard(LIMITS, log);
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://local");
   const params = Object.fromEntries(url.searchParams);
+  const address = clientAddress(req, LIMITS.trustProxy, log);
+  const reject = (status, text) => socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\n\r\n`);
+  if (store.banFor({ address })) return reject(403, "Forbidden");
+  const refused = sockets.refuse(address);
+  if (refused) {
+    log(`ws: ${url.pathname} from ${address} refused (${refused[1]})`);
+    return reject(...refused);
+  }
   // The emulator reports a successful connectToNetServer as soon as the socket
   // opens, so a connection to nobody must fail before that.
-  if (url.pathname === "/ws/p2p/connect" && !relay.isListening(params.addr)) {
-    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
-    return;
-  }
+  if (url.pathname === "/ws/p2p/connect" && !relay.isListening(params.addr)) return reject(404, "Not Found");
+  const admission = { clientAddress: address, admit: handleMainAsp.robotRefused };
   wss.handleUpgrade(req, socket, head, (ws) => {
+    sockets.track(ws, address);
+    ws.on("error", (err) => log(`ws: ${url.pathname} error (${address}): ${err.message}`));
     switch (url.pathname) {
       case "/ws/irc": {
         const session = irc.connect({
           address: params.addr || "0.0.0.0",
           send: (line) => ws.readyState === ws.OPEN && ws.send(line),
           close: () => ws.close(),
+          clientAddress: address,
+          admit: (nick, pass) => handleMainAsp.ircRefused(robotNameOfNick(nick), pass),
         });
         // The emulator's Multiuser Xtra writes text-mode messages as UTF-8.
         ws.on("message", (data) => session.receive(data.toString("utf8")));
@@ -202,13 +273,27 @@ server.on("upgrade", (req, socket, head) => {
         return;
       }
       case "/ws/p2p/listen":
-        return relay.listen(ws, params);
+        return relay.listen(ws, params, admission);
       case "/ws/p2p/connect":
-        return relay.connect(ws, params);
+        return relay.connect(ws, params, admission);
       default:
         ws.close(1008, "unknown endpoint");
     }
   });
 });
 
-server.listen(PORT, () => log(`Robot Rage server on http://localhost:${PORT}`));
+if (APP_DIR) {
+  for (const [what, path] of [["the build (npm run build in port/web)", join(APP_DIR, "game.html")], ["the extracted assets", join(ASSETS_DIR, "loader002")], ["the game files", join(GAME_DIR, "badlanguage.txt")]])
+    if (!existsSync(path)) log(`warning: ${path} missing: ${what}`);
+}
+server.listen(PORT, () => log(`Robot Rage server on http://localhost:${PORT}` + (APP_DIR ? ` (the port from ${APP_DIR}, assets from ${ASSETS_DIR})` : ` (${PUBLIC_DIR})`)));
+
+// docker stop: stop taking requests, give the store's debounced write (250 ms) time to
+// land, then exit.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    log(`${signal}: shutting down`);
+    server.close();
+    setTimeout(() => process.exit(0), 500).unref();
+  });
+}

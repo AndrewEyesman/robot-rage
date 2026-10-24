@@ -26,6 +26,8 @@ import { eq, setMU } from './util';
 // gOpponent, gWonGames, gLostGames, gLastroom, gFrame, gRobotData
 
 const pl = (v: unknown) => v as LPropList;
+/** gameFixes.robotReply: a getrobotall reply with #err 0. */
+const isGoodReply = (v: LValue) => v instanceof LPropList && eq(v.getaProp(sym('err')), 0);
 const mainasp = () => lingoString(G.gUrl) + lingoString(dot(G.gVersionList, 'mainasp', 'version')) + '?tick=' + the.milliSeconds;
 
 export class OnlineFramescript extends Behavior {
@@ -136,6 +138,14 @@ export class OnlineFramescript extends Behavior {
         if (eq(netError(this.netId), 'ok')) {
           put('visar från servern');
           const tList = value(netTextResult(this.netId));
+          // The original reads the reply without checking #err: on an error reply the
+          // GameStats line below is a script error, every frame. The port's fix
+          // (movies/fixes.ts, gameFixes.robotReply) keeps the old score and stats.
+          if (gameFixes.robotReply && !isGoodReply(tList)) {
+            put(netTextResult(this.netId));
+            this.pState = sym('waiting');
+            return;
+          }
           sendSprite(1, 'usedoktor');
           const ud = pl(G.gUserData);
           ud.setaProp(sym('score'), dot(tList, 'score'));
@@ -242,6 +252,12 @@ export class OnlineFramescript extends Behavior {
         if (eq(netError(this.netId), 'ok')) {
           put('visar från servern');
           const tList = value(netTextResult(this.netId)) as LPropList;
+          // Unchecked in the original too; the port's fix takes an error reply as a failed request.
+          if (gameFixes.robotReply && !isGoodReply(tList)) {
+            G.getOpponentState = sym('ErrorgetRobot');
+            put(netTextResult(this.netId));
+            return;
+          }
           this.showrobot(tList);
           this.pState = sym('waiting');
         } else {

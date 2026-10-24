@@ -4,11 +4,17 @@
 // a waitForNetConnection listener and a connectToNetServer peer through the relay
 // (direct WebRTC connections need a browser: p2p-test.mjs).
 //
-//   cd port/web && npx tsx ../tools/multiuser-test.mts [port]     (default 8091; never 8090)
+//   cd port/web && npx tsx ../tools/multiuser-test.mts [port] [login password robot]     (default 8091; never 8090)
+//
+// With a login it registers as that account's robot with its session as PASS, as the
+// port's lobby does (gameFixes.ircAuth), which a server with IRC_REQUIRE_SESSION=1 (the
+// regression fixture's) needs; without, with an empty PASS and a made-up robot, as the
+// original does.
 
 import assert from 'node:assert/strict';
 
 const port = process.argv[2] ?? '8091';
+const [login, password, robot] = process.argv.slice(3);
 if (port === '8090') throw new Error('8090 is the shared server');
 // The Xtra builds its URLs from the page's location and keeps the tab address in sessionStorage.
 Object.assign(globalThis, { location: { protocol: 'http:', host: `127.0.0.1:${port}`, search: '' }, sessionStorage: {} });
@@ -41,15 +47,22 @@ const field = (m: Msg, k: string) => m.getaProp(sym(k));
   const err = irc.connectToNetServer('irc.robotrage.local', 8777, propList(sym('userID'), 'Bb', sym('password'), 'MySecret', sym('movieID'), 'Tech Chat'), sym('text'));
   assert.equal(err, 0);
   await waitFor(() => got.find((m) => field(m, 'subject') === 'ConnectToNetServer'), 'ConnectToNetServer');
-  const nick = `_R0MuTest${Date.now() % 1000}0000`;
-  for (const line of ['PASS ', `NICK ${nick}`, 'USER Shockplay 0 * MuTest']) assert.equal(irc.sendNetMessage('system', 'IRC', line + '\n\r'), 0);
+  let nick = `_R0MuTest${Date.now() % 1000}0000`;
+  let pass = '';
+  if (login) {
+    const r = await fetch(`http://127.0.0.1:${port}/api/main.asp`, { method: 'POST', body: new URLSearchParams({ action: 'loginmember', membername: login, password }) });
+    pass = (await r.text()).match(/#sid: "([^"]*)"/)?.[1] ?? '';
+    assert.ok(pass, `logged in as ${login}`);
+    nick = `_R0${robot}0000`;
+  }
+  for (const line of [`PASS ${pass}`, `NICK ${nick}`, 'USER Shockplay 0 * MuTest']) assert.equal(irc.sendNetMessage('system', 'IRC', line + '\n\r'), 0);
   const text = () => got.map((m) => lingoString(field(m, 'content'))).join('');
   await waitFor(() => / 376 /.test(text()), '376 welcome');
   const first = got.find((m) => field(m, 'subject') === 'String')!;
   assert.equal(field(first, 'errorCode'), 0);
   assert.equal(field(first, 'senderID'), 'System');
   assert.ok(/ 001 /.test(text()), '001 seen');
-  console.log(`IRC: registered as ${nick}, saw 001 and 376 (${got.length} messages)`);
+  console.log(`IRC: registered as ${nick}${pass ? ' with its session' : ''}, saw 001 and 376 (${got.length} messages)`);
   irc.dispose();
 }
 

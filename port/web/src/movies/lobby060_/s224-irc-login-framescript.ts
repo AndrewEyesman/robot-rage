@@ -1,10 +1,12 @@
 // lobby060_ behavior 224 "irc login framescript" (frame 3): opens the P2P listener,
 // then logs on to the IRC lobby through gIRC, trying the ircports of main.ini in a
 // shuffled order (ircip1 for tries 1-5, ircip2 for 6-10), and moves on two seconds
-// after the server's welcome (376).
+// after the server's welcome (376). After 10 failed tries (a server refusing the nick
+// closes the connection, so each fails at once) it goes back to the garage.
 
 import { Behavior, G, dot, go, member, pass, put, sendAllSprites, sendSprite, the } from '../../director';
 import { EMPTY, LList, LPropList, RETURN, lingoString, random, sym, type LSymbol, type LValue } from '../../lingo';
+import { gameFixes } from '../fixes';
 import { JumpMovie } from '../robotwars/s007-jump-movie';
 import { getMyIP } from '../robotwars/s034-get-my-ip';
 import { DisconnectFromSMUS, OpenP2PConnection, getrankingindex } from './s004-lobby-moviescript';
@@ -110,7 +112,10 @@ export class IrcLoginFramescript extends Behavior {
       }
       put(lingoString(tip) + ' : ' + lingoString(tPort));
       if (this.pState === sym('ConnectIRC')) {
-        G.gIRC.ConnectIRC(tip, tPort, dot(G.gUserData, 'ircrobotname'), 'nopwd', dot(G.gUserData, 'robotid'));
+        // The port's fix (movies/fixes.ts, gameFixes.ircAuth): the login session as the
+        // password, which the IRC object then sends (the original sends an empty PASS).
+        const password = gameFixes.ircAuth ? dot(G.gLobby, 'session') : 'nopwd';
+        G.gIRC.ConnectIRC(tip, tPort, dot(G.gUserData, 'ircrobotname'), password, dot(G.gUserData, 'robotid'));
         this.pstartTime = the.milliSeconds;
         this.pState = sym('waitConnect');
       }

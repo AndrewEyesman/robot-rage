@@ -9,6 +9,7 @@ import {
   itemCount, itemDelimiter, length, line, lineCount, lingoString, numToChar, offset, propList, putBefore, putAfter, random, setItemDelimiter,
   stringp, sym, value, voidp, word, wordCount, type LValue,
 } from '../../lingo';
+import { gameFixes } from '../fixes';
 import { JumpMovie } from './s007-jump-movie';
 import { AddDebugLog, FormatUserName, Num2Hex, SearchAndReplace, makeCheckSum } from './s004-new-init';
 import { isBehindRouter } from './s005-changes';
@@ -145,7 +146,9 @@ export class IRC_OBJECT {
     const content = () => message.prop('content');
     if (eq(message.prop('subject'), 'ConnectToNetServer')) {
       this.addLog('Connected Wait... Sending PASS, NICK, USER');
-      this.sendIRCmessage('PASS ');
+      // The original sends an empty PASS (pIRCUserPassword is never read); the port's
+      // fix (movies/fixes.ts, gameFixes.ircAuth) sends the password, the login session.
+      this.sendIRCmessage(gameFixes.ircAuth ? 'PASS ' + lingoString(this.pIRCUserPassword) : 'PASS ');
       this.sendIRCmessage(concatSpace('NICK', this.pIRCUserID));
       this.sendIRCmessage(concatSpace('USER Shockplay 0 *', this.pIRCUserName));
       sendAllSprites('IRCconnected');

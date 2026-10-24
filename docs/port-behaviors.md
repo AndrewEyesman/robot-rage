@@ -16,9 +16,10 @@ Add a line whenever something is verified to work, and an automated check to
 | --- | --- |
 | The whole project type-checks | `typecheck` |
 | Lingo values behave as in Adobe's Director 10.1 (string(), value(), comparisons, chunks, random...): 637 assertions measured against Adobe's player | `lingo-unit` |
-| The Multiuser Xtra registers on the IRC lobby and passes SMUS messages of every Lingo value type through the relay | `multiuser` |
+| The Multiuser Xtra registers on the IRC lobby (on the regression fixture as a seed robot with its session as PASS, which the fixture requires) and passes SMUS messages of every Lingo value type through the relay | `multiuser` |
 | P2P connections switch to a direct WebRTC DataChannel between two tabs; streams in both directions lose and reorder nothing through the switch and through a fall back mid-stream when the channel dies; `?p2p=relay` stays on the relay, a relay-only host declines, broken ICE (`?p2p=fail`) falls back after 5 s; the relay passes signalling only between clients that said hello and relays old clients as before | `multiuser-p2p`, `npm run test:server` |
 | The server counts a ranked round only when both players' reports agree, for a match the host started (single, disagreeing or match-less reports count nothing); saves are checked against the robot's ledger: legal buying, selling, installing and Super Packs pass, inflated money is cut to the legal amount, unpaid or misinstalled parts are refused, reselling a pack can't mint credits, prizes come only from confirmed results, the grant tool works offline and online | `npm run test:server` |
+| The server's lobby takes a nick whose IRC password is its robot's owner's session and refuses one with another member's session; without `IRC_REQUIRE_SESSION` an empty password or "nopwd" is taken, with it refused; paint map saves take the owner's session, refuse another's, and without a session are taken only from the owner's address, never with `MAP_REQUIRE_SESSION`; main.asp forms and replies are Latin-1 | `npm run test:server` |
 | The translated arena world and robots render like the verified demo (pixel-identical within tolerance, 3 views) | `check3d` |
 | The player runs at most one frame cycle per draw: a slow frame delays the movie instead of skipping ahead (no jumps in slide-ins) | `port/tools/motion-trace.mjs` (by hand) |
 | The player keeps running frame cycles while the tab is hidden (a worker's timer; not drawing) | `match-hidden-tab` |
@@ -53,6 +54,7 @@ Add a line whenever something is verified to work, and an automated check to
 | Credits granted by the server's admin grant arrive as the robot loads; the garage's purchases are saved and accepted by the server; money the server didn't keep (an unconfirmed prize) is taken back by the client, in step with MrDoktor (`?quirks=economy`: the original client) | `garage-super-credits` |
 | Remove puts a part in the inventory; the sell room offers it with its sell box; Use this part installs it back | `garage-parts-sell` |
 | STATS and HIGHSCORE tabs (clicks through their labels); the TRAINING door goes to the arena | `garage-tabs-doors` |
+| The garage's paint map save (the TRAINING door, after the paintshop) carries the session, a server requiring one (`MAP_REQUIRE_SESSION=1`) keeps it, and it comes back byte for byte (Latin-1, bytes above 127 too); without the session (`?quirks=mapsession`) that server refuses it | `garage-map-session` |
 | Selling and buying back really saves the robot (setrobot); the GARAGE, LOBBY and QUIT doors reach their movies | by hand |
 
 ## Arena (arena104)
@@ -68,7 +70,7 @@ Add a line whenever something is verified to work, and an automated check to
 | A two-tab match plays over the direct DataChannel; with `?p2p=relay`, or with ICE broken (`?p2p=fail`), it starts and plays over the relay | `match-transport` |
 | A hidden tab keeps playing: 25 s hidden, it runs its frames and both players stay in the match; a tab switch or stall never strikes the robot for speed hacking (`?quirks=speedgear` restores the strike) | `match-hidden-tab` |
 | Every weapon and its shots move, hit and spend ammo, energy and armour tick for tick as in the original (dirplayer), 11 Training scenarios covering all 27 weapons; the spear gun fires all 5 spears | `weapon-trace` (`--full`) |
-| A front-mounted spear gun fires forward (the original fired it out of the robot's back; `?quirks=spear`) | `weapon-trace spear_front_five` (`--full`) |
+| A spear gun at the front or back fires forward, head first (the original flew spears tail first, and a front gun's out of the robot's back; `?quirks=spear`) | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
 | Training starts again 3 s after the robot falls into the pit, off the roof or loses its armour (the original left it lying there; `?quirks=pit` restores that) | `training-respawn` |
 | A ranked two-tab match records a round once both players report it (the loser reports too; `?quirks=results` restores the winner-only report), the same for both robots | `match-ranked` |
 | Match flow: countdown, mirrored driving, chat, losing a round and playing again with the score kept, draw, surrender, walkover on disconnect or silence, declining revenge, ranked score saved | `port/tools/arena-match.mjs` steps (by hand) |
@@ -79,6 +81,8 @@ Add a line whenever something is verified to work, and an automated check to
 | Behaviour | Check |
 | --- | --- |
 | The lobby logs in to IRC and shows the country list | `lobby-entry` |
+| The lobby registers on IRC with its login session as the password, on a server that requires it (`IRC_REQUIRE_SESSION=1`, as hosted); with the original's empty password (`?quirks=ircauth`) that server refuses the nick | `lobby-entry` |
+| An error reply to the lobby's getrobotall for its own robot leaves the lobby waiting with its stats unchanged, no script error (the original failed every frame; `?quirks=robotreply`) | `lobby-entry` |
 | Two players see each other in a room, open each other's card (with 3D robot), challenge, decline or accept; both reach the arena with the P2P connection open | by hand (two `lobby-dev.html` tabs) |
 | A never-saved robot's card opens in the lobby as the empty robot, with its 3D robot and CHALLENGE, and later cards still open; a match against it plays (the original failed and stuck the lobby; `?quirks=emptyrobot`) | `lobby-fixes` |
 | Clicking an incoming challenge opens the challenger's card, and CHALLENGE there accepts it (the original did nothing; `?quirks=challengecard`) | `lobby-fixes` |
