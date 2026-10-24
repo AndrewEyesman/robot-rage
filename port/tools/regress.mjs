@@ -1257,7 +1257,10 @@ for (const c of selected) {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   console.log(`${r.ok ? 'PASS' : 'FAIL'} ${c.name} (${secs}s)`);
   if (!r.ok || c.steps || c.match) {
-    const text = c.cmd && !r.ok ? r.out.trim().split('\n').slice(-15).map((l) => '  ' + l).join('\n') : r.out;
+    // A failed command: its last 15 lines, after any FAIL lines above them.
+    const lines = r.out.trim().split('\n');
+    const shown = [...lines.slice(0, -15).filter((l) => /^\s*FAIL\b/.test(l)), ...lines.slice(-15)];
+    const text = c.cmd && !r.ok ? shown.map((l) => '  ' + l).join('\n') : r.out;
     if (text.trim()) console.log(text);
   }
   if (!r.ok) failed++;
