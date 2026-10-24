@@ -1,71 +1,49 @@
-# Handoff (2026-10-23)
+# Handoff (updated 2026-10-24)
 
-Read `docs/notes.md` first: protocol findings, the emulator patch list, and how to build.
+Read `docs/decisions.md` first: how the project got here and why. Then `port/README.md`
+for the port, and `docs/notes.md` for the server protocol and the dirplayer patches.
 
 ## Where things stand
 
-- Login, robot list, garage (workshop) and the Training arena load and render in the
-  browser, and the robot drives (arrows, Z/X/C weapons).
-- dirplayer is now based on upstream PR #244 (much better Shockwave 3D: the arena has the
-  real dusk sky and lit buildings). See `docs/upstream.md`. The pinned game build is in
-  `docs/game-build.md`.
-- Lobby/relay server work is done and covered by `npm test` (two simulated clients), but
-  has not been tried in the real game.
-- Known bugs the maintainer reported (not yet investigated unless noted):
-  - Invisible walls on the rooftop (Training arena).
-  - Robot list ("Choose a robot"): the selected row is a grey bar with no robot name.
-  - Garage preview: the robot model looks wrong (wheel placement/orientation).
-  - Workshop tabs (Paintshop, Buy parts, Sell parts) don't respond.
-  - Stats tab shows "Ranking: □" (missing glyph).
-
-## Decision (the maintainer, 2026-10-23)
-
-Accuracy above all. Stay on dirplayer, running the original game files unmodified, and fix
-dirplayer until single-player behaves like the real game. No streaming, no running the
-real player for play, and no Wine/Windows-VM reference player (not approved). A
-TypeScript/Three.js port was considered and dropped.
-
-The outside reference is Adobe's own code, read with Ghidra (and the REA toolkit) for
-targeted questions, e.g. "how does `intersects` handle rotated sprites?", not to read the
-whole player. Real-player screenshots exist from the Flashpoint spike
-(`~/rr-spike/shots/report/`, branch `spike/shockwave-in-browser`).
-
-The maintainer's concern is whack-a-mole: "a million issues" with no visible end, judged by eye.
-So issues are counted (the inventory) and each fix is checked against something real
-(Adobe's code, reference screenshots, documented behaviour) and kept by a test. "Done"
-is an agreed scenario matrix with tolerances, not "every feature checked once".
+- **The port is the way forward** (decided 2026-10-23, `docs/decisions.md` §4). It lives
+  in `port/` on `main`: the Training arena in TypeScript and Three.js, translated from
+  the game's scripts. One robot drives with the original physics (checked tick by tick
+  against the original), with collisions, the follow camera, HUD with the game's
+  fonts, sounds, and the fire pit's smoke and flames. Widescreen and 60 fps drawing.
+- **dirplayer** still runs the whole game (login, garage, lobby, Training) and is what
+  The maintainer plays on port 8090. It stays until the port can replace it, then remains the
+  reference for "what did the original do?".
+- **The servers** (`server/`: login and robots API, IRC lobby, match relay) are done,
+  covered by `npm test`, and don't depend on which client runs the game.
+- **Adobe's player** runs under Wine in Docker on this desktop as the visual reference
+  (`docs/reference.md`).
 
 ## Plan
 
-1. Done: controls, upstream rebase, pinned build (`docs/upstream.md`, `docs/game-build.md`).
-2. Done: inventory (`docs/inventory.md`, regenerate with `tools/inventory-report.py`).
-   410 Director features: 300 match the docs on code reading, 66 wrong (8 high impact),
-   42 unclear (9 high), 44 open items need Adobe's code. Update it as items are fixed.
-3. Done: invisible walls (`docs/collision.md`), awaiting the maintainer's drive. The arena does collision in a hidden 2D map: the robot is a
-   rotated off-stage sprite, the walls are sprites, and the robot behavior tests
-   `sprite sp intersects N`. dirplayer's `intersects`
-   (`vm-rust/src/player/bytecode/sprite_compare.rs`) compares bounding rects and samples
-   mattes unrotated. Confirm with a debug overlay of the collision map (the robot's true
-   rotated quad) and an automated driving sweep at many angles. Check Director's real rule
-   in Adobe's code, fix it, keep the sweep as a regression test, then ask the maintainer to drive
-   the rooftop.
-4. Work the inventory in order of impact on play: controls and collisions, robot-list text,
-   workshop tabs, garage robot model, sky, Stats "Ranking" glyph. Each fix gets a test.
-5. Re-check two of our patches against Adobe's code; they may be game-specific rather than
-   Director behaviour: "all 3D sprites draw above 2D and take clicks first", and "stop
-   delivering an event to the old frame's remaining behaviors after go() moves the
-   playhead".
-6. A real two-player match in two browser tabs once controls and collisions are right.
-7. The maintainer playtests at checkpoints for feel; what they report becomes measurable tests.
+1. Finish the arena: the explosion and breakdown smoke, weapons (one script per
+   weapon, each checked against dirplayer with tick traces), damage marks on the paint
+   map, the robot's saved paint map from the server.
+2. A second robot and a real two-player match through the existing lobby and relay
+   (keep the original wire protocol so the server work carries over).
+3. The 2D screens: login, robot list, garage (workshop, paintshop, buy, sell, stats),
+   lobby. Open question for the maintainer: pixel-faithful 800x600 screens, or rebuilt
+   resizable UI keeping the original art.
+4. The maintainer's enhancements, kept separate from the original logic: subtle UI changes,
+   less clunky physics, and whatever else comes up.
 
-Later, after single-player is accurate (don't start yet): an "enhanced" setting with
-original mode kept exact: 3D and TrueType text at full device resolution (2D menu art
-original, crisp whole-step or smooth scaling), a widescreen arena (wider 3D window and
-field of view, same setting for both players), menus kept 4:3 and centred. Whole-step
-canvas scaling in `public/index.html` is faithful and may be done any time.
+Known gaps in the port: dirplayer's parser can't decode the 3D models' stored normals,
+so the extractor rebuilds and smooths them (an approximation), and the arena's
+inside-out barrel is lit where Adobe's player leaves it dark. Decoding the real normals
+would fix both, and dirplayer too.
 
-Estimates: parity estimates are withdrawn. GPT-6.1-Sol guessed 8–16 engineering weeks for
-convincing fidelity; re-estimate from the inventory.
+The maintainer judges look and feel at checkpoints; what they report becomes measurable checks.
+
+## dirplayer (the previous plan, kept for reference)
+
+The dirplayer work (inventory of 410 Director features, collision fix, upstream PR #244
+base, backlog from the paired tour) is described in `docs/inventory.md`,
+`docs/collision.md`, `docs/upstream.md` and `docs/reference.md`. Its fixes still matter
+while 8090 runs on it.
 
 ## Testing gotchas
 

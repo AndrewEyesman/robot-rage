@@ -3,10 +3,12 @@
 A private web server that runs Miniclip's *Robot Rage 2: Rearmed* (Raketspel, 2005)
 in the browser, with its lobby and multiplayer running on your own machine.
 
-The original game is a Shockwave (Director MX 2004) movie set. It runs here on a
+The original game is a Shockwave (Director MX 2004) movie set. Today it runs here on a
 patched build of [dirplayer-rs](https://github.com/igorlira/dirplayer-rs), a Shockwave
-emulator compiled to WebAssembly. The parts of the old online service the game needs
-are reimplemented in `server/`.
+emulator compiled to WebAssembly. The way forward is a port of the game to TypeScript
+and Three.js, translated from its own scripts (`port/`, see `port/README.md`); why is
+in `docs/decisions.md`. The parts of the old online service the game needs are
+reimplemented in `server/` and serve both.
 
 ## Setup
 
@@ -37,11 +39,12 @@ game, and maps the game's socket connections onto this server's WebSocket endpoi
 
 ## Status
 
-Login, account creation and the robot garage list work in the browser. The garage
-(Shockwave 3D), lobby and matches are still being brought up.
+On dirplayer: login, robot list, garage, lobby and the Training arena work in the
+browser. In the port: the Training arena with one robot (`docs/handoff.md` has the
+plan).
 
 ## Legal
 
 The game belongs to Raketspel AB and Miniclip. This repository contains only original
-server code, emulator patches and tooling; the game files are downloaded separately
-for personal use. Keep deployments private.
+server code, emulator patches, the port's code and tooling; the game files and the
+assets extracted from them stay local, for personal use. Keep deployments private.

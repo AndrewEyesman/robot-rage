@@ -10,8 +10,9 @@ the Xtras the game needs) under Wine, in Docker, on a virtual X display. Decided
 Boxedwine (Wine + x86 emulator in WebAssembly) runs the projector in a browser tab, but
 its web build has no OpenGL/Direct3D, so Shockwave 3D falls back to its software renderer
 on an emulated CPU: the arena orbit benchmark measured 1.3 fps at the arena's size
-(3-4 fps at 320x240), against roughly 30 fps needed. So dirplayer stays the player, and
-the real player is the reference it is compared against.
+(3-4 fps at 320x240), against roughly 30 fps needed. A later try with Boxedwine's
+WebAssembly JIT reached 9.2 fps and was shelved too (`docs/decisions.md` §3). So the real
+player is the reference that what we build (now the port, `port/`) is compared against.
 
 ## Running it
 
