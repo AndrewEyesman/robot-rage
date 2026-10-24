@@ -1,11 +1,12 @@
 # Adobe's Director projector under Wine, on a virtual X display, as the reference
 # player for comparisons (see docs/reference.md). Nothing Adobe is baked in: the
-# projector and game files are mounted at run time.
+# projector and game files are mounted at run time. libpulse lets Wine play sound
+# through the host's PulseAudio/PipeWire when tools/reference/ref-play.sh passes it in.
 FROM debian:bookworm
 ENV DEBIAN_FRONTEND=noninteractive WINEDEBUG=-all WINEARCH=win32 WINEPREFIX=/wine
 RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends \
       wine wine32 xvfb xdotool x11-utils imagemagick xauth procps ca-certificates cabextract wget unzip \
-      libgl1-mesa-dri:i386 libglx-mesa0:i386 fonts-liberation \
+      libgl1-mesa-dri:i386 libglx-mesa0:i386 fonts-liberation libpulse0:i386 \
  && rm -rf /var/lib/apt/lists/*
 RUN wget -qO /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks \
  && chmod +x /usr/local/bin/winetricks

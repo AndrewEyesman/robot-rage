@@ -32,6 +32,16 @@ player is the reference that what we build (now the port, `port/`) is compared a
 - 3D renders through Wine's Direct3D on Mesa's software OpenGL (no GPU in the container),
   so 3D comparisons need a tolerance; 2D should match closely.
 
+## Playing it yourself
+
+    tools/reference/ref-play.sh [port]     # default 8091: a test server, never 8090
+
+Opens the real player in a window on your desktop (XWayland/X11), with sound through
+your desktop's PulseAudio/PipeWire socket, running the wrapper movie against the local
+test server: the original game as it was, to compare the feel with the port. Close the
+window to stop it (container `rr-ref-play`). Like the rest of the reference, it runs on
+this desktop only and its Adobe files stay out of the repo.
+
 ## Asking Adobe's player questions (Lingo)
 
     tools/reference/ref-movie.sh arena104.dcr                   # one movie, with ref-repl installed
