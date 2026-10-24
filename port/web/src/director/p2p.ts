@@ -10,10 +10,15 @@
 // answers, or declines when it is relay-only; candidates trickle both ways.
 //
 // Handover, per direction, so no message is lost or reordered: until the channel is
-// open, messages go over the relay. When it opens, the sender writes a {t: "switch"}
-// marker on the relay, then sends everything on the channel. The receiver delivers
-// relayed messages as they come and holds channel messages until that sender's marker
-// arrives (the relay keeps text and binary frames in order), then delivers them.
+// open at both ends, messages go over the relay. Each end says {h: 1} on the channel
+// when its end opens; a sender switches once the other end's word has come, so its
+// first channel messages can't arrive before that end is listening (the answerer's end
+// opens first, and on a slower machine its first messages were lost, #69). It writes a
+// {t: "switch"} marker on the relay, then sends everything on the channel. The receiver
+// delivers relayed messages as they come and holds channel messages until that
+// sender's marker arrives (the relay keeps text and binary frames in order), then
+// delivers them. A side that never says it's open (an older client) leaves the link on
+// the relay after CONNECT_TIMEOUT.
 //
 // Falling back: if the channel doesn't open within CONNECT_TIMEOUT (strict NATs, a
 // declined offer, ?p2p=relay on the other side) the link stays on the relay for good.
@@ -105,6 +110,9 @@ export class DirectLink {
   got = 0;
   private early: Uint8Array[] = [];
   private closed = false;
+  // The channel open at this end, and at the other (its {h: 1} came).
+  private ownOpen = false;
+  private peerOpen = false;
 
   constructor(private o: LinkOptions) {
     this.name = o.name;
@@ -235,11 +243,16 @@ export class DirectLink {
   private channel(dc: RTCDataChannel) {
     this.dc = dc;
     dc.binaryType = 'arraybuffer';
-    dc.onopen = () => this.opened();
+    dc.onopen = () => this.channelOpen();
     dc.onclose = () => this.fallBack('channel closed');
     dc.onmessage = (e) => {
       if (typeof e.data === 'string') {
-        const a = JSON.parse(e.data).a as number;
+        const m = JSON.parse(e.data) as { a?: number; h?: number };
+        if (m.h) {
+          this.peerOpen = true;
+          return this.opened();
+        }
+        const a = Number(m.a);
         if (a > this.acked) {
           this.unacked.splice(0, a - this.acked);
           this.acked = a;
@@ -256,11 +269,24 @@ export class DirectLink {
         if (this.dc?.readyState === 'open') this.dc.send(JSON.stringify({ a: this.got }));
       }, ACK_DELAY);
     };
-    if (dc.readyState === 'open') this.opened();
+    if (dc.readyState === 'open') this.channelOpen();
   }
 
+  /** This end of the channel is open: say so to the other end. */
+  private channelOpen() {
+    if (this.closed || this.ownOpen) return;
+    this.ownOpen = true;
+    try {
+      this.dc?.send(JSON.stringify({ h: 1 }));
+    } catch {
+      return this.fail('channel closed');
+    }
+    this.opened();
+  }
+
+  /** Switch to the channel once it's open at both ends. */
   private opened() {
-    if (this.closed || this.out !== 'relay' || this.transport !== 'connecting') return;
+    if (!this.ownOpen || !this.peerOpen || this.closed || this.out !== 'relay' || this.transport !== 'connecting') return;
     clearTimeout(this.timer);
     // The marker goes on the relay after every message sent there so far.
     this.control({ t: 'switch' });
