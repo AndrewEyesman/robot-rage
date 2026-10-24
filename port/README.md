@@ -3,8 +3,8 @@
 The game's Lingo scripts translated to TypeScript, one script at a time, running on a
 small Director runtime (`web/src/director/`, with Shockwave 3D on Three.js in
 `web/src/director/s3d/`) that plays each movie's score from its extracted assets.
-`TRANSLATING.md` has the rules. dirplayer (`public/`, port 8090) stays the playable
-version until the port replaces it.
+`TRANSLATING.md` has the rules. dirplayer (`public/`) runs the original only as the
+reference the port is checked against.
 
 ## Running it
 
@@ -85,8 +85,3 @@ rounds, and the trace switches it to truncation to compare like with like
 (`ROUND=1` shows the difference: a wall hit a tick apart).
 
 `tools/check3d.mjs` compares the 3D layer with the frozen demo pixel by pixel.
-
-## Not done yet
-
-The garage (factory0604) and the lobby (lobby060_) are being translated; until they
-land, `index.html` stands in for them.
