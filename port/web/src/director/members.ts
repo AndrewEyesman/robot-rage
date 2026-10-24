@@ -184,6 +184,7 @@ export abstract class TextualMember extends Member {
     // Like the first character's style, the first paragraph's format stays.
     if (this.paragraphs.length) this.paragraphs = [{ ...this.paragraphs[0], start: 0 }];
     this.touch();
+    TextualMember.textSet(this);
   }
 
   get font() {
@@ -260,6 +261,8 @@ export abstract class TextualMember extends Member {
 
   /** The focused field's selection [selStart, selEnd] (the player provides it). */
   static selectionOf: (m: TextualMember) => [number, number] = () => [0, 0];
+  /** Told when a script sets the text (the player keeps the focused field's selection inside it). */
+  static textSet: (m: TextualMember) => void = () => {};
   get selection(): LList {
     return new LList(TextualMember.selectionOf(this));
   }

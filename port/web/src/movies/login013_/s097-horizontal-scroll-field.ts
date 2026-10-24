@@ -4,6 +4,7 @@
 
 import { Behavior, pass, sendSprite, sprite, the, type Sprite } from '../../director';
 import { max, num, type LValue } from '../../lingo';
+import { gameFixes } from '../fixes';
 
 export class HorizontalScrollField extends Behavior {
   mySprite: Sprite | undefined;
@@ -188,7 +189,10 @@ export class HorizontalScrollField extends Behavior {
           theStart = theStart - 1;
       }
     } else {
-      this.myFullText = this.myFullText.slice(0, this.mySelection[0]) + this.myFullText.slice(this.mySelection[1]);
+      // gameFixes.scrollSelect: the field's selection, which mySelection only matches
+      // when the behavior saw it made (not after Tab selects the field).
+      const [a, b] = gameFixes.scrollSelect ? [startChar, endChar] : this.mySelection;
+      this.myFullText = this.myFullText.slice(0, a) + this.myFullText.slice(b);
       deleteKey = 1;
     }
     this.showText(theStart);

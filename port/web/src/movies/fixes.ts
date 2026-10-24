@@ -60,6 +60,11 @@
 //   pixels that don't exist and the rest of the map loaded shifted. The Paintshop's
 //   palette has no index 0, but a map could hold one; the run now stops at the edge
 //   (the format is unchanged).
+// - Deleting a selection in the email box (?quirks=scrollselect, #65): the box's
+//   behavior (login013_ 97) deletes a selection by its own copy of it, taken at keyDown
+//   and while the mouse drags, so a selection it didn't see made (Tab into the field
+//   selects all of it) deleted nothing and put the caret at the start, where the next
+//   typing went in front of the old text. It now deletes the field's selection.
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult, player } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -82,6 +87,7 @@ export const gameFixes = {
   robotReply: !quirks.includes('robotreply'),
   longEmail: !quirks.includes('longemail'),
   mapEdge: !quirks.includes('mapedge'),
+  scrollSelect: !quirks.includes('scrollselect'),
 };
 
 /**

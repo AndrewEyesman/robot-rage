@@ -243,6 +243,35 @@ const CHECKS = [
     ],
   },
   {
+    // Deleting in the login's fields (#64, #65): Backspace in the password field deletes star
+    // after star (setting the text kept the caret past its end), and in the email box
+    // deletes the selection Tab makes (the box deleted its own stale copy of it).
+    name: 'login-field-delete',
+    url: '/game.html',
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_' && p.frameLabel === 'create'`, 15000],
+      ['wait', 500],
+      ['click', 400, 222],
+      ['type', 'someone@example.com'],
+      ['key', 'Backspace'],
+      ['key', 'Backspace'],
+      ['key', 'Backspace'],
+      ['expect', 'the email box deletes', `p.member('username_box').text === 'someone@example.'`, 2000],
+      ['click', 400, 260],
+      ['type', 'abcde'],
+      ['key', 'Backspace'],
+      ['key', 'Backspace'],
+      ['key', 'Backspace'],
+      ['type', 'XY'],
+      ['expect', 'the password field deletes star after star', `p.sprites[p.keyboardFocusSprite].member.text === '****' && p.member('visiblePassword').text === 'abXY'`, 2000],
+      ['key', 'Tab'],
+      ['expect', 'Tab selects the email', `p.sprites[p.keyboardFocusSprite].member === p.member('username_box') && p.selEnd - p.selStart === 16`, 2000],
+      ['key', 'Backspace'],
+      ['type', 'new@example.com'],
+      ['expect', 'Backspace deletes the selection', `p.member('username_box').text === 'new@example.com'`, 2000],
+    ],
+  },
+  {
     // A paint job survives a reload (#60): the map is painted with every colour of the
     // Paintshop's palette (codes 128-159 among them, which went as '?') and up to its
     // right edge, saved by the TRAINING door, then loaded in a new tab.

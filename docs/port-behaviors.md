@@ -35,6 +35,7 @@ Add a line whenever something is verified to work, and an automated check to
 | LOG IN tab switches; the password field shows stars while the real password is kept hidden | `login-robot-list` |
 | Logging in loads the member's robots into the list ("Crusher" in yellow Impact, as in Adobe) | `login-robot-list` |
 | An email address wider than its box scrolls and still logs in whole (the original sent it without its first letters; `?quirks=longemail`) | `login-long-email` |
+| Backspace in the login's fields: the password field deletes star after star, and the email box deletes the selection Tab makes (`?quirks=scrollselect` for the email box's original) | `login-field-delete` |
 | No caret is left blinking in a label after the fields go (the focus goes with its sprite) | `login-robot-list`, `runtime-unit` |
 | Clicking a robot selects it with the highlight bar | `login-robot-list` (screenshot) |
 | Settings tab opens; CHAT toggles and is saved | `login-robot-list` |

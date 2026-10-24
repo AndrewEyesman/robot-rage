@@ -123,6 +123,17 @@ export class Player {
     Sprite.resolveMember = (m) => this.member(m) ?? null;
     TextualMember.selectionOf = (m) =>
       this.focus && this.sprites[this.focus.sprite].memberRef === m ? [this.focus.selStart, this.focus.selEnd] : [0, 0];
+    // Text set by a script while its field has the focus: the selection stays where it
+    // was, cut to the new text's end. The login's password field deletes a star this way
+    // without moving the caret, which left it past the end, so the next Backspace
+    // deleted nothing (#64).
+    TextualMember.textSet = (m) => {
+      const f = this.focus;
+      if (!f || this.sprites[f.sprite].memberRef !== m) return;
+      const n = m.text.length;
+      f.selStart = Math.min(f.selStart, n);
+      f.selEnd = Math.min(f.selEnd, n);
+    };
     addEventListener('resize', () => this.layout());
     this.bindInput();
     this.layout();
