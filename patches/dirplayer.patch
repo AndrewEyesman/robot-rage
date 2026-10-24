@@ -78,6 +78,67 @@ index fff7c114..2031cc51 100644
              spot_decay: false,
          }
      }
+diff --git a/vm-rust/src/director/chunks/xmedia_styled_text.rs b/vm-rust/src/director/chunks/xmedia_styled_text.rs
+index 91e5d414..fe2718eb 100644
+--- a/vm-rust/src/director/chunks/xmedia_styled_text.rs
++++ b/vm-rust/src/director/chunks/xmedia_styled_text.rs
+@@ -63,6 +63,8 @@ pub struct ParInfo {
+     pub bottom_spacing: i32,
+     /// Paige par_info `justification` (word0): 0=left, 1=center, 2=right, 3=justify.
+     pub justification: i32,
++    /// Paige tab stops: (position in pixels, type: 1 left, 2 center, 3 right, 4 decimal).
++    pub tabs: Vec<(i32, i32)>,
+ }
+ 
+ impl Default for ParInfo {
+@@ -76,6 +78,7 @@ impl Default for ParInfo {
+             top_spacing: 0,
+             bottom_spacing: 0,
+             justification: 0,
++            tabs: Vec::new(),
+         }
+     }
+ }
+@@ -1777,8 +1780,12 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+         info.line_spacing = packer.unpack_num();
+         // dword274 if version >= 65547
+         if doc_version >= 65547 { packer.unpack_num(); }
+-        // dword278..dword294 (8 values)
+-        for _ in 0..8 { packer.unpack_num(); }
++        // dword278..dword294 (8 values). dword278/dword27C are the paragraph's
++        // space before/after in pixels (Robot Rage's login "READ THIS!" text:
++        // 5 and 5, which Director 10.1 adds above and below each paragraph).
++        let space_before = packer.unpack_num();
++        let space_after = packer.unpack_num();
++        for _ in 0..6 { packer.unpack_num(); }
+         // wordC if version >= 65552
+         if doc_version >= 65552 { packer.unpack_num(); }
+         // UnpackRefcon (variable)
+@@ -1793,10 +1800,11 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+         if word_e > 0 {
+             let actual = if word_e > 32 { 32 } else { word_e };
+             for _ in 0..actual {
+-                // 3 UnpackNum + 1 UnpackRefcon
+-                packer.unpack_num();
+-                packer.unpack_num();
++                // 3 UnpackNum + 1 UnpackRefcon: a tab stop (type, position, leader)
++                let kind = packer.unpack_num();
++                let pos = packer.unpack_num();
+                 packer.unpack_num();
++                info.tabs.push((pos, kind));
+                 packer.unpack_refcon(doc_version);
+             }
+             if sizea > 32 {
+@@ -1838,6 +1846,9 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+             if doc_version >= 196616 { packer.unpack_num(); }
+         }
+ 
++        if info.top_spacing == 0 { info.top_spacing = space_before; }
++        if info.bottom_spacing == 0 { info.bottom_spacing = space_after; }
++
+         // Safety: if no progress made, abort to avoid infinite loop.
+         if packer.pos == start_pos { break; }
+ 
 diff --git a/vm-rust/src/director/enums.rs b/vm-rust/src/director/enums.rs
 index 94e58a1d..582cb875 100644
 --- a/vm-rust/src/director/enums.rs
@@ -1142,6 +1203,18 @@ index 3181f34d..5689a1ab 100644
              line_positions.push((y, effective_line_height));
              // Per-line stride is line height + bottom_spacing only.
              // top_spacing is the initial offset before the first line (added
+diff --git a/vm-rust/src/player/handlers/datum_handlers/cast_member/text.rs b/vm-rust/src/player/handlers/datum_handlers/cast_member/text.rs
+index 1f57fde5..f55f3a43 100644
+--- a/vm-rust/src/player/handlers/datum_handlers/cast_member/text.rs
++++ b/vm-rust/src/player/handlers/datum_handlers/cast_member/text.rs
+@@ -4161,6 +4161,7 @@ impl TextMemberHandlers {
+                                         top_spacing: unsentinel_sb_sa(current_par_sb),
+                                         bottom_spacing: unsentinel_sb_sa(current_par_sa),
+                                         justification: 0,
++                                        tabs: Vec::new(),
+                                     };
+                                     // Deduplicate par_infos: Director's
+                                     // XMED stores ONE par_info per distinct
 diff --git a/vm-rust/src/player/handlers/datum_handlers/date.rs b/vm-rust/src/player/handlers/datum_handlers/date.rs
 index bc7374c0..b657a7d2 100644
 --- a/vm-rust/src/player/handlers/datum_handlers/date.rs

@@ -29,11 +29,12 @@
   const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
   const IRC_PORTS = new Set([8777, 8778, 8779, 8780, 8781]);
 
-  window.dirplayerResolveSocketUrl = (host, port) => {
+  const resolveSocketUrl = (host, port) => {
     if (IRC_PORTS.has(port)) return `${wsBase}/ws/irc?addr=${encodeURIComponent(myAddress)}`;
     if (port === 1626) return `${wsBase}/ws/p2p/connect?addr=${encodeURIComponent(host)}`;
     return "";
   };
+  window.dirplayerResolveSocketUrl = resolveSocketUrl;
   // The login screen fetches its country lookup from a hardcoded Shockplay URL;
   // answer it from this server instead.
   const SHOCKPLAY_PHP = "http://miniclip2.shockplay.com/php/";
@@ -78,5 +79,11 @@
 </script>
 <!-- No fullscreen button over the stage: the game never had one. -->
 <script src="dirplayer/dirplayer-polyfill.js" data-disable-fullscreen-button></script>
+<script>
+  // The polyfill (PR #244 base) installs its own socket resolver over the page's, driven
+  // by an empty socketProxy config, so every socket resolved to "" and the lobby could
+  // never reach IRC. Put the page's resolver back.
+  window.dirplayerResolveSocketUrl = resolveSocketUrl;
+</script>
 </body>
 </html>

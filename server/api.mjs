@@ -124,9 +124,12 @@ export function createApi(store, log) {
       return { err: 0 };
     },
 
+    // The garage sends the paint map without a session, only the robot's id and name
+    // (robotwars "save robot" and "Spara"), so the original server must have keyed it on
+    // those; a session, when given, must own the robot.
     setrobotmap(p, member) {
-      const robot = ownRobot(p, member);
-      if (!robot) return { err: -1 };
+      const robot = member ? ownRobot(p, member) : store.robot(p.robotid);
+      if (!robot || (!member && String(p.robotname ?? "").toLowerCase() !== robot.robotname.toLowerCase())) return { err: -1 };
       robot.map = p.map || "";
       store.save();
       return { err: 0 };
@@ -213,7 +216,7 @@ export function createApi(store, log) {
   }
 
   // Actions that can be called without a session.
-  const PUBLIC = new Set(["createmember", "loginmember", "PingPayMember", "getrobotall", "setrwgames"]);
+  const PUBLIC = new Set(["createmember", "loginmember", "PingPayMember", "getrobotall", "setrwgames", "setrobotmap", "setrobotmapNew"]);
 
   return function handleMainAsp(rawParams) {
     // Field names vary in case between screens ("sessionid" / "sessionID").
@@ -229,6 +232,8 @@ export function createApi(store, log) {
     if (!PUBLIC.has(action)) {
       member = store.memberForSession(params.sessionid);
       if (!member) return toLingo({ err: 18 });
+    } else if (params.sessionid) {
+      member = store.memberForSession(params.sessionid);
     }
     const reply = handler(params, member);
     const text = typeof reply === "string" ? reply : toLingo(reply);
