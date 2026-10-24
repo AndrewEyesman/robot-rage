@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Before a commit that touches the port or the server, run the fast regression checks
+# (its own servers on seeded data; about a minute). The full suite (npm run test:port)
+# includes the slow checks: run it before pushing. Skip in an emergency with
+# `git commit --no-verify`, and say so in the commit message.
+#   Enable once per checkout: git config core.hooksPath scripts/git-hooks
+set -euo pipefail
+if git diff --cached --name-only | grep -qE '^(port/|server/|public/index\.html)'; then
+  echo "pre-commit: port or server changed, running the fast regression checks..."
+  node port/tools/regress.mjs --fast
+fi

@@ -75,6 +75,12 @@ fn main() {
                     entry["reg"] = json!([info.reg_x, info.reg_y]);
                     entry["depth"] = json!(info.bit_depth);
                     entry["useAlpha"] = json!(info.use_alpha);
+                    // Indexed bitmaps name their palette (a member number, or < 0 for a
+                    // built-in one); the runtime keeps their pixels as indices into it.
+                    if info.bit_depth <= 8 && info.palette_id != 0 {
+                        entry["paletteId"] = json!(info.palette_id);
+                        entry["clutCastLib"] = json!(info.clut_cast_lib);
+                    }
                     let png = out.join(format!("bitmaps/{}-{}.png", lib, num));
                     let bitd = def.children.iter().find_map(|c| c.as_ref().and_then(|c| c.as_bitmap()));
                     // Some 32-bit members keep a JPEG in a media chunk (and alpha in a raw one) instead.
@@ -99,7 +105,34 @@ fn main() {
                         None => {}
                     }
                 }
+                CastMemberSpecificData::Field(f) => {
+                    entry["field"] = field_json(f, def, &file.font_table);
+                }
                 _ => {}
+            }
+            // Buttons are fields with a button type; shapes (raw type 8, read as Flash).
+            let raw = &def.chunk.specific_data_raw;
+            if matches!(def.chunk.member_type, MemberType::Button) && raw.len() >= 28 {
+                let f = vm_rust::director::enums::FieldInfo::from(raw.as_slice());
+                let mut j = field_json(&f, def, &file.font_table);
+                j["buttonType"] = json!(if raw.len() >= 30 { u16::from_be_bytes([raw[28], raw[29]]) } else { 0 });
+                entry["field"] = j;
+            }
+            if matches!(def.chunk.member_type, MemberType::Flash | MemberType::Shape) && raw.len() >= 17 {
+                let be = |i: usize| i16::from_be_bytes([raw[i], raw[i + 1]]);
+                entry["shape"] = json!({
+                    "shapeType": be(0), "rect": [be(4), be(2), be(8), be(6)], "pattern": be(10),
+                    "fore": raw[12], "back": raw[13], "filled": raw[14], "lineSize": raw[15], "lineDirection": raw[16],
+                });
+                entry["type"] = json!("Shape");
+            }
+            if let CastMemberSpecificData::FilmLoop(fl) = &def.chunk.specific_data {
+                entry["filmLoop"] = json!({ "reg": [fl.reg_point.0, fl.reg_point.1], "size": [fl.width, fl.height] });
+            }
+            if matches!(def.chunk.member_type, MemberType::Palette) {
+                if let Some(p) = def.children.iter().find_map(|c| c.as_ref().and_then(|c| c.as_palette())) {
+                    entry["palette"] = json!(p.colors.iter().map(|c| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2)).collect::<Vec<_>>());
+                }
             }
             let is_sound = matches!(def.chunk.member_type, MemberType::Sound);
             let swa = def.children.iter().flatten().filter(|_| is_sound).find_map(|c| match c {
@@ -137,12 +170,31 @@ fn main() {
                         entry["font"] = export_font(&pfr, &out.join("fonts"), &name);
                     }
                 } else if let Some(t) = xm.parse_styled_text() {
+                    // The member's box (Adobe's member.rect) is in the Text Xtra's
+                    // properties: height, then width, as u32s at 48 and 52 of "text"'s data.
+                    let raw = &def.chunk.specific_data_raw;
+                    let be32 = |i: usize| u32::from_be_bytes([raw[i], raw[i + 1], raw[i + 2], raw[i + 3]]) as i64;
+                    let (width, height) = if raw.starts_with(b"\0\0\0\x04text") && raw.len() >= 56 {
+                        (be32(52), be32(48))
+                    } else {
+                        (t.width as i64, t.height as i64)
+                    };
                     entry["text"] = json!({
                         "text": t.text,
                         "alignment": format!("{:?}", t.alignment),
                         "wordWrap": t.word_wrap,
                         "fixedLineSpace": t.fixed_line_space,
-                        "size": [t.width, t.height],
+                        "size": [width, height],
+                        "defaultFont": t.default_font_name, "defaultSize": t.default_font_size,
+                        "defaultColor": t.default_fore_color.map(|c| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2)),
+                        "bg": t.bg_color.map(|c| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2)),
+                        "paragraphs": t.par_infos.iter().map(|p| json!({
+                            "lineSpacing": p.line_spacing, "lineHeight": p.line_height, "leftIndent": p.left_indent,
+                            "rightIndent": p.right_indent, "firstIndent": p.first_indent, "topSpacing": p.top_spacing,
+                            "bottomSpacing": p.bottom_spacing, "justification": p.justification,
+                            "tabs": p.tabs.iter().map(|t| json!([t.0, t.1])).collect::<Vec<_>>(),
+                        })).collect::<Vec<_>>(),
+                        "paragraphRuns": t.par_runs.iter().map(|r| json!([r.position, r.par_info_index])).collect::<Vec<_>>(),
                         "spans": t.styled_spans.iter().map(|sp| json!({
                             "text": sp.text,
                             "font": sp.style.font_face,
@@ -162,6 +214,13 @@ fn main() {
                     Chunk::XMedia(xm) if xm.raw_data.starts_with(b"3DEM") => Some(xm.raw_data.clone()),
                     _ => None,
                 });
+                // A Shockwave 3D member authored empty (no W3D media, only the Xtra's
+                // properties): the garage's previews, filled in by scripts.
+                if w3d.is_none() && def.chunk.specific_data_raw.starts_with(b"\0\0\0\x0bshockwave3d") {
+                    let base = safe_name(&name);
+                    export_empty_world(&out.join("w3d"), &base);
+                    entry["w3d"] = json!(format!("w3d/{}.json", base));
+                }
                 if let Some(w3d) = w3d {
                     match vm_rust::director::chunks::w3d::parse_w3d(&w3d) {
                         Ok(scene) => {
@@ -181,6 +240,10 @@ fn main() {
         "file": file_name,
         "stage": [file.config.movie_left, file.config.movie_top, file.config.movie_right, file.config.movie_bottom],
         "members": members,
+        "frameRate": file.config.frame_rate,
+        "stageColor": [file.config.d7_stage_color_r, file.config.d7_stage_color_g, file.config.d7_stage_color_b],
+        "castLibs": file.cast_entries.iter().map(|c| json!({"name": c.name, "file": c.file_path, "min": c.min_member, "max": c.max_member})).collect::<Vec<_>>(),
+        "fonts": file.font_table.iter().map(|(k, v)| (k.to_string(), json!(v))).collect::<serde_json::Map<_, _>>(),
     });
     if let Some(labels) = &file.frame_labels {
         index["labels"] = labels.labels.iter().map(|l| json!([l.frame_num, l.label])).collect();
@@ -201,6 +264,9 @@ fn main() {
                 json!({
                     "channel": s.channel_number, "start": s.start_frame, "end": s.end_frame,
                     "scripts": s.scripts.iter().map(|r| json!([r.cast_lib, r.cast_member])).collect::<Vec<_>>(),
+                    "params": s.scripts.iter().map(|r| vm_rust::player::reserve_player_ref(|p| {
+                        r.parameter.iter().map(|d| vm_rust::player::datum_formatting::format_datum(d, p)).collect::<Vec<_>>()
+                    })).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -219,12 +285,50 @@ fn main() {
                     "blend": d.blend, "stretch": d.stretch, "type": d.sprite_type, "rotation": d.rotation, "skew": d.skew,
                     "fore": [d.fore_color, d.fore_color_g, d.fore_color_b],
                     "back": [d.back_color, d.back_color_g, d.back_color_b], "colorFlag": d.color_flag,
+                    "blendPct": blend_percent(d.blend, d.sprite_flags, file.version),
+                    "flipH": d.flip_h(), "flipV": d.flip_v(), "editable": d.editable, "moveable": d.moveable, "trails": d.trails,
                 })
             })
             .collect();
     }
     fs::write(out.join("index.json"), serde_json::to_string_pretty(&index).unwrap()).unwrap();
     eprintln!("{}: {} members", file_name, index["members"].as_array().unwrap().len());
+}
+
+/// A field's layout and its text with the formatting runs (fonts resolved by the
+/// movie's font table).
+fn field_json(f: &vm_rust::director::enums::FieldInfo, def: &vm_rust::director::chunks::cast_member::CastMemberDef, fonts: &std::collections::HashMap<u16, String>) -> Value {
+    let stxt = def.children.iter().find_map(|c| match c {
+        Some(Chunk::Text(t)) => Some(t),
+        _ => None,
+    });
+    let runs = stxt.map(|t| t.parse_formatting_runs()).unwrap_or_default();
+    json!({
+        "text": stxt.map(|t| t.text.clone()).unwrap_or_default(),
+        "border": f.border, "margin": f.margin, "boxShadow": f.box_drop_shadow, "boxType": f.box_type,
+        "alignment": f.alignment, "bg": [f.bgpal_r >> 8, f.bgpal_g >> 8, f.bgpal_b >> 8], "scroll": f.scroll,
+        "rect": [f.rect_left, f.rect_top, f.rect_right, f.rect_bottom], "maxHeight": f.max_height,
+        "textShadow": f.text_shadow, "editable": f.flags & 1 != 0, "autoTab": f.flags & 2 != 0, "wordWrap": f.flags & 4 == 0,
+        "textHeight": f.text_height,
+        "runs": runs.iter().map(|r| json!({
+            "start": r.start_position, "height": r.height, "ascent": r.ascent,
+            "font": fonts.get(&r.font_id).cloned().unwrap_or_default(), "fontId": r.font_id,
+            "style": r.style, "size": r.font_size,
+            "color": format!("#{:02x}{:02x}{:02x}", r.color_r >> 8, r.color_g >> 8, r.color_b >> 8),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// A sprite's blend as a percentage, as dirplayer reads it (score.rs convert_raw_blend):
+/// in D6+ the byte only counts when the sprite's blend flag is set.
+fn blend_percent(raw: u8, flags: u8, version: u16) -> i32 {
+    if version >= 600 {
+        if flags & 0x10 != 0 { ((255.0 - raw as f32) * 100.0 / 255.0).round() as i32 } else { 100 }
+    } else if raw == 0 {
+        100
+    } else {
+        (raw as i32).min(100)
+    }
 }
 
 fn safe_name(name: &str) -> String {
@@ -587,4 +691,35 @@ fn decode_texture(data: &[u8]) -> Option<image::RgbaImage> {
         }
     }
     Some(img)
+}
+
+/// The world of a new, empty Shockwave 3D member, as Adobe's player makes it
+/// (new(#shockwave3d), checked with its Lingo): the camera DefaultView 250 units out
+/// on +Z (fieldOfView 34.516, hither 1), a black ambient light UIAmbient and a white
+/// directional light UIDirectional shining down from the front-top (directionalPreset
+/// #topCenter).
+fn export_empty_world(dir: &Path, base: &str) {
+    let node = |name: &str, typ: &str, transform: [f32; 16], fov: f32, far: f32| {
+        json!({
+            "name": name, "parent": "world", "type": typ, "resource": name, "modelResource": "", "shader": "",
+            "visibility": 1, "transform": transform.to_vec(), "near": 1.0, "far": far, "fov": fov, "ortho": false,
+        })
+    };
+    let light = |name: &str, typ: &str, color: [f32; 3]| {
+        json!({ "name": name, "type": typ, "color": color.to_vec(), "attenuation": [1.0, 0.0, 0.0], "spotAngle": 90.0, "enabled": true, "specular": true, "spotDecay": false })
+    };
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    let doc = json!({
+        "bin": format!("{}.bin", base),
+        "nodes": [
+            node("DefaultView", "view", [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 250.0, 1.0], 34.516, f32::MAX),
+            node("UIAmbient", "light", [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], 30.0, 1000.0),
+            node("UIDirectional", "light", [1.0, 0.0, 0.0, 0.0, 0.0, s, -s, 0.0, 0.0, s, s, 0.0, 0.0, 176.77669, 176.77669, 1.0], 30.0, 1000.0),
+        ],
+        "shaders": [], "materials": [],
+        "lights": [light("UIAmbient", "ambient", [0.0, 0.0, 0.0]), light("UIDirectional", "directional", [1.0, 1.0, 1.0])],
+        "textures": {}, "resources": {}, "textureInfo": [], "skeletons": [], "motions": 0,
+    });
+    fs::write(dir.join(format!("{}.json", base)), serde_json::to_string(&doc).unwrap()).unwrap();
+    fs::write(dir.join(format!("{}.bin", base)), []).unwrap();
 }

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Robot Rage 2: lobby (dev)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      #stage { position: absolute; inset: 0; touch-action: none; user-select: none; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <script type="module">
+      import { devLobby } from '/src/movies/lobby060_/dev.ts';
+      devLobby().catch((e) => console.error('dev lobby:', e));
+    </script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Director runtime unit tests</title>
+    <style>
+      body { margin: 0; font: 12px monospace; background: #fff; }
+      #out { position: absolute; top: 610px; left: 0; padding: 4px; }
+      .fail { color: #c00; font-weight: bold; }
+      .known { color: #a60; }
+      .fixed { color: #06c; }
+    </style>
+  </head>
+  <body>
+    <!-- Run headless: node port/tools/unit-tests.mjs. Test stages are drawn at the top-left. -->
+    <div id="out"></div>
+    <script type="module" src="/src/director/tests/index.ts"></script>
+  </body>
+</html>

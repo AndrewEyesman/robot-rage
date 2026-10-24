@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.mjs",
-    "test": "node scripts/test-multiplayer.mjs"
+    "test": "node scripts/test-multiplayer.mjs && node port/tools/regress.mjs",
+    "test:server": "node scripts/test-multiplayer.mjs",
+    "test:port": "node port/tools/regress.mjs",
+    "test:fast": "node port/tools/regress.mjs --fast"
   },
   "dependencies": {
     "ws": "^8.18.0"

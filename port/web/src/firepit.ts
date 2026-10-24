@@ -3,7 +3,7 @@
 // on the grate.
 
 import * as THREE from 'three';
-import { ParticleSystem } from './particles';
+import { ParticleSystem } from './director/s3d/particles';
 
 async function texture(url: string): Promise<THREE.Texture> {
   const t = await new THREE.TextureLoader().loadAsync(url);

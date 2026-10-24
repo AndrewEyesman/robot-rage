@@ -1,0 +1,88 @@
+{
+ "nextId": 1010,
+ "members": {
+  "tester@home.lan": {
+   "id": 1002,
+   "name": "tester@home.lan",
+   "salt": "9d06c988b704bf08df0351af14505d57",
+   "hash": "364e4b9b0ee558b65dd4508d384c235d19f0d9d183a5c547f104eb3830389be8"
+  },
+  "rival@home.lan": {
+   "id": 1004,
+   "name": "rival@home.lan",
+   "salt": "9ebb6b4a8fb195d0720c8a1de164c70b",
+   "hash": "97aa81d1a3f8d1e3f9e7a467888f59eb9d7a0b69cb044828d3f5c7226e98de04"
+  },
+  "lobbytest@home.lan": {
+   "id": 1006,
+   "name": "lobbytest@home.lan",
+   "salt": "c44c426aef6a83e0c32e9a3ff7fe0a29",
+   "hash": "6e81c9c3230319aec4af7ea468f4d92a5e57bedafdb4232165341b7f8f3e9fd9"
+  },
+  "regress@home.lan": {
+   "id": 1008,
+   "name": "regress@home.lan",
+   "salt": "007a88a42f9a80dd5b5ef8729626e243",
+   "hash": "fe553a9efa23ffbc3c72d074c8c94651f49ab1235562d8efe5a436139cf5b8e0"
+  }
+ },
+ "robots": {
+  "1003": {
+   "robotid": 1003,
+   "memberId": 1002,
+   "robotname": "Crusher",
+   "data": {},
+   "created": 1792719198130,
+   "propertyList": "[#robotDescription: [#ram: [#r1], #torn: [], #hjul: [#h2], #motor: [#ma1], #batteri: [#b1], #vapen: [#v7, #v6], #wpnPos: [#f, #b], #special: [], #ammunition: []], #inventory: [], #money: 9, #space: 100, #spaceleft: 10, #maxSpeed: 40, #pansar: 52, #info1: 1103, #saveMap: 0, #soldweapons: [], #hacker: 1]",
+   "stats": {
+    "Win": 1,
+    "lose": 0,
+    "draw": 0
+   },
+   "score": 10
+  },
+  "1005": {
+   "robotid": 1005,
+   "memberId": 1004,
+   "robotname": "Rival",
+   "data": {},
+   "created": 1792818280664,
+   "propertyList": "[#robotDescription: [#ram: [#r1], #torn: [], #hjul: [#h2], #motor: [#ma1], #batteri: [#b1], #vapen: [], #wpnPos: [], #special: [], #ammunition: []], #inventory: [], #money: 60, #space: 100, #spaceleft: 10, #maxSpeed: 40, #pansar: 50, #info1: 1052, #saveMap: 0, #soldweapons: [], #speedgear: 1]",
+   "stats": {
+    "Win": 3,
+    "lose": 3,
+    "draw": 0
+   },
+   "score": 4
+  },
+  "1007": {
+   "robotid": 1007,
+   "memberId": 1006,
+   "robotname": "Lobbyist",
+   "data": {},
+   "created": 1792820541280,
+   "propertyList": "[#robotDescription: [#ram: [#r1], #torn: [], #hjul: [#h2], #motor: [#ma1], #batteri: [#b1], #vapen: [], #wpnPos: [], #special: [], #ammunition: []], #inventory: [], #money: 70, #space: 100, #spaceleft: 10, #maxSpeed: 40, #pansar: 50, #info1: 1042, #saveMap: 0, #soldweapons: []]",
+   "stats": {
+    "Win": 2,
+    "lose": 3,
+    "draw": 0
+   },
+   "score": 16
+  },
+  "1009": {
+   "robotid": 1009,
+   "memberId": 1008,
+   "robotname": "Regress",
+   "data": {},
+   "created": 1792824571747,
+   "propertyList": "[#robotDescription: [#ram: [#r1], #torn: [], #hjul: [#h2], #motor: [#ma1], #batteri: [#b1], #vapen: [#v7, #v6], #wpnPos: [#f, #b], #special: [], #ammunition: []], #inventory: [], #money: 9, #space: 100, #spaceleft: 10, #maxSpeed: 40, #pansar: 52, #info1: 1103, #saveMap: 0, #soldweapons: [], #hacker: 1]",
+   "stats": {
+    "Win": 1,
+    "lose": 0,
+    "draw": 0
+   },
+   "score": 10
+  }
+ },
+ "sessions": {}
+}

@@ -11,12 +11,15 @@ PORT=${1:-8091}
 SRC=${REF_PROJECTOR:-$HOME/rr-spike/app/stage/spr}
 WORK=${REF_WORK:-/tmp/rrwork/ref}
 C=${REF_CONTAINER:-rr-ref}
+# Containers share the host's network, so each needs its own X display: rr-ref uses :5,
+# others one derived from their name (or REF_DISPLAY).
+D=${REF_DISPLAY:-$([ "$C" = rr-ref ] && echo :5 || echo ":$((10 + $(printf %s "$C" | cksum | cut -d' ' -f1) % 80))")}
 rm -rf "$WORK/spr"; mkdir -p "$WORK"; cp -r "$SRC" "$WORK/spr"
 rm -rf "$WORK/spr/game"; mkdir "$WORK/spr/game"; cp -L public/game/* "$WORK/spr/game/"
 curl -fsS "http://127.0.0.1:$PORT/game/main.ini" > "$WORK/spr/game/main.ini"
 docker rm -f "$C" >/dev/null 2>&1 || true
-docker run -d --name "$C" --network host -v "$WORK":/ref robotrage-wine-ref bash -c \
-  'Xvfb :5 -screen 0 1024x768x24 & sleep 1; export DISPLAY=:5; cd /ref/spr; wine SPR.exe "game\\wrapper_robotragerearmed.dcr" > /ref/wine.log 2>&1; sleep infinity' >/dev/null
+docker run -d --name "$C" --network host -e D="$D" -v "$WORK":/ref robotrage-wine-ref bash -c \
+  'Xvfb $D -screen 0 1024x768x24 & sleep 1; export DISPLAY=$D; cd /ref/spr; wine SPR.exe "game\\wrapper_robotragerearmed.dcr" > /ref/wine.log 2>&1; sleep infinity' >/dev/null
 for i in $(seq 1 60); do
   sleep 2
   tools/reference/refctl.sh shot "$WORK/_wait.png" 2>/dev/null || continue

@@ -4,9 +4,9 @@
 
 import * as THREE from 'three';
 import { intersects, MapSprite } from './collision';
-import { LightRig, makeDirectorMaterial } from './director-material';
+import { LightRig, makeDirectorMaterial } from './director/s3d/material';
 import { parts } from './parts';
-import type { W3dMember } from './w3d';
+import type { W3dMember } from './director/s3d/w3d';
 
 /** A robot's parts, as in the game's robotDescription property list. */
 export interface RobotDescription {

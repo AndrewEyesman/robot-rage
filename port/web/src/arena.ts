@@ -1,8 +1,8 @@
 // The arena world, set up as the arena movie's BuildWorld does.
 
 import * as THREE from 'three';
-import { AMBIENT, DIRECTIONAL, LightRig, POINT } from './director-material';
-import { W3dMember, setModelSide, setModelVisible } from './w3d';
+import { AMBIENT, DIRECTIONAL, LightRig, POINT } from './director/s3d/material';
+import { W3dMember, setModelSide, setModelVisible } from './director/s3d/w3d';
 
 export interface Arena {
   member: W3dMember;

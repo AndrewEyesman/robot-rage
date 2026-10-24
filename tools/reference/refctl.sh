@@ -11,7 +11,10 @@
 #   refctl.sh keydown|keyup <keysym>
 set -euo pipefail
 C=${REF_CONTAINER:-rr-ref}
-x() { docker exec "$C" env DISPLAY=:5 "$@"; }
+# Containers share the host's network, so each needs its own X display: rr-ref uses :5,
+# others one derived from their name (or REF_DISPLAY).
+D=${REF_DISPLAY:-$([ "$C" = rr-ref ] && echo :5 || echo ":$((10 + $(printf %s "$C" | cksum | cut -d' ' -f1) % 80))")}
+x() { docker exec "$C" env DISPLAY="$D" "$@"; }
 origin() {
   local w; w=$(x xdotool search --onlyvisible --name "Projector|Robot|Shockwave" | tail -1)
   x xdotool getwindowgeometry --shell "$w" | awk -F= '/^X=/{X=$2} /^Y=/{Y=$2} END{print X, Y}'

@@ -88,3 +88,7 @@ lighting normals stored in the 3D models, so the extractor rebuilds and smooths 
 dirplayer remains the playable version on port 8090 until the port can replace it.
 After that it stays the yardstick: the one thing that runs the original scripts and
 can answer "what did the game actually do here?".
+
+Update 2026-10-24: the maintainer no longer cares about dirplayer as a game ("the port is much
+more playable already"). It isn't kept playable any more: no work goes into it except
+what the port's checks need from it as a reference.
