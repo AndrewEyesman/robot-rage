@@ -1,10 +1,12 @@
 // login013_ behavior "listrobotsframe" (frame "listrobots"): loads the member's
 // robots into the five rows; create, delete and choose a robot to enter the garage.
+// With gameFixes.keepLogin that first load also checks a kept login (resumeChecked).
 
 import { Behavior, G, callGlobal, getPref, go, member, put, sendAllSprites, sprite, the } from '../../director';
 import { EMPTY, LList, LPropList, contains, num, point, propList, sym, symbol, value, voidp, type LSymbol, type LValue } from '../../lingo';
 import { formatIncomingText, formatOutgoingText } from './s029-mac-pc';
 import { JumpMovie } from './s032-movie-behavior';
+import { resumeChecked, resumeTimedOut, resumingLogin } from './s009-login-frame';
 
 
 export class Listrobotsframe extends Behavior {
@@ -38,6 +40,10 @@ export class Listrobotsframe extends Behavior {
         member('gcom_STATE').text = 'Please Wait!\rLoading your robots';
         G.gCom.send('main.asp', propList('action', 'getmyrobots', 'sessionid', G.gLobby.prop('session'), 'uniquecode', G.gUser.uniqueCode), sym('done'), this, 0, propList(sym('loc'), point(554, 394)));
         this.pState = sym('wait');
+        break;
+      case sym('wait'):
+        // gCom drops a request unanswered after 30 s: log in by hand then.
+        if (resumeTimedOut()) this.done(propList(sym('err'), -2));
         break;
       case sym('login'): {
         const robotid = this.selected().prop('robotid');
@@ -140,6 +146,10 @@ export class Listrobotsframe extends Behavior {
   }
 
   done(L: LPropList) {
+    if (resumingLogin() && !resumeChecked(num(L.prop('err')))) {
+      this.pState = sym('done');
+      return;
+    }
     switch (num(L.prop('err'))) {
       case 0: {
         const myList = L.prop('robotlist') as LList;

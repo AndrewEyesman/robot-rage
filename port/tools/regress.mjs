@@ -114,6 +114,8 @@ const KEPT_TO_GARAGE = [
 ];
 /** The browser's kept login (gameFixes.keepLogin). */
 const KEPT = `localStorage.getItem('rr-login')`;
+/** Collects the login movie's frame labels as they're drawn, in window.__labels (set before the loader is done). */
+const LABEL_LOG = `(() => { window.__labels = new Set(); const prev = p.onFrame; p.onFrame = (pl) => { prev?.(pl); if (pl.movie?.name === 'login013_') window.__labels.add(pl.frameLabel); }; })()`;
 
 /** In the lobby: the point on a name's line in the room's user list (sprite 9, 13 px lines). */
 // Collects the lobby's P2PMessageHandler script errors in window.__p2pErrors, and
@@ -563,7 +565,9 @@ const CHECKS = [
       ...LOGIN,
       ['expect', 'the login is kept', `JSON.parse(${KEPT}).email === 'tester@home.lan'`],
       ['tab', 'reload', '/game.html'],
+      ['eval', LABEL_LOG],
       ['expect', 'a reload goes straight to the robot list', `p.movie.name === 'login013_' && p.member('robotname1').text === 'Crusher' && p.globals.gMyEmail === 'tester@home.lan'`, 15000],
+      ['expect', 'never showing the login screen on the way', `window.__labels.has('listrobots') && !window.__labels.has('login')`],
       ['click', 690, 553],
       ['expect', 'QUIT logs out and forgets the login', `p.frameLabel === 'login' && !${KEPT} && p.member('username_box').text === 'tester@home.lan'`, 5000],
       ['tab', 'after-quit', '/game.html'],
@@ -960,6 +964,26 @@ const CHECKS = [
       // With the original's empty PASS (?quirks=ircauth) the server refuses the nick; the lobby tries again.
       ['tab', 'nopass', '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress&quirks=ircauth'],
       ['expect', 'with ?quirks=ircauth the nick is refused (Session required)', `p.movie.name === 'lobby060_' && /Session required/.test(p.globals.gIRC?.pLog ?? '')`, 20000],
+    ],
+  },
+  {
+    // Changing rooms (docs/port-issues.md #86): the room button's mouseUp (lobby060_ 31)
+    // gives sprites 45-52 the plain button image, and 45 is an empty channel on the room
+    // screen; the port drew it in the stage's corner until the next frame emptied it.
+    name: 'lobby-room-buttons',
+    url: '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress',
+    setup: ensureRegressAccount,
+    steps: [
+      ['expect', 'lobby reached the country list', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1500],
+      ['click', 50, 350],
+      ['wait', 2000],
+      ['click', 40, 107],
+      ['expect', 'in Sweden East', `String(p.globals.gRoom.pRoom) === 'rw11e'`, 5000],
+      ['eval', `(() => { const b = p.sprites.flatMap((s) => s.scriptInstanceList).find((i) => i.constructor.name === 'GoToRoomBehavior' && String(i.room) === 's');
+        b.mouseDown(); b.mouseUp(); window.__s45 = [p.sprite(45).member?.name ?? '', p.drawOrder().some((s) => s.spriteNum === 45)]; })()`],
+      ['expect', 'between frames the button image is on empty sprite 45, which is not drawn', `window.__s45[0] !== '' && window.__s45[1] === false`],
+      ['expect', 'and the click takes you to South', `String(p.globals.gRoom.pRoom) === 'rw11s'`, 5000],
     ],
   },
   {

@@ -50,6 +50,19 @@ describe('drawing order', () => {
     p.sprite(5).locZ = 1;
     eq(p.drawOrder().map((s) => s.spriteNum), [1, 5, 3, 2]);
   });
+
+  test('a member set on an empty channel is not drawn unless the channel is a puppet', 'Director docs (an empty channel needs puppetSprite; the score empties it at the next frame); the lobby room buttons (docs/port-issues.md #86)', async () => {
+    const p = await play({
+      frames: 1,
+      members: [bitmap(1, 10, 10)],
+      sprites: [{ ch: 1, frames: [1, 1] as [number, number], member: 1 }],
+    });
+    p.stepFrame();
+    p.sprite(2).member = 1;
+    eq(p.drawOrder().map((s) => s.spriteNum), [1], 'not drawn between frames');
+    p.sprite(2).puppet = true;
+    eq(p.drawOrder().map((s) => s.spriteNum), [1, 2], 'a puppet is');
+  });
 });
 
 describe('inks', () => {

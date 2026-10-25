@@ -1,59 +1,68 @@
 // login013_ behavior "LoginFrame" (frames "login" and "create"): logs in or creates
 // a member through gCom, then goes to the robot list. With gameFixes.keepLogin a
-// session kept from an earlier login goes straight to the robot list while it's alive.
+// session kept from an earlier login skips this screen (resumeKeptLogin).
 
 import { Behavior, G, getPref, go, gotoNetPage, member, put, setPref, sprite, the } from '../../director';
 import { EMPTY, LPropList, num, point, propList, sym, type LSymbol } from '../../lingo';
 import { callGlobal, dot as dget } from '../../director';
-import { forgetLogin, keepLogin, keptLogin, scrolledFieldText, type KeptLogin } from '../fixes';
+import { forgetLogin, keepLogin, keptLogin, scrolledFieldText } from '../fixes';
+
+/** gameFixes.keepLogin: when the robot list began checking a kept login (resumeKeptLogin). */
+let resumedAt: number | undefined;
+let resumeTried = false;
+
+/**
+ * gameFixes.keepLogin: with a kept login, once a page, leaves what a login leaves and
+ * answers true, and the caller (the first frame, before this screen is drawn) goes
+ * straight to the robot list, whose getmyrobots checks the session (resumeChecked).
+ */
+export function resumeKeptLogin(): boolean {
+  const kept = keptLogin();
+  if (!kept || resumeTried) return false;
+  resumeTried = true;
+  G.gUrl = dget(G.gShockplay, 'info', 'gUrl');
+  G.gLobby = propList(sym('miniclipid'), kept.id, sym('session'), kept.sid);
+  G.gMyEmail = kept.email;
+  setPref('RobotRageEmail1', kept.email);
+  resumedAt = the.milliSeconds;
+  return true;
+}
+
+/**
+ * gameFixes.keepLogin: the robot list's answer for a resumed login (-2 for none in
+ * time): true when it's alive. Otherwise back to the login screen; a dead session (18)
+ * is forgotten, a failed connection keeps it for the next visit.
+ */
+export function resumeChecked(err: number): boolean {
+  resumedAt = undefined;
+  if (err === 0) return true;
+  if (err === 18) forgetLogin();
+  member('gcom_STATE').text = EMPTY;
+  go('login');
+  return false;
+}
+
+/** gameFixes.keepLogin: a resumed login's check has gone unanswered past gCom's 30 s. */
+export function resumeTimedOut(): boolean {
+  return resumedAt !== undefined && the.milliSeconds > resumedAt + 31000;
+}
+
+export function resumingLogin(): boolean {
+  return resumedAt !== undefined;
+}
 
 
 export class LoginFrame extends Behavior {
   pState: LSymbol | undefined;
   pTryNum = 0;
-  /** gameFixes.keepLogin: the kept login being checked, and since when. */
-  pKept: KeptLogin | undefined;
-  pKeptSince = 0;
 
   beginSprite() {
     G.gLobby = new LPropList();
     this.pState = sym('init');
-    const kept = keptLogin();
-    const a = getPref('RobotRageEmail1') ?? kept?.email ?? '';
+    const a = getPref('RobotRageEmail1') ?? keptLogin()?.email ?? '';
     if (a.length < 1 && the.frameLabel === 'login') go('create');
     else member('username_box').text = a;
     member('gcom_STATE').text = EMPTY;
-    if (kept) this.resume(kept);
-  }
-
-  /** gameFixes.keepLogin: check the kept session with the server (getmyrobots answers 18 for a dead one). */
-  private resume(kept: KeptLogin) {
-    G.gUrl = dget(G.gShockplay, 'info', 'gUrl');
-    member('gcom_STATE').text = 'Please Wait!';
-    G.gCom.send(
-      'main.asp',
-      propList('action', 'getmyrobots', 'sessionid', kept.sid, 'uniquecode', G.gUser.uniqueCode),
-      sym('resumed'), this, 0, propList(sym('loc'), point(554, 394)),
-    );
-    this.pKept = kept;
-    this.pKeptSince = the.milliSeconds;
-    this.pState = sym('resume');
-  }
-
-  resumed(L: LPropList) {
-    if (this.pState !== sym('resume') || !this.pKept) return;
-    const err = num(L.prop('err'));
-    if (err === 0) {
-      G.gLobby.setaProp(sym('miniclipid'), this.pKept.id);
-      G.gLobby.setaProp(sym('session'), this.pKept.sid);
-      this.pState = sym('resumed');
-      return;
-    }
-    // A dead session is forgotten; a failed connection keeps it for the next visit.
-    if (err === 18) forgetLogin();
-    this.pKept = undefined;
-    member('gcom_STATE').text = EMPTY;
-    this.pState = sym('done');
   }
 
   exitFrame() {
@@ -63,15 +72,6 @@ export class LoginFrame extends Behavior {
         this.pState = sym('done');
         break;
       case sym('CreateMember'):
-        break;
-      case sym('resume'):
-        // gCom drops a request unanswered after 30 s: log in by hand then.
-        if (the.milliSeconds > this.pKeptSince + 31000) this.resumed(propList(sym('err'), -2));
-        break;
-      case sym('resumed'):
-        G.gMyEmail = this.pKept!.email;
-        setPref('RobotRageEmail1', this.pKept!.email);
-        go('listrobots');
         break;
       case sym('listRobots'):
         G.gMyEmail = scrolledFieldText('username_box');

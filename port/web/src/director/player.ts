@@ -767,9 +767,15 @@ export class Player {
     this.renderers.forEach((r) => r.endFrame?.(this));
   }
 
-  /** The sprites in the order they're drawn, back to front (also read by port/tools/regress.mjs). */
+  /**
+   * The sprites in the order they're drawn, back to front (also read by port/tools/regress.mjs).
+   * A member a script gave a channel with no score sprite that isn't a puppet isn't drawn:
+   * the score empties the channel at the next frame, before Director draws the stage, but
+   * the port also draws between frames (the lobby's room buttons give sprites 45-52 their
+   * plain image, and 45 is empty: it showed in the stage's corner on a fast display).
+   */
   drawOrder(): Sprite[] {
-    return this.sprites.filter((s) => s.spriteNum > 0 && s.member && s.visible).sort((a, b) => a.locZ - b.locZ || a.spriteNum - b.spriteNum);
+    return this.sprites.filter((s) => s.spriteNum > 0 && s.member && s.visible && (s.puppet || s.span !== null)).sort((a, b) => a.locZ - b.locZ || a.spriteNum - b.spriteNum);
   }
 
   // ---------------------------------------------------------------- input
