@@ -3,10 +3,13 @@
 // `visible`. Sprites have no visibility property and this behavior declares none, so
 // each of those lines is a script error in Director: beginSprite ends there (it is
 // the last line), and while opening or closing prepareFrame stops before the slide,
-// so these sprites never move. Kept as such.
+// so these sprites never move. Kept as such with ?quirks=doorbuttons; otherwise
+// (gameFixes.doorButtons) `visible` is set as in robotwars', so the buttons are hidden on
+// arriving instead of showing for a frame, and slide with the doors.
 
 import { Behavior, go, sprite, the } from '../../director';
 import { propList, sym, type LSymbol, type LValue } from '../../lingo';
+import { gameFixes } from '../fixes';
 import { eq } from './util';
 
 
@@ -34,6 +37,7 @@ export class Doorbehavior extends Behavior {
     this.counter = 0;
     // sprite(sp).visibility = 0 on frames 4, 8, 9 and 19: the script error that ends
     // this handler is its last line anyway.
+    if (gameFixes.doorButtons && (the.frame === 4 || the.frame === 9 || the.frame === 8 || the.frame === 19)) sprite(this.sp).visible = false;
   }
 
   prepareFrame() {
@@ -48,7 +52,8 @@ export class Doorbehavior extends Behavior {
       if (this.dest < this.x) this.dx2 = -1;
       this.pState = sym('moveopen');
     } else if (st === sym('moveopen')) {
-      return; // sprite(sp).visibility = 1: the script error ends the handler here.
+      if (!gameFixes.doorButtons) return; // sprite(sp).visibility = 1: the script error ends the handler here.
+      sprite(this.sp).visible = true;
       this.counter = this.counter + 1;
       if (this.ScrollTo(this.dest) === sym('done')) this.pState = sym('done');
     } else if (st === sym('close')) {
@@ -61,7 +66,8 @@ export class Doorbehavior extends Behavior {
       if (this.dest < this.x) this.dx2 = -1;
       this.pState = sym('moveclose');
     } else if (st === sym('moveclose')) {
-      return; // sprite(sp).visibility = 1: the script error ends the handler here.
+      if (!gameFixes.doorButtons) return; // sprite(sp).visibility = 1: the script error ends the handler here.
+      sprite(this.sp).visible = true;
       this.counter = this.counter + 1;
       // ScrollTo(me, 0): ScrollTo slides to the dest property whatever it's given (below).
       if (this.ScrollTo(0) === sym('done')) this.pState = sym('done');

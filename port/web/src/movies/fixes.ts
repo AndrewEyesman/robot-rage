@@ -98,6 +98,11 @@
 //   after its press, so the click was cut before it could be heard. In touch mode the
 //   click plays on its own, outside the channels (s030 playsound). A mouse and keyboard
 //   session is unchanged.
+// - The lobby's bottom buttons on entering (?quirks=doorbuttons, #85): WORKSHOP, TRAINING,
+//   GARAGE, HELP and QUIT (sprites 100-107 of the door frames) have the lobby's copy of the
+//   door behavior (lobby060_ 65), which sets `visibility` for `visible`, a script error:
+//   they weren't hidden on arriving, so they showed in place for a frame, then vanished
+//   until the slide was over, and never slid. They now hide and slide with the doors.
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult, player, setRelaySession } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -127,6 +132,7 @@ export const gameFixes = {
   relayAuth: !quirks.includes('relayauth'),
   lobbyLost: !quirks.includes('lobbylost'),
   touchClick: !quirks.includes('touchclick'),
+  doorButtons: !quirks.includes('doorbuttons'),
 };
 
 // The kept login changes only this browser: the player's Settings choose it.

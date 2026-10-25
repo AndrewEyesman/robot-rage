@@ -43,7 +43,7 @@ Add a line whenever something is verified to work, and an automated check to
 | No caret is left blinking in a label after the fields go (the focus goes with its sprite) | `login-robot-list`, `runtime-unit` |
 | Clicking a robot selects it with the highlight bar | `login-robot-list` (screenshot) |
 | Settings tab opens; CHAT toggles and is saved | `login-robot-list` |
-| Screen entries: the door halves (and the arena's control panel) slide all the way to their places and arrive together, as the original's bytecode does (docs/port-issues.md #47) | `door-slides` |
+| Screen entries: the door halves (and the arena's control panel) slide all the way to their places and arrive together, as the original's bytecode does (docs/port-issues.md #47); the lobby's bottom buttons are hidden until they slide in with the doors (the original showed them for a frame and never slid them; `?quirks=doorbuttons`, #85) | `door-slides` |
 | USE ROBOT goes to the garage | `garage-preview` |
 
 ## Garage (factory0604)

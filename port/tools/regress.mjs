@@ -140,11 +140,16 @@ const CARD_OF = (name) =>
   `String(p.frameScript.pState) === '#waiting' && String(p.globals.getOpponentState) === '#waiting' && p.frameScript.pchallengestate === 1 && String(p.globals.gRobotData?.getaProp(sym('robotname'))) === '${name}'`;
 
 /**
- * Records every frame cycle in which a door half (robotwars 263) is closing or closed:
- * [sprite, locH, closed position, state], to check the slides run to the end.
+ * Records every frame cycle in which a door half (robotwars 263, and the lobby's bottom
+ * buttons, lobby060_ 65) is closing or closed: [sprite, locH, closed position, state], to
+ * check the slides run to the end; and in window.__doorsShown, a half drawn before its
+ * slide started (gameFixes.doorButtons).
  */
-const DOOR_LOG = `(() => { window.__doors = []; const prev = p.onFrame; p.onFrame = (pl) => { prev?.(pl); const hs = [];
-  for (const s of pl.sprites) for (const b of s?.scriptInstanceList ?? []) if (b.constructor.name === 'DoorBehavior' && ['#moveclose', '#done'].includes(String(b.pState))) hs.push([s.spriteNum, s.locH, b.closepos, String(b.pState)]);
+const DOOR_LOG = `(() => { window.__doors = []; window.__doorsShown = []; const prev = p.onFrame; p.onFrame = (pl) => { prev?.(pl); const hs = [];
+  for (const s of pl.sprites) for (const b of s?.scriptInstanceList ?? []) if (['DoorBehavior', 'Doorbehavior'].includes(b.constructor.name)) {
+    if (['#moveclose', '#done'].includes(String(b.pState))) hs.push([s.spriteNum, s.locH, b.closepos, String(b.pState)]);
+    else if (s.visible && [4, 8, 9, 19].includes(pl.frame)) window.__doorsShown.push([pl.movie?.name, pl.frame, s.spriteNum, String(b.pState)]);
+  }
   if (hs.length) window.__doors.push({ movie: pl.movie?.name, frame: pl.frame, hs }); }; return 1; })()`;
 /** The doors of a movie closed in one slide: 30+ frame cycles, and every half at its closed position when the playhead moved on. */
 const DOORS_CLOSED = (movie) => `(() => { const e = window.__doors.filter((d) => d.movie === '${movie}'); const last = e[e.length - 1];
@@ -1059,7 +1064,8 @@ const CHECKS = [
       ['expect', 'garage entry: every half slides to its closed position, together', DOORS_CLOSED('factory0604'), 3000],
       ['tab', 'lobby', '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress&trace'],
       ['eval', DOOR_LOG],
-      ['expect', 'lobby entry: the same', DOORS_CLOSED('lobby060_'), 30000],
+      ['expect', 'lobby entry: the same, the bottom buttons too', DOORS_CLOSED('lobby060_'), 30000],
+      ['expect', 'lobby entry: no door half or bottom button drawn before its slide (gameFixes.doorButtons)', `(() => { if (window.__doorsShown.length) throw new Error(JSON.stringify(window.__doorsShown.slice(0, 4))); return 1; })()`, 1000],
       ['tab', 'arena', '/index.html?layout=original&parts=r1,h2,ma1,b1,v6&pos=f&pansar=50&name=Crusher'],
       ['expect', 'Training ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
       ['eval', DOOR_LOG],
