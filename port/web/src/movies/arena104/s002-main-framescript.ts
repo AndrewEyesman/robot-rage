@@ -5,7 +5,7 @@
 // result overlay, reporting the score (setrobotscore), revenge and draw offers, and the
 // sprites shots and sparkles borrow (createSprite / createSparkle).
 
-import { arenaFixes, takeTabSwitch } from './enhancements';
+import { SILENCE_MS, arenaFixes, pageAway, takeTabSwitch } from './enhancements';
 import {
   G, dot, externalParamValue, go, intersects, keyPressed, member, netDone, netError, pass, puppetSprite, put, script, sendAllSprites, sendSprite,
   sound, sprite, the, type MultiuserXtra, type SoundMember,
@@ -67,8 +67,16 @@ export class MainFramescript {
   pSeconds: number = undefined as unknown as number;
   pTime: number = undefined as unknown as number;
   pSend: number = undefined as unknown as number;
+  /** arenaFixes.awayLoss: when the last frame ran, and whether the page was away too long to play on. */
+  pLastFrame = 0;
+  pAway = false;
+  /** The relay said the opponent left (before this page found its own connection gone). */
+  pOpponentLeft = false;
 
   beginSprite() {
+    this.pLastFrame = the.milliSeconds;
+    this.pAway = false;
+    this.pOpponentLeft = false;
     sendSprite(1, s('usedoktor'));
     G.gFrame = this;
     this.pPongCount = 0;
@@ -289,6 +297,46 @@ export class MainFramescript {
     }
   }
 
+  /**
+   * The port's fix (arenaFixes.awayLoss, enhancements.ts): no frame for the opponent's
+   * 20 s of silence means the browser froze the page (in the background), and the
+   * opponent has taken the round as a walkover. Once the round can be given up (not
+   * while a result is being shown or sent), give it up.
+   */
+  checkAway() {
+    const now = the.milliSeconds;
+    if (now - this.pLastFrame >= SILENCE_MS && this.state !== s('gameover')) this.pAway = true;
+    this.pLastFrame = now;
+    if (this.pAway && this.canGiveUp()) this.awayLost();
+  }
+
+  /** Whether the round is on (or about to be, or between rounds): what a walkover ends. */
+  canGiveUp() {
+    const st = this.state;
+    return !!st && !['init', 'showResult', 'scaleText', 'doneScale', 'sendResult', 'waitNet', 'done', 'gameover', 'gorevenge', 'godraw', 'problem'].includes(st.name);
+  }
+
+  /** arenaFixes.awayLoss: the page was away too long, or lost its connection away: give the round up as SURRENDER does. */
+  awayLost() {
+    this.pAway = false;
+    sendSprite(211, s('addChatLine'), 'Robot Rage:' + TAB + 'You were away too long and lost the connection: the round goes to ' + lingoString(G.gOpponent) + '.');
+    this.hideOverlay();
+    this.walkover();
+  }
+
+  /**
+   * The match connection reported a problem (ArenaMessageHandler). The original asks
+   * the server whether it can still be reached (noConnection) and, if so, takes the
+   * round. With arenaFixes.awayLoss, its own connection gone while the page was in the
+   * background (or just back from it), before any word that the opponent left, means
+   * the relay saw this player leave: the round is given up instead.
+   */
+  connectionLost(own: boolean) {
+    if (!own) this.pOpponentLeft = true;
+    if (arenaFixes.awayLoss && own && !this.pOpponentLeft && pageAway() && this.canGiveUp()) return this.awayLost();
+    if (this.state === s('idle') || this.state === s('waitOpponent')) this.noConnection();
+  }
+
   noConnection() {
     const infoList = new LPropList();
     infoList.addProp('action', 'PING');
@@ -319,6 +367,7 @@ export class MainFramescript {
   }
 
   prepareFrame() {
+    if (arenaFixes.awayLoss) this.checkAway();
     mu().checkNetMessages(20);
     this.pCounter = add(this.pCounter, 1);
     this.checkTempo();

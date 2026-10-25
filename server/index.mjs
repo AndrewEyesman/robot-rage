@@ -16,7 +16,7 @@
 //     WS_PER_ADDRESS [40], WS_TOTAL [2000], WS_NEW_PER_MIN [120], WS_MAX_PAYLOAD_KB [256],
 //     WS_PING_SEC [30], IRC_MAX_LINE [1024], IRC_LINES_PER_10S [200], IRC_CHAT_PER_10S [10],
 //     IRC_REGISTER_SEC [60], RELAY_MSGS_PER_SEC [1000], RELAY_KB_PER_SEC [1024],
-//     RELAY_PEERS_PER_HOST [8], SESSION_DAYS [30], CLIENT_ERRORS_PER_MIN [30]; 0 turns a
+//     RELAY_PEERS_PER_HOST [8], RELAY_SILENT_SEC [20], SESSION_DAYS [30], CLIENT_ERRORS_PER_MIN [30]; 0 turns a
 //     limit off
 //   IRC_REQUIRE_SESSION=1 ...   the lobby takes a nick only with a session owning its robot as
 //     PASS (the port sends it; the original and dirplayer send none, so they can't join)

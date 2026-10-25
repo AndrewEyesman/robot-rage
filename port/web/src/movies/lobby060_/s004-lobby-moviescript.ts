@@ -23,6 +23,12 @@ import { eq, setMU } from './util';
 
 const ERR_NO_CONNECTION = '-2147216214';
 
+/** gameFixes.lobbyLost: whether the lobby's IRC connection or its match listener is gone. */
+export function lobbyConnectionLost(): boolean {
+  const open = (m: unknown) => m instanceof MultiuserXtra && m.connected;
+  return !open(G.gMultiuserInstanceIRC) || !open(G.P2PmuInstanceListen);
+}
+
 /** gameFixes.lobbyPing: whether the clicked robot's connection (connectP2P) has opened. */
 let pingConnected = false;
 export const pingConnectionOpen = () => pingConnected;

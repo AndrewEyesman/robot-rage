@@ -7,6 +7,7 @@
 import { G, alert, pass, put, sendSprite, the, newMultiuser, type MultiuserXtra } from '../../director';
 import { LList, LPropList, lingoString, objectp, propList, sym, voidp, type LValue } from '../../lingo';
 import { debug } from '../robotwars/s007-jump-movie';
+import { arenaFixes } from './enhancements';
 import { getPlayerVariable } from './s144-debug-stuff';
 import { eq, n, pget, sp } from './util';
 
@@ -51,7 +52,15 @@ export function ArenaMessageHandler(me: LValue, Msg: LPropList) {
       fel = 1;
     }
     if (fel === 1) {
-      const st = (G.gFrame as { state?: LValue } | undefined)?.state;
+      // The port's fix (arenaFixes.awayLoss): the main frame script tells its own
+      // connection's loss (from the Xtra, "System") from the relay's word that the
+      // opponent left, and decides (s002 connectionLost).
+      const frame = G.gFrame as { state?: LValue; connectionLost?(own: boolean): void } | undefined;
+      if (arenaFixes.awayLoss) {
+        frame?.connectionLost?.(eq(pget(Msg, 'senderID'), 'System'));
+        return undefined;
+      }
+      const st = frame?.state;
       if (st === s('idle') || st === s('waitOpponent')) {
         sendSprite(0, s('noConnection'));
       }

@@ -46,6 +46,16 @@
 // replaced, not dropped by the host) the relay calls `onLeave(leaver, other)` for
 // each counterpart: ranked results take that as the player leaving the match
 // (results.mjs). Sockets without a session work as before but never count as leaving.
+//
+// Keepalive (the port, multiuser.ts): a client may send {t: "ka"} every second, which
+// goes nowhere. A socket of a connection between two players (a peer, or a listener with
+// a peer) that has sent one and then nothing at all for RELAY_SILENT_SEC is closed (at
+// once, without a closing handshake): its page has stopped, as a phone's browser
+// freezes a page in the background, while the browser still answers the heartbeat's
+// pings for it. That counts as the player leaving, as closing the page would; the
+// arena's own rule takes the opponent's 20 s of silence as a walkover. A listener
+// alone (a player in the lobby), and sockets that never send one (the dirplayer page,
+// older clients), are never closed for silence.
 
 import { Bucket, LIMITS } from "./limits.mjs";
 
@@ -142,6 +152,26 @@ export class Relay {
     this.limits = limits;
     this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, peer> }
     this.epoch = Date.now();
+    if (limits.relaySilentMs) {
+      this.silenceTimer = setInterval(() => this.closeSilent(), Math.min(1000, limits.relaySilentMs / 4));
+      this.silenceTimer.unref?.();
+    }
+  }
+
+  /** Closes the sockets that said they keep alive and have been silent too long (see the top). */
+  closeSilent(now = Date.now()) {
+    const close = (ws, who) => {
+      if (!ws.keepsAlive || ws.readyState !== ws.OPEN || now - ws.heard <= this.limits.relaySilentMs) return;
+      this.log(`relay: ${who} closed (silent for ${Math.round((now - ws.heard) / 1000)} s, ${ws.clientAddress})`);
+      // At once: a frozen page wouldn't answer a closing handshake until it wakes.
+      ws.terminate();
+    };
+    for (const host of [...this.hosts.values()]) {
+      // A listener alone (a player in the lobby) has nobody waiting for it.
+      if (!host.peers.size) continue;
+      for (const peer of [...host.peers.values()]) close(peer.ws, peer.name);
+      close(host.ws, host.user);
+    }
   }
 
   /**
@@ -153,6 +183,7 @@ export class Relay {
     const msgs = new Bucket(relayMsgsPerSec, 2 * relayMsgsPerSec);
     const bytes = new Bucket(relayBytesPerSec, 2 * relayBytesPerSec);
     return (size) => {
+      ws.heard = Date.now();
       if (msgs.take() && bytes.take(size)) return true;
       this.overLimit(ws, who(), "rate limit");
       return false;
@@ -359,6 +390,10 @@ export class Relay {
     }
     if (!msg || typeof msg.t !== "string") return;
     const send = (to, m) => to?.readyState === to?.OPEN && to.send(JSON.stringify(m));
+    if (msg.t === "ka") {
+      ws.keepsAlive = true;
+      return;
+    }
     if (msg.t === "hello" || msg.t === "time") {
       ws.signalling = true;
       return send(ws, { t: msg.t, c: msg.c, now: this.now(), ...(msg.t === "hello" ? { iceServers: this.iceServers } : {}) });

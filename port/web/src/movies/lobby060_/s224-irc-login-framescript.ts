@@ -10,6 +10,9 @@ import { gameFixes } from '../fixes';
 import { JumpMovie } from '../robotwars/s007-jump-movie';
 import { getMyIP } from '../robotwars/s034-get-my-ip';
 import { DisconnectFromSMUS, OpenP2PConnection, getrankingindex } from './s004-lobby-moviescript';
+import { lobbyReentry } from './util';
+
+const LOST = 'The connection to the Lobby was lost.';
 
 export class IrcLoginFramescript extends Behavior {
   pState: LSymbol | undefined;
@@ -19,10 +22,16 @@ export class IrcLoginFramescript extends Behavior {
   infoMember: LValue;
   pseed = 0;
   pPortTable: LList | undefined;
+  /** gameFixes.lobbyLost: entering again after the lobby lost its connection (s030). */
+  pLost = false;
 
   beginSprite() {
     sendAllSprites('usedoktor');
     member('ronline').text = EMPTY;
+    // gameFixes.lobbyLost: entering again after the lobby lost its connection (s030).
+    this.pLost = lobbyReentry.lost;
+    lobbyReentry.lost = false;
+    if (this.pLost) this.showmessage(LOST);
     this.showmessage('Entering the Lobby...');
     this.pState = sym('initIRC');
     G.gLobbydata = new LPropList();
@@ -70,6 +79,7 @@ export class IrcLoginFramescript extends Behavior {
   Welcome() {
     sendSprite(1, 'usedoktor');
     this.ClearMessage();
+    if (this.pLost) this.showmessage(LOST);
     this.showmessage('Entry successful.');
     if (G.gOnline > 0) this.showmessage('Robots in lobby and battle: ' + lingoString(G.gOnline));
     (G.gUserData as LPropList).setaProp(sym('online'), sym('online'));

@@ -19,6 +19,12 @@
 // scripts see the same messages, in the same order, either way; `transport` and
 // transportInfo() say which way they go.
 //
+// A P2P connection whose relay answered its hello says it's alive on the relay socket
+// ({t: "ka"}) every KEEPALIVE_MS, from the player's cycle: a page the browser froze (a
+// phone's browser in the background) stops, and the relay closes its sockets once
+// they've been silent too long (server/relay.mjs), as when the player leaves. A hidden
+// desktop tab keeps playing (player.ts), so it keeps saying so.
+//
 // Where dirplayer is known to differ from Director (docs/inventory.md), this follows
 // Director: points and rects keep float components, sendNetMessage returns an error
 // code instead of failing, a lost connection is reported with Multiuser's own
@@ -27,7 +33,7 @@
 import { invoke } from './dispatch';
 import { scriptError } from './errors';
 import { myAddress, player } from './api';
-import { warnOnce } from './player';
+import { cycleHooks, warnOnce } from './player';
 import { byteToChar, charToByte } from '../lingo/charset';
 import { DirectLink, p2pSetting, webrtcAvailable, type Control, type Transport } from './p2p';
 import { LFloat, LList, LPoint, LPropList, LRect, LSymbol, isInt, lingoString, num, sym, type LValue } from '../lingo';
@@ -45,6 +51,14 @@ const sidParam = () => {
 
 /** "There is no current connection": a connection that failed or went away. The arena and lobby test for it. */
 export const ERR_NO_CONNECTION = -2147216214;
+
+/** How often a P2P connection tells the relay it's alive (see the top). */
+const KEEPALIVE_MS = 1000;
+/** The instances with a socket open, for the keepalive. */
+const live = new Set<MultiuserXtra>();
+cycleHooks.add((now) => {
+  for (const m of live) m.keepAlive(now);
+});
 
 const MUS_HEADER = 0x7200;
 /** The IRC ports main.ini lists (ircports); everything else is a peer on port 1626. */
@@ -120,6 +134,7 @@ export class MultiuserXtra {
   private pendingOffers: Control[] = [];
   /** Why this connection has no direct link, when it has none. */
   private relayReason = 'not connected';
+  private lastKeepAlive = -Infinity;
 
   /** setNetMessageHandler(#handler, scriptObject, subject, sender, passMessage) */
   setNetMessageHandler(handler: unknown, target?: unknown, subject?: unknown, sender?: unknown, passMessage?: unknown): number {
@@ -247,6 +262,7 @@ export class MultiuserXtra {
    * its instance (gMultiuserInstanceIRC = VOID).
    */
   dispose() {
+    live.delete(this);
     this.closeLinks();
     this.closedByUs = true;
     this.pendingOut = [];
@@ -290,10 +306,22 @@ export class MultiuserXtra {
     return links.every((l) => l!.transport === 'direct') ? 'direct' : 'relay';
   }
 
+  /** Not Director's: whether the connection is open or opening (not closed, failed or lost). */
+  get connected(): boolean {
+    return !!this.ws && !this.closedByUs && this.ws.readyState <= WebSocket.OPEN;
+  }
+
   /** The transport, the page's setting, why there's no direct link, and each link's state. */
   transportInfo() {
     const links = [...this.links.values()].map((l) => l.info());
     return { transport: this.transport, setting: p2pSetting(), reason: links.length ? links.map((l) => l.reason).join('; ') : this.relayReason, clockOffset: this.signalling?.offset, links };
+  }
+
+  /** Not Director's: the keepalive, from the player's cycle (see the top). */
+  keepAlive(now: number) {
+    if (!this.signalling || this.ws?.readyState !== WebSocket.OPEN || now - this.lastKeepAlive < KEEPALIVE_MS) return;
+    this.lastKeepAlive = now;
+    this.ws.send('{"t":"ka"}');
   }
 
   // ---------------------------------------------------------------- transport
@@ -313,6 +341,7 @@ export class MultiuserXtra {
     }
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    live.add(this);
     const current = () => this.ws === ws && !this.closedByUs;
     ws.onopen = () => {
       if (!current()) return;
@@ -341,6 +370,7 @@ export class MultiuserXtra {
     ws.onclose = ws.onerror = () => {
       if (!current()) return;
       this.ws = null;
+      live.delete(this);
       this.closeLinks();
       // A connection that never opened failed to connect; one that did was lost.
       this.receive({ errorCode: ERR_NO_CONNECTION, recipients: [this.userID], senderID: 'System', subject: this.opened ? 'ConnectionProblem' : 'ConnectToNetServer', content: undefined, timeStamp: 0 });

@@ -1038,13 +1038,14 @@ try {
   });
 
   // ---------------------------------------------------------------- walkovers
-  // A fourth server with a short report window and two ranked matches a day per pair of accounts.
+  // A fourth server with a short report window, two ranked matches a day per pair of
+  // accounts, and keepalive sockets closed after 0.6 s of silence.
   const PORT4 = PORT + 3000;
   const HTTP4 = `http://127.0.0.1:${PORT4}`;
   const WS4 = `ws://127.0.0.1:${PORT4}`;
   const dataDir4 = join(dataDir, "walkovers");
   mkdirSync(dataDir4);
-  server4 = startServer(dataDir4, PORT4, { REPORT_WINDOW_SEC: "0.5", RANKED_PER_PAIR_PER_DAY: "2" });
+  server4 = startServer(dataDir4, PORT4, { REPORT_WINDOW_SEC: "0.5", RANKED_PER_PAIR_PER_DAY: "2", RELAY_SILENT_SEC: "0.6" });
   await server4.ready;
   const player4 = async (email, robotname, addr) => {
     const sid = prop(await mainAsp({ action: "createmember", membername: email, password: "pw" }, HTTP4), "sid");
@@ -1158,6 +1159,39 @@ try {
     await report4(r, q, r.robotid);
     await report4(q, r, r.robotid);
     assert.deepEqual(await card4(r), { win: 1, lose: 0 });
+  });
+
+  await step("a page that stops (frozen in a phone's background) leaves: its silent keepalive socket is closed, the walkover counts", async () => {
+    await start4(r, p);
+    const host = await Peer.listen(r.addr, r.robotname, { ws: WS4, sid: r.sid });
+    const guest = await Peer.connect(r.addr, p.robotname, { ws: WS4, sid: p.sid });
+    await host.expect("WaitForNetConnection");
+    // An old client that never keeps alive, and a player alone in the lobby (no peer):
+    // never closed for silence.
+    const old = await Peer.listen("10.6.6.9", "Oldbot", { ws: WS4 });
+    const lone = await Peer.listen("10.6.6.8", "Lonebot", { ws: WS4 });
+    lone.control({ t: "ka" });
+    // The host keeps saying it's alive; the guest says so once, then its page stops.
+    const alive = setInterval(() => host.control({ t: "ka" }), 100);
+    try {
+      guest.control({ t: "ka" });
+      const [hostBefore, guestBefore] = [await card4(r), await card4(p)];
+      await waitFor(() => guest.closed, "the silent guest closed", 3000);
+      await host.expect("ConnectionProblem");
+      assert.match(server4.output(), /Hostbot closed \(silent for/);
+      assert.ok(!host.closed && !old.closed && !lone.closed, "a socket that keeps alive, never said it would, or has nobody connected, stays");
+      // The host's arena claims the walkover; the guest never reports.
+      await report4(r, p, r.robotid);
+      await pastWindow();
+      assert.deepEqual(await card4(r), { win: hostBefore.win + 1, lose: hostBefore.lose });
+      assert.deepEqual(await card4(p), { win: guestBefore.win, lose: guestBefore.lose + 1 });
+      assert.ok(!host.controls.some((m) => m.t === "ka") && !host.log.includes("{unsupported}"), "keepalives go nowhere");
+    } finally {
+      clearInterval(alive);
+      host.ws.close();
+      old.ws.close();
+      lone.ws.close();
+    }
   });
 
   console.log(`\n${results.length} checks passed`);

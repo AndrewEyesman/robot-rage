@@ -11,8 +11,9 @@ const root = join(here, '..', 'assets');
 const server = process.env.RR_SERVER ?? 'http://127.0.0.1:8091';
 
 // The extracted game assets (port/assets, never committed) are served as /assets.
+// public/ holds the web app manifest (its icon is a game bitmap from /assets).
 export default defineConfig({
-  publicDir: false,
+  publicDir: 'public',
   server: {
     port: 8092,
     host: '127.0.0.1',

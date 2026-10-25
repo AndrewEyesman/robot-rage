@@ -10,7 +10,7 @@
 import { DColor } from './color';
 import { findHandler, invoke, setScriptProp } from './dispatch';
 import type { MovieDoc } from './docs';
-import { keyChar, macKeyCode, codeForChar } from './keys';
+import { keyByName, keyChar, macKeyCode, codeForChar, keyForChar } from './keys';
 import { CastLib, FieldMember, Member, TextMember, TextualMember, resolvePalettes } from './members';
 import { Movie, type Span } from './movie';
 import { castScripts, type ScriptClass } from './registry';
@@ -20,6 +20,7 @@ import { charPosToLoc, locToCharPos } from './text-layout';
 import { parseParams } from './glue';
 import { stopAllSounds } from './audio';
 import { scriptError } from './errors';
+import { TouchTextInput } from './touch-text';
 
 export const STAGE_W = 800;
 export const STAGE_H = 600;
@@ -104,6 +105,8 @@ export class Player {
   optionDown = false;
   commandDown = false;
   focus: FocusState | null = null;
+  /** The hidden input a phone's keyboard types into, made on the first touch on a field. */
+  private touchText: TouchTextInput | null = null;
   /** cursor(n) */
   globalCursor: unknown = 0;
   currentSpriteNum = 0;
@@ -352,6 +355,7 @@ export class Player {
         if (t >= this.nextFrameAt) this.nextFrameAt = t + period;
       }
       this.lastTickTime = t;
+      for (const hook of cycleHooks) hook(t);
       this.runTimeouts();
       if (draw) this.render();
     } catch (e) {
@@ -753,6 +757,7 @@ export class Player {
     ctx.fillRect(0, 0, STAGE_W, STAGE_H);
     ctx.imageSmoothingEnabled = true;
     if (this.focus) this.focus.caretOn = Math.floor(performance.now() / 530) % 2 === 0;
+    this.touchText?.frame();
     for (const s of this.drawOrder()) {
       const r = s.member!.type === 'shockwave3d' ? this.renderers.get('shockwave3d') : undefined;
       if (r) r.draw(s, this);
@@ -810,7 +815,10 @@ export class Player {
     });
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      this.canvas.focus();
+      const touch = e.pointerType === 'touch' || e.pointerType === 'pen';
+      const focusBefore = this.focus?.sprite;
+      // Not while the keyboard is open: taking the focus from the input would close it.
+      if (!(touch && this.touchText?.active)) this.canvas.focus();
       const p = this.stagePoint(e);
       this.mouseH = Math.round(p.x);
       this.mouseV = Math.round(p.y);
@@ -818,12 +826,17 @@ export class Player {
       const now = performance.now();
       this.doubleClick = now - this.lastClickTime < 400;
       this.lastClickTime = now;
+      // A touch (or pen) has no pointermove before it lands: the rollover moves to the
+      // touched sprite first, so its mouseEnter (a button's highlight, a part's info)
+      // comes before its mouseDown, as a mouse's would.
+      if (touch) this.updateRollover();
       const ch = this.spriteAt(p.x, p.y);
       this.clickOn = ch;
       this.mouseDownSprite = ch;
       const s = this.sprites[ch];
       if (ch && this.isEditable(s)) this.focusField(ch, p.x, p.y);
       this.dispatchUserEvent(ch, 'mouseDown');
+      if (touch) this.touchTap((!!ch && this.isEditable(s)) || this.focus?.sprite !== focusBefore);
       e.preventDefault();
     });
     addEventListener('pointerup', (e) => {
@@ -834,6 +847,7 @@ export class Player {
       this.mouseIsDown = false;
       const ch = this.mouseDownSprite;
       this.mouseDownSprite = 0;
+      const focusBefore = this.focus?.sprite;
       if (ch && this.sprites[ch].member && hitTest(this.sprites[ch], p.x, p.y)) this.dispatchUserEvent(ch, 'mouseUp');
       else {
         // Released elsewhere: the pressed sprite gets mouseUpOutside and the sprite now
@@ -843,6 +857,8 @@ export class Player {
         if (ch) this.sendToInstances(ch, this.sprites[ch].scriptInstanceList, 'mouseUpOutSide', []);
         this.dispatchUserEvent(this.spriteAt(p.x, p.y), 'mouseUp');
       }
+      // A field the release's scripts gave the focus (the arena's CHAT button) takes the keyboard.
+      if ((e.pointerType === 'touch' || e.pointerType === 'pen') && this.focus?.sprite !== focusBefore) this.touchTap(true);
     });
     el.addEventListener('pointermove', (e) => {
       if (!this.mouseIsDown || !this.focus) return;
@@ -876,12 +892,34 @@ export class Player {
     this.el.style.cursor = cursorCss(own && own !== 0 ? own : this.globalCursor, this.isEditable(this.sprites[ch]));
   }
 
+  /**
+   * A touch (or pen) tap: the on-screen keyboard opens when it put the focus on a field
+   * and closes when it didn't (touch-text.ts). The mouse never comes here.
+   */
+  private touchTap(onField: boolean) {
+    if (onField && this.focus) (this.touchText ??= new TouchTextInput(this)).tap(true);
+    else this.touchText?.tap(false);
+  }
+
+  /** A key typed without a key event (a phone's on-screen keyboard), through keyDown and keyUp as a physical key. */
+  typeKey(key: string, code?: string, shift = false) {
+    const k = code === undefined ? keyForChar(key) : { code, shift };
+    this.keyDown(new KeyboardEvent('keydown', { key, code: k.code, shiftKey: k.shift }));
+    this.keyUp(new KeyboardEvent('keyup', { key, code: k.code }));
+  }
+
   /** The sprite under the mouse (the rollover). */
   get rollover() {
     return this.spriteAt(this.mouseH, this.mouseV, false);
   }
 
   private keyDown(e: KeyboardEvent) {
+    if (this.touchText && e.target === this.touchText.el) {
+      // From the touch keyboard's input: a key without a key (its text comes as input), or
+      // a real one that mustn't also reach the input.
+      if (TouchTextInput.textOnly(e)) return;
+      e.preventDefault();
+    }
     if (e.ctrlKey && ['KeyR', 'KeyI', 'KeyJ'].includes(e.code) && e.shiftKey) return; // devtools
     const code = macKeyCode(e);
     const ch = keyChar(e);
@@ -918,6 +956,7 @@ export class Player {
   }
 
   private keyUp(e: KeyboardEvent) {
+    if (this.touchText && e.target === this.touchText.el && TouchTextInput.textOnly(e)) return;
     const code = macKeyCode(e);
     this.keysDown.delete(code);
     const ch = keyChar(e);
@@ -933,6 +972,31 @@ export class Player {
       const f = this.sendFrameScript('keyUp', []);
       if (!f.found) this.movieHandler('keyUp')?.();
     }
+  }
+
+  /**
+   * A key pressed or released by something other than the keyboard (the touch
+   * controls), named by its KeyboardEvent code ('ArrowUp', 'KeyZ', 'Digit1'). Its key
+   * code and character go into keysDown and charsDown and out again as the keyboard's
+   * own key would, and keyDown or keyUp goes to the focused field's behaviors, the frame
+   * script or the movie scripts (a field isn't edited by it).
+   */
+  virtualKey(name: string, down: boolean) {
+    const { code, char } = keyByName(name);
+    if (down) {
+      this.keyCode = code;
+      if (char) this.key = char;
+      this.keysDown.add(code);
+      if (char) this.charsDown.add(char);
+    } else {
+      this.keysDown.delete(code);
+      if (char) this.charsDown.delete(char);
+    }
+    const event = down ? 'keyDown' : 'keyUp';
+    const focusCh = this.focus?.sprite ?? 0;
+    if (focusCh && this.sendToInstances(focusCh, this.sprites[focusCh].scriptInstanceList, event, []).handled) return;
+    const f = this.sendFrameScript(event, []);
+    if (!f.found) this.movieHandler(event)?.();
   }
 
   /** keyPressed(keyCode) or keyPressed("a"). */
@@ -1100,6 +1164,14 @@ export class Player {
     return !!findHandler(obj, name);
   }
 }
+
+/**
+ * Not Director's: functions the player calls on every cycle, due frame or not, with
+ * performance.now(). They run as long as the player does: in a hidden tab too (the
+ * worker's timer), but not while the browser has frozen the page (multiuser.ts's
+ * keepalive relies on that).
+ */
+export const cycleHooks = new Set<(now: number) => void>();
 
 const warned = new Set<string>();
 export function warnOnce(msg: string) {

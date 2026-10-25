@@ -1,0 +1,11 @@
+{
+  "name": "Robot Rage 2: Rearmed",
+  "short_name": "Robot Rage 2",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [{ "src": "/assets/login013_/bitmaps/1-76.png", "sizes": "196x196", "type": "image/png", "purpose": "any" }]
+}

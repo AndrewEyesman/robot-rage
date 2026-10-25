@@ -6,6 +6,12 @@ import { LPoint, num } from '../../lingo';
 
 export { eq } from '../robotwars/util';
 
+/**
+ * gameFixes.lobbyLost: the lobby lost its connection and is entering again (the IRC
+ * login frame says so), and when it last did (the milliSeconds of each).
+ */
+export const lobbyReentry = { lost: false, times: [] as number[] };
+
 /** Every global the lobby and arena keep a Multiuser instance in. */
 const MU_GLOBALS = ['SMUSmuInstance', 'P2PmuInstanceListen', 'P2PmuInstanceConnect', 'gMultiuserInstanceIRC', 'muInstance'];
 

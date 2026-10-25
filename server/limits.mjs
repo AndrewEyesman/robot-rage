@@ -68,6 +68,9 @@ export function loadLimits(env = process.env) {
     relayMsgsPerSec: int(env, "RELAY_MSGS_PER_SEC", 1000),
     relayBytesPerSec: int(env, "RELAY_KB_PER_SEC", 1024) * 1024,
     relayPeersPerHost: int(env, "RELAY_PEERS_PER_HOST", 8),
+    // A match connection's socket that keeps alive (relay.mjs) and is silent this long is
+    // closed, as its player leaving: the arena's own walkover comes after 20 s of silence too.
+    relaySilentMs: int(env, "RELAY_SILENT_SEC", 20) * 1000,
     // Ranked results (results.mjs): how close together a round's two reports must arrive,
     // and the ranked matches two accounts may play each other a day (later ones play
     // unranked, against trading wins between one person's accounts). 0, the default, is

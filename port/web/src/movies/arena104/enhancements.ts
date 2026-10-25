@@ -39,6 +39,18 @@
 //   the result (the host alone for a tie), and the server believed it. Now the loser
 //   reports too (and both report ties), so the server counts a round only when both
 //   reports agree (server/results.mjs; ?quirks=results restores the original).
+// - Coming back from the background: a phone's browser freezes a page it puts in the
+//   background (another app, the screen locked), and a match stops dead. After 20 s of
+//   silence the opponent's arena takes the round as a walkover, and the relay closes
+//   the frozen page's connection as the player leaving (server/relay.mjs). On coming
+//   back the original then found the connection gone, asked the server whether it was
+//   still reachable (it was) and claimed the round as a walkover too: both players saw
+//   a win, and the server, given two claims, counted nothing. Now a page that was frozen
+//   for the opponent's 20 s of silence (no frame ran), or that finds its own connection
+//   gone while in the background or just back from it, gives the round up as SURRENDER
+//   does, with a line in the chat saying why, and reports it lost, confirming the
+//   opponent's walkover. A hidden desktop tab keeps playing (above), so neither happens
+//   to it while its connection lasts (?quirks=away restores the original).
 
 import { BitmapMember, STAGE_H, STAGE_W, bootHooks, member, mutedSounds, type Player, type Sprite } from '../../director';
 import { install3d, Shockwave3dMember, type ViewRect } from '../../director/s3d';
@@ -59,11 +71,40 @@ export const arenaFixes = {
   trainingRespawn: !quirks.includes('pit'),
   flameForward: !quirks.includes('flame'),
   bothReport: !quirks.includes('results'),
+  awayLoss: !quirks.includes('away'),
 };
 if (!arenaFixes.ambient) mutedSounds.add('ambient sound');
 
+/** The opponent's silence before its arena takes the round as a walkover (CheckPing: 20 s). */
+export const SILENCE_MS = 20000;
+/** How long after the page comes back from the background its own connection's loss counts as the background's. */
+const BACK_MS = 10000;
+
 let tabSwitched = false;
-if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => (tabSwitched = true));
+/** When the page was last shown again after being hidden or frozen (performance.now()). */
+let shownAt = -Infinity;
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    tabSwitched = true;
+    if (!document.hidden) shownAt = performance.now();
+  });
+  // Chrome's page lifecycle (a frozen page, a page back from the back/forward cache): as a tab switch.
+  document.addEventListener('freeze', () => (tabSwitched = true));
+  document.addEventListener('resume', () => {
+    tabSwitched = true;
+    shownAt = performance.now();
+  });
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    tabSwitched = true;
+    shownAt = performance.now();
+  });
+}
+
+/** Whether the page is in the background, or came back from it in the last BACK_MS (arenaFixes.awayLoss). */
+export function pageAway(): boolean {
+  return document.hidden || performance.now() - shownAt < BACK_MS;
+}
 
 /** Whether the tab was hidden or shown since the last call (the speed-hack check's last second). */
 export function takeTabSwitch(): boolean {
@@ -73,7 +114,7 @@ export function takeTabSwitch(): boolean {
 }
 
 /** The stage's top edge of the control panel: everything above it is the 3D view's. */
-const PANEL_TOP = 457;
+export const PANEL_TOP = 457;
 
 const inArena = (p: Player) => p.movie?.name === 'arena104';
 

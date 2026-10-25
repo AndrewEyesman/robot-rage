@@ -2,7 +2,7 @@
 // (frames 1-10, then the result frames 25-37). Its "Arena 3D" movie script registers
 // from 3d.ts and its weapons from weapons.ts; registerCast merges them with these.
 // enhancements.ts adds the port's widescreen view and smooth drawing, apart from the
-// original logic.
+// original logic; touch-controls.ts the touch controls on phones and tablets.
 
 import { registerCast, type ScriptClass } from '../../director';
 import { MainFramescript } from './s002-main-framescript';
@@ -44,6 +44,7 @@ import { NoAbuse } from './s230-noabuse';
 import { YesAbuse } from './s231-yesabuse';
 import { AbuseFrame } from './s241-abuse';
 import './enhancements';
+import './touch-controls';
 
 const scripts: Record<number, ScriptClass> = {
   2: MainFramescript, 3: RobotBehavior, 4: BackyardFramescript, 5: CloseDoor, 7: CameraScript, 12: CheckConnection, 13: Script13, 14: Hold14,

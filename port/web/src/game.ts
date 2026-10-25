@@ -4,6 +4,7 @@
 
 import { boot, loadSystemFonts } from './director';
 import { reportErrors } from './error-report';
+import './mobile';
 import './movies';
 
 const query = new URLSearchParams(location.search);

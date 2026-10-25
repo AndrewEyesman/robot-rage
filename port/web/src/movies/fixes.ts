@@ -90,6 +90,11 @@
 //   session, so the server knows a connection that closes is really that player's.
 //   A player who quits a ranked round then loses it (the other side's walkover claim
 //   counts) instead of voiding it (server/results.mjs).
+// - A lobby that lost its connection (?quirks=lobbylost): the lobby never noticed its
+//   IRC connection or its match listener closing, which a phone's browser does to a page
+//   it keeps in the background; the lobby stayed on screen but dead (an old user list,
+//   invisible to everyone else, a clicked robot loading forever). It now enters the
+//   lobby again (back into its room) saying the connection was lost (lobby060_ s030).
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult, player, setRelaySession } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -117,6 +122,7 @@ export const gameFixes = {
   keepLogin: !quirks.includes('keeplogin'),
   lobbyPing: !quirks.includes('lobbyping'),
   relayAuth: !quirks.includes('relayauth'),
+  lobbyLost: !quirks.includes('lobbylost'),
 };
 
 setRelaySession(() => {

@@ -25,6 +25,7 @@ Add a line whenever something is verified to work, and an automated check to
 | The player keeps running frame cycles while the tab is hidden (a worker's timer; not drawing) | `match-hidden-tab` |
 | The runtime's rules (score sync, frame cycle, go(), movie switching, timeouts, dispatch, mouse and keyboard routing, drawing order, inks, geometry, text layout, image ops, net): 118 unit tests in real Chrome, each naming where its rule comes from | `runtime-unit` |
 | Text and fields lay out and draw like Adobe's player (18 cases, layout exact, pixels exact for aliased text) | `port/tools/text-compare.mjs` (needs the reference player) |
+| Typing on a touch screen: a tap on a field (or a tap whose script focuses one, the robot list's NEW) opens the on-screen keyboard through a hidden input (an email keyboard for the email box, a password one for passwords); inserted text, key presses (once each), Android's keyless input (keydown 229, composed words, Backspace) and Enter reach the fields' scripts as typed keys; the keyboard closes when the field goes or a tap lands elsewhere; the stage moves up while the keyboard would cover the field. The mouse and a physical keyboard never make the input | `touch-text`, `login-field-delete` |
 
 ## Loader and login (login013_)
 
@@ -83,8 +84,14 @@ Add a line whenever something is verified to work, and an automated check to
 | A spear gun fires head first out of its muzzle: forward from the front, backward from the back | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
 | Training starts again 3 s after the robot falls into the pit, off the roof or loses its armour (the original left it lying there; `?quirks=pit` restores that) | `training-respawn` |
 | A ranked two-tab match records a round once both players report it (the loser reports too; `?quirks=results` restores the winner-only report), the same for both robots | `match-ranked` |
+| A page frozen in a phone's background for 25 s mid-match (blocked, as headless Chrome can't freeze one): the relay closes its connection after 20 s silent, the opponent takes the round as a walkover, and the page, back, gives the round up with a chat line saying why, no speed-hack strike; the server counts it once, for both (the original claimed it too and the round counted for nobody; `?quirks=away`) | `match-background` |
+| A page whose match connections die while it's frozen 6 s finds them gone on waking and gives the round up instead of claiming it too, which the server counts once, for both (`?quirks=away`) | `match-background` |
+| A page that stops mid-match (frozen) is taken as leaving: the relay closes a match connection's socket that said it keeps alive and then went silent (`RELAY_SILENT_SEC`, 20 s), and the opponent's walkover claim counts; sockets that keep alive, never said they would, or listen alone (the lobby), stay | `npm run test:server` |
 | Match flow: countdown, mirrored driving, chat, losing a round and playing again with the score kept, draw, surrender, walkover on disconnect or silence, declining revenge, ranked score saved | `port/tools/arena-match.mjs` steps (by hand) |
 | Widescreen (L) and smooth 60 fps drawing, both switchable | by hand |
+| Touch controls on a phone (844x390, emulated): up while Training is played, clear of the control panel, a button per weapon with a key (Z, X, C, showing only the letter, the panel's weapon name as its aria-label; none for a passive part), the stick and a fire button held at once drive diagonally and fire, every key is let go after, the camera button steps the view; with a mouse and keyboard there's no touch mode and no controls (`?touch=1`, `?touch=0` force it) | `training-touch`, `training` |
+| On a phone or tablet (emulated touch), taps alone go from login through the garage, Training, the lobby and a challenge to a match; the touch controls drive in the match and are up only while it's played (from the countdown), never in the menus, lobby or garage; a phone held upright shows a "turn your phone sideways" prompt, a full screen button sits in the top left corner while the page could go full screen and isn't (the `training-touch` check covers it), an upright tablet plays the 4:3 stage with the controls under it | by hand |
+| The production build serves the web app manifest (fullscreen, landscape) and its icon | `prod-build` |
 
 ## Lobby (lobby060_)
 
@@ -98,4 +105,5 @@ Add a line whenever something is verified to work, and an automated check to
 | Clicking a robot in the lobby pings it once round (four pings, four pongs) even when its connection opens late, with no script error (the original pinged twice over and failed on the leftover pong; `?quirks=lobbyping`) | `lobby-fixes` |
 | Clicking an incoming challenge opens the challenger's card, and CHALLENGE there accepts it (the original did nothing; `?quirks=challengecard`) | `lobby-fixes` |
 | When a challenge's first P2P connection fails, the players swap server and client and the match starts (the original went back to the lobby; `?quirks=p2pswap`) | `lobby-fixes` |
+| A lobby whose IRC connection and match listener die (a phone's background) enters again, back into its room, connected and listed, saying the connection was lost (the original stayed on screen dead; `?quirks=lobbylost` keeps that) | `lobby-connection-lost` |
 | QUIT in the lobby saves and goes to the login screen; GARAGE goes to the robot list | by hand |

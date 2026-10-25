@@ -184,6 +184,9 @@ const gameFiles = [...new Set(ours.map((r) => new URL(r.url).pathname).filter((p
 check(gameFiles.every((p) => ['/game/main.ini', '/game/badlanguage.txt'].includes(p)), `/game files fetched: ${gameFiles.join(', ')}`);
 const front = await fetch(`${BASE}/`);
 check(front.ok && /<div id="stage">/.test(await front.text()) && /no-cache/.test(front.headers.get('cache-control')), '/ is game.html, revalidated on every visit');
+const manifest = await fetch(`${BASE}/manifest.webmanifest`);
+const icon = manifest.ok ? (await manifest.json()).icons?.[0]?.src : undefined;
+check(manifest.ok && /manifest\+json/.test(manifest.headers.get('content-type')) && icon && (await fetch(BASE + icon)).ok, `the web app manifest is served, with its icon (${icon})`);
 for (const p of ['/game/arena104.dcr', '/game/robotwars.cct', '/index.html', '/assets/../package.json', '/app/../../../package.json'])
   check((await fetch(BASE + p)).status >= 400, `not served: ${p}`);
 

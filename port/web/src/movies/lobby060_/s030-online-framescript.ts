@@ -14,10 +14,10 @@ import { text2image } from '../robotwars/s007-jump-movie';
 import { getranking } from '../robotwars/s240-getranking';
 import {
   DeclineChallenge, DisconnectFromSMUS, PingP2P, pingConnectionOpen, ReplaceWord, SendchallengeSMUS, SetRobotPing, changeroom, connectP2P,
-  getRankClass, getrankingindex,
+  getRankClass, getrankingindex, lobbyConnectionLost,
 } from './s004-lobby-moviescript';
 import { gameFixes, withRobotDefaults } from '../fixes';
-import { eq, setMU } from './util';
+import { eq, lobbyReentry, setMU } from './util';
 
 // global gOnline, gIRC, P2PmuInstanceListen, P2PmuInstanceConnect, SMUSmuInstance,
 // gChallengeGo, getOpponentState, gopponentdata, gOpponentdata_temp, gLobbydata,
@@ -90,6 +90,7 @@ export class OnlineFramescript extends Behavior {
   }
 
   prepareFrame() {
+    if (gameFixes.lobbyLost && this.connectionLost()) return;
     G.gRoom.HandleRoom();
     G.gIRC.checkOutgoingList();
     if (the.milliSeconds >= this.pUpdateTime) {
@@ -207,6 +208,41 @@ export class OnlineFramescript extends Behavior {
       sendAllSprites('showmessage', s);
       this.pState = sym('getmydata');
     }
+  }
+
+  /**
+   * The port's fix (gameFixes.lobbyLost): the original never noticed its IRC connection
+   * or its match listener going away (a phone's browser in the background loses them),
+   * and the lobby stayed on screen dead: an old user list, nobody seeing this player,
+   * a clicked robot loading forever. Now the lobby enters again, as after a match (back
+   * into the room it was in), and the entry says the connection was lost; if the server
+   * can't be reached, the entry gives up to the garage as it always did. A connection
+   * lost again and again (three times in a minute) takes the lobby's own way out: "There
+   * is no connection to the server", and off to the garage.
+   */
+  connectionLost(): boolean {
+    if (this.pState === sym('reenter')) return true;
+    const leaving = ['logoff', 'waitLogOut', 'loggedOff', 'GoSmusError', 'waitSmusError', 'SmusError', 'gotomovie', 'goChallenge', 'ChallengeWaitDoor', 'AcceptChallenge'];
+    if (this.pState && leaving.includes(this.pState.name)) return false;
+    if (!lobbyConnectionLost()) return false;
+    const now = the.milliSeconds;
+    lobbyReentry.times = lobbyReentry.times.filter((t) => now - t < 60000);
+    if (lobbyReentry.times.length >= 3) {
+      put('lobby: connection lost again, leaving');
+      this.pState = sym('GoSmusError');
+      return false;
+    }
+    lobbyReentry.times.push(now);
+    put('lobby: connection lost, entering again');
+    sendAllSprites('hide3DRobot');
+    G.gRoom.LeaveRoom();
+    G.gIRC.closeConnection();
+    DisconnectFromSMUS(this);
+    G.gWonGames = 0;
+    G.gLostGames = 0;
+    lobbyReentry.lost = true;
+    this.pState = sym('reenter');
+    return true;
   }
 
   /** The #getOpponentRobot branch of prepareFrame. */
@@ -334,6 +370,8 @@ export class OnlineFramescript extends Behavior {
       go('ChallengeWait');
     } else if (st === sym('gocountry')) {
       go('incountry');
+    } else if (st === sym('reenter')) {
+      go('login');
     }
   }
 

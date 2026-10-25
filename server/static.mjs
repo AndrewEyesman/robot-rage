@@ -15,6 +15,7 @@ const MIME = {
   ".mjs": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".map": "application/json",
   ".wasm": "application/wasm",
   ".dcr": "application/x-director",
@@ -31,7 +32,7 @@ const MIME = {
 
 // Worth compressing: text, and the fonts and W3D meshes (.bin), which shrink to half
 // or less. PNG, MP3 and WAV (short 8-bit samples) don't.
-const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".map", ".txt", ".svg", ".wasm", ".ttf", ".bin"]);
+const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".webmanifest", ".map", ".txt", ".svg", ".wasm", ".ttf", ".bin"]);
 const MIN_COMPRESS = 1024;
 // The compressed copies kept in memory, at most (the game's assets need about 4 MB).
 const CACHE_LIMIT = 128 * 1024 * 1024;

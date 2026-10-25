@@ -400,6 +400,52 @@ const CHECKS = [
       ['key', 'Backspace'],
       ['type', 'new@example.com'],
       ['expect', 'Backspace deletes the selection', `p.member('username_box').text === 'new@example.com'`, 2000],
+      ['expect', 'the mouse and keyboard never make the touch keyboard\'s input', `!p.el.querySelector('input') && !p.el.style.transform`, 500],
+    ],
+  },
+  {
+    // Typing on a touch screen (a phone, landscape): a tap on a field focuses a hidden
+    // input, which opens the on-screen keyboard; its text, key presses (not doubled),
+    // Android's keyless input (keydown 229, composition) and Enter reach the fields'
+    // scripts as typed keys; the keyboard follows the focus and closes when the field goes;
+    // the stage moves up when the keyboard would cover the field.
+    name: 'touch-text',
+    url: '/game.html',
+    mobile: true,
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ['tap', 310, 148],
+      ['expect', 'login tab', `p.frameLabel === 'login'`],
+      ['tap', 400, 222],
+      ['expect', 'a tap on the email box opens an email keyboard', `p.keyboardFocusSprite === 8 && document.activeElement === p.el.querySelector('input') && document.activeElement.inputMode === 'email'`, 2000],
+      ['insert', 'tester@home'],
+      ['type', '.lam'],
+      ['key', 'Backspace'],
+      ['insert', 'n'],
+      ['expect', 'inserted text and key presses each typed once', `p.member('username_box').text === 'tester@home.lan'`, 2000],
+      ['key', 'Enter'],
+      ['expect', "Enter runs the box's RETURN: the password field takes the focus, with a password keyboard", `p.keyboardFocusSprite === 13 && document.activeElement?.type === 'password'`, 2000],
+      ['compose', 'rage'],
+      ['eval', `(() => { const el = document.activeElement; el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true }));
+        el.value = el.value.slice(0, -1); el.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true }));
+        el.value += 'e2005'; el.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'e2005', bubbles: true })); return 1; })()`],
+      ['expect', "Android's keyless typing, composition and Backspace reach the password's stars", `p.sprite(13).member.text === '********' && p.member('visiblePassword').text === 'rage2005' && !p.keysDown.size`, 2000],
+      ['eval', `(() => { window.__vv = Object.getOwnPropertyDescriptor(window, 'visualViewport'); const h = innerHeight;
+        Object.defineProperty(window, 'visualViewport', { configurable: true, value: { offsetTop: 0, height: h * 0.45, width: innerWidth, scale: 1 } }); return 1; })()`],
+      ['expect', 'a keyboard over the field moves the stage up to keep it in sight', `(() => { const r = p.el.getBoundingClientRect(); return r.top < 0 && r.top + p.toPage(0, p.sprite(13).bounds.bottom).y <= innerHeight * 0.45 - 10; })()`, 2000],
+      ['eval', `(() => { Object.defineProperty(window, 'visualViewport', window.__vv); return 1; })()`],
+      ['expect', 'and back when it goes', `!p.el.style.transform`, 2000],
+      ['tap', 475, 309],
+      ['expect', 'logged in', `p.member('robotname1').text === 'Crusher'`, 15000],
+      ['expect', 'the keyboard closes with the fields', `document.activeElement !== p.el.querySelector('input')`, 2000],
+      ['tapAt', `(() => { const s = p.sprites.find((s) => s.scriptInstanceList.some((b) => b.constructor.name === 'Newbtn')); const b = s.bounds; return [(b.left + b.right) / 2, (b.top + b.bottom) / 2]; })()`],
+      ['expect', "NEW's script gives the robot name field the focus on the release: the keyboard opens", `p.keyboardFocusSprite === 25 && document.activeElement === p.el.querySelector('input') && document.activeElement.type === 'text'`, 2000],
+      ['insert', 'Tapper'],
+      ['expect', 'and types into it', `p.sprite(25).member.text === 'Tapper'`, 2000],
+      ['tap', 100, 500],
+      ['expect', 'a tap off the field closes the keyboard', `document.activeElement !== p.el.querySelector('input')`, 2000],
     ],
   },
   {
@@ -756,6 +802,30 @@ const CHECKS = [
       ['hold', 'ArrowUp', 1500],
       ['expect', 'robot drives forward', `p.sprite(10).getProp('y') !== window.__y`, 2000],
       ['expect', 'no ambient wind', `!Array.from({ length: 8 }, (_, i) => i + 1).some((n) => { const m = window.__sound?.(n)?.member; return m && m.name === 'ambient sound'; })`, 500],
+      ['expect', 'with a mouse and keyboard, no touch mode, no touch controls, no full screen button and no manifest', `!document.querySelector('link[rel=manifest]') && !document.getElementById('fullscreen') && !document.documentElement.classList.contains('touch') && !document.getElementById('touch-controls') && !document.getElementById('rotate')`, 500],
+    ],
+  },
+  {
+    // Touch controls (movies/arena104/touch-controls.ts) on an emulated phone in landscape:
+    // up only while Training is played, a button for each weapon with a key (the plough
+    // has none), the stick and a fire button held at once drive diagonally and fire, and
+    // everything is let go after.
+    name: 'training-touch',
+    url: '/index.html?parts=r1,h2,ma1,b1,v6,v1,v21&pos=f,b,t&pansar=50&name=Crusher',
+    context: { viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+    steps: [
+      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ['expect', 'touch mode, the controls up', `document.documentElement.classList.contains('touch') && document.getElementById('touch-controls').classList.contains('up')`, 2000],
+      ['expect', 'the full screen button is up (headless Chrome can go full screen)', `document.getElementById('fullscreen').classList.contains('up')`, 2000],
+      ['expect', 'buttons for X (Land Mines) and C (Kamikaze Bomb), none for the plough', `(() => { const f = [...document.querySelectorAll('#touch-controls .fire')].map((b) => b.style.display === 'none' ? '' : b.textContent + ' ' + b.getAttribute('aria-label')); return f[0] === '' && f[1] === 'X Land Mines' && f[2] === 'C Kamikaze Bomb'; })()`, 2000],
+      ['expect', 'the controls clear of the control panel', `(() => { const top = p.top + 457 * p.scale, l = p.left, r = p.left + 800 * p.scale; return [...document.querySelectorAll('#touch-controls > div')].every((e) => { const b = e.getBoundingClientRect(); return b.bottom <= top || b.right <= l || b.left >= r; }); })()`, 500],
+      ['eval', `(() => { window.__xy = [p.sprite(10).getProp('x'), p.sprite(10).getProp('y')]; window.__keys = new Set(); const f = p.virtualKey.bind(p); p.virtualKey = (k, d) => { if (d) window.__keys.add(k); return f(k, d); }; })()`],
+      ['touch', [['#touch-controls .stick', 0.3, -0.3], ['#touch-controls .fire[data-key=KeyC]']], 1500],
+      ['expect', 'stick up-right and C at once: forward, right and fire pressed', `['ArrowUp', 'ArrowRight', 'KeyC'].every((k) => window.__keys.has(k)) && !window.__keys.has('ArrowLeft') && !window.__keys.has('ArrowDown')`, 500],
+      ['expect', 'the robot drove', `Math.hypot(p.sprite(10).getProp('x') - window.__xy[0], p.sprite(10).getProp('y') - window.__xy[1]) > 50`, 500],
+      ['expect', 'every key let go', `p.keysDown.size === 0 && p.charsDown.size === 0`, 1000],
+      ['touch', [['#touch-controls .cam']], 100],
+      ['expect', 'the camera button steps to view 2', `String(p.globals.pNowCam) === '2'`, 1000],
     ],
   },
   {
@@ -891,11 +961,39 @@ const CHECKS = [
     ],
     setup: ensureRegressAccount,
   },
+  {
+    // A lobby whose connections die (gameFixes.lobbyLost): a phone's browser closes them
+    // for a page it keeps in the background, and the browser reports it when the page
+    // comes back. The lobby enters again, back into its room, saying the connection was
+    // lost; the original stayed on screen dead. ?quirks=lobbylost keeps the original.
+    name: 'lobby-connection-lost',
+    url: '/lobby-dev.html?email=regress@home.lan&password=rage2005&robot=Regress',
+    setup: ensureRegressAccount,
+    steps: [
+      ['expect', 'Regress reached the lobby', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1500],
+      ['click', 50, 350],
+      ['wait', 2000],
+      ['click', 40, 107],
+      ['expect', 'Regress in Sweden East', `String(p.globals.gRoom.pRoom) === 'rw11e'`, 5000],
+      ['eval', `p.globals.gMultiuserInstanceIRC.ws.close(); p.globals.P2PmuInstanceListen.ws.close()`],
+      ['expect', 'the lobby enters again, saying the connection was lost', `/connection to the Lobby was lost/.test(p.member('ronline').text)`, 10000],
+      ['expect', 'back in its room, connected, listed', `p.frameLabel === 'incountry' && String(p.globals.gRoom.pRoom) === 'rw11e' && p.globals.gMultiuserInstanceIRC?.connected && p.globals.P2PmuInstanceListen?.connected && /(^|\\r)Regress\\t/.test(p.member('rvtext').text)`, 30000],
+      // Another robot: the same one would take its lobby nick over.
+      ['tab', 'original', '/lobby-dev.html?email=tester@home.lan&password=rage2005&robot=Crusher&quirks=lobbylost'],
+      ['expect', 'with ?quirks=lobbylost: the lobby', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['wait', 1500],
+      ['eval', `p.globals.gMultiuserInstanceIRC.ws.close(); p.globals.P2PmuInstanceListen.ws.close()`],
+      ['wait', 4000],
+      ['expect', 'with ?quirks=lobbylost: the dead lobby stays', `p.frame >= 10 && !p.globals.gMultiuserInstanceIRC?.connected && !/connection to the Lobby was lost/.test(p.member('ronline').text)`, 1000],
+    ],
+  },
   { name: 'match-input-delay', match: 'delay', slow: true },
   { name: 'match-start-sync', match: 'sync', slow: true },
   { name: 'match-hidden-tab', match: 'hidden', slow: true },
   { name: 'match-transport', match: 'transport', slow: true },
   { name: 'match-ranked', match: 'ranked', slow: true },
+  { name: 'match-background', match: 'background', slow: true },
 ];
 
 // ------------------------------------------------------------------ setup
@@ -1076,7 +1174,11 @@ async function flow(check) {
     headless: true,
     args: ['--headless=new', '--mute-audio', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required'],
   });
-  const ctx = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
+  // check.context: another device (the touch checks emulate a phone; check.mobile is the same phone).
+  const ctx = await browser.newContext(
+    check.context ??
+      (check.mobile ? { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 } : { viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 }),
+  );
   const errors = [];
   // Every tab's console, saved as <run folder>/<check>-console.txt for a failure's story.
   const consoleLog = [];
@@ -1139,6 +1241,23 @@ async function flow(check) {
         if (kind === 'click') await sleep(100);
         if (kind !== 'down') await page.mouse.up();
         await sleep(250);
+      } else if (kind === 'tap' || kind === 'tapAt') {
+        // A touch tap at a stage point (mobile checks).
+        const [x, y] = kind === 'tap' ? a : await ev(a[0]);
+        const [px, py] = await ev(`(() => { const r = p.el.getBoundingClientRect(); const q = p.toPage(${x}, ${y}); return [r.left + q.x, r.top + q.y]; })()`);
+        await page.touchscreen.tap(px, py);
+        await sleep(300);
+      } else if (kind === 'insert') await page.keyboard.insertText(a[0]);
+      else if (kind === 'compose') {
+        // Android's keyboards: keydown "Unidentified" (229), the word composed letter by letter, then committed.
+        const cdp = await ctx.newCDPSession(page);
+        for (let i = 1; i <= a[0].length; i++) {
+          await ev(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true }))`);
+          await cdp.send('Input.imeSetComposition', { text: a[0].slice(0, i), selectionStart: i, selectionEnd: i });
+          await ev(`document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: 'Unidentified', keyCode: 229, bubbles: true }))`);
+        }
+        await cdp.send('Input.insertText', { text: a[0] });
+        await cdp.detach();
       } else if (kind === 'drag') {
         await page.mouse.move(a[0], a[1]);
         await page.mouse.down();
@@ -1154,6 +1273,23 @@ async function flow(check) {
         await page.keyboard.down(a[0]);
         await sleep(a[1]);
         await page.keyboard.up(a[0]);
+      } else if (kind === 'touch') {
+        // ['touch', [[selector, dx, dy], ...], ms]: a finger on each element (dx, dy: the
+        // offset from its centre, in its widths) at once, held, then all lifted.
+        const cdp = await ctx.newCDPSession(page);
+        const points = [];
+        for (const [sel, dx = 0, dy = 0] of a[0]) {
+          const r = await page.$eval(sel, (e) => e.getBoundingClientRect().toJSON());
+          points.push({ x: r.left + r.width * (0.5 + dx), y: r.top + r.height * (0.5 + dy), id: points.length + 1, radiusX: 5, radiusY: 5, force: 1 });
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [...points] });
+        }
+        await sleep(a[1]);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+        await sleep(100);
+      } else if (kind === 'tap') {
+        await page.touchscreen.tap(a[0], a[1]);
+        await sleep(250);
       } else if (kind === 'eval') await ev(a[0]);
       else if (kind === 'expect') {
         const [label, expr, timeout = 5000] = a;
@@ -1271,6 +1407,56 @@ async function match(kind) {
       [noStrike(8, 0) && noStrike(9, 1), `stalled 17 s: no speed-hack strike (${val(8)})`],
       [stillOn(8) && stillOn(9), `stalled 17 s: both still playing`],
     ];
+    return { ok: checks.every((c) => c[0]), out: checks.map(([good, what]) => `  ${good ? 'ok  ' : 'FAIL'} ${what}`).join('\n') };
+  }
+  if (kind === 'background') {
+    // A phone's browser freezes a page in the background (arenaFixes.awayLoss,
+    // server/relay.mjs keepalive). Headless Chrome never hides or freezes a page
+    // (Page.setWebLifecycleState does nothing to a visible one), so the client's main
+    // thread is blocked instead, hidden as a backgrounded page is: no frame, timer or
+    // message runs, as when frozen, while its sockets stay open. 25 s is past the
+    // relay's 20 s of silence and the host's 20 s silence walkover. The host claims the
+    // round, the relay counts the client as leaving, and the client, back, gives the
+    // round up (not claiming it too), which the server records once, for both.
+    const card = async (id) => {
+      const t = await mainAsp({ action: 'getrobotall', robotid: id });
+      const [, win, lose] = t.match(/#Win: (\d+), #lose: (\d+)/).map(Number);
+      return { win, lose };
+    };
+    // kill: the connections die while frozen (the relay socket and the peer connection closed first).
+    const freeze = (ms, kill = false) => `client|(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      ${kill ? 'const mu = __player.globals.muInstance; mu.ws.close(); for (const l of mu.links.values()) l.pc?.close();' : ''}
+      const t = performance.now(); while (performance.now() - t < ${ms}) {}
+      setTimeout(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); }, 0); return 'frozen'; })()|4000`;
+    const report = (who) => `${who}|'state=' + String(__player.frameScript?.state) + ' result=' + String(__player.globals.gMatchResult) + ' won=' + __player.globals.gWonGames + ' lost=' + __player.globals.gLostGames
+      + ' speedgear=' + String(__player.globals.gUserData.getaProp('propertyList').getaProp('speedgear')) + ' away=' + /away too long/.test((() => { try { return __player.member('chat history')?.text ?? ''; } catch { return ''; } })())|100`;
+    const checks = [];
+    // Frozen 25 s with its connections open; then frozen 6 s while its connections die
+    // (the browser reports it on waking): it finds its own connection gone, just back.
+    for (const [label, ms, kill] of [['frozen 25 s', 25000, false], ['connections lost while frozen 6 s', 6000, true]]) {
+      const before = [await card(1003), await card(1005)];
+      const name = kill ? 'match-background-lost' : 'match-background';
+      const r = await arenaMatch(name, { RANKED: '1', SECONDS: '14', STEP: [report('client'), freeze(ms, kill), report('host'), report('client')].map((st) => st.replace(/\s*\n\s*/g, ' ')).join('§') });
+      const res = [...r.out.matchAll(/^step (?:host|client) .*? => "?([^"\n]*)"?$/gm)].map((m) => m[1]);
+      const val = (i) => res[i] ?? '';
+      // The round counts once both reports are in, or once the report window has passed.
+      let after;
+      for (let i = 0; i < 8; i++) {
+        after = [await card(1003), await card(1005)];
+        if (after[0].win > before[0].win) break;
+        await sleep(5000);
+      }
+      const strikes = (i) => val(i).match(/speedgear=(\S*)/)?.[1];
+      checks.push(
+        [started(startStates(r.out)), `${label}: match started`],
+        [/result=#?walkover won=1 lost=0/.test(val(2)), `${label}: the host took the round as a walkover (${val(2)})`],
+        [/result=#?walkover won=0 lost=1/.test(val(3)) && /away=true/.test(val(3)), `${label}: the client, back, gave the round up, saying why (${val(3)})`],
+        [strikes(3) !== undefined && strikes(3) === strikes(0), `${label}: no speed-hack strike for the frozen time`],
+        [after[0].win === before[0].win + 1 && after[1].lose === before[1].lose + 1 && after[0].lose === before[0].lose && after[1].win === before[1].win,
+          `${label}: the server counts it once, for both: Crusher ${before[0].win}-${before[0].lose} -> ${after[0].win}-${after[0].lose}, Rival ${before[1].win}-${before[1].lose} -> ${after[1].win}-${after[1].lose}`],
+      );
+    }
     return { ok: checks.every((c) => c[0]), out: checks.map(([good, what]) => `  ${good ? 'ok  ' : 'FAIL'} ${what}`).join('\n') };
   }
   if (kind === 'ranked') {

@@ -29,6 +29,42 @@ export function keyChar(e: KeyboardEvent): string {
   return e.key.length === 1 ? e.key : '';
 }
 
+/** Shifted characters on a US keyboard, by the key they're typed with. */
+const SHIFTED: Record<string, string> = {
+  '!': 'Digit1', '@': 'Digit2', '#': 'Digit3', $: 'Digit4', '%': 'Digit5', '^': 'Digit6', '&': 'Digit7', '*': 'Digit8', '(': 'Digit9',
+  ')': 'Digit0', _: 'Minus', '+': 'Equal', '{': 'BracketLeft', '}': 'BracketRight', '|': 'Backslash', ':': 'Semicolon', '"': 'Quote',
+  '<': 'Comma', '>': 'Period', '?': 'Slash', '~': 'Backquote',
+};
+const PUNCT: Record<string, string> = {
+  ' ': 'Space', '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', ';': 'Semicolon', "'": 'Quote',
+  ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote',
+};
+
+/**
+ * The key (KeyboardEvent.code, US layout) and shift state a character is typed with,
+ * for text that arrives without key events (a phone's on-screen keyboard); '' for a
+ * character no key types.
+ */
+export function keyForChar(ch: string): { code: string; shift: boolean } {
+  if (/^[a-z]$/.test(ch)) return { code: `Key${ch.toUpperCase()}`, shift: false };
+  if (/^[A-Z]$/.test(ch)) return { code: `Key${ch}`, shift: true };
+  if (/^[0-9]$/.test(ch)) return { code: `Digit${ch}`, shift: false };
+  if (PUNCT[ch]) return { code: PUNCT[ch], shift: false };
+  if (SHIFTED[ch]) return { code: SHIFTED[ch], shift: true };
+  return { code: '', shift: false };
+}
+
+/**
+ * A key by its KeyboardEvent code ('ArrowUp', 'KeyZ', 'Digit1'): the key code and the
+ * character (unshifted) the keyboard's own key gives (Player.virtualKey).
+ */
+export function keyByName(name: string): { code: number; char: string } {
+  const code = CODES[name] ?? 0;
+  if (CHARS[name]) return { code, char: CHARS[name] };
+  const m = /^(?:Key|Digit)(.)$/.exec(name);
+  return { code, char: m ? m[1].toLowerCase() : '' };
+}
+
 /** The Mac key code a character is typed with (keyPressed("a")). */
 export function codeForChar(ch: string): number | undefined {
   const c = ch.toLowerCase();
