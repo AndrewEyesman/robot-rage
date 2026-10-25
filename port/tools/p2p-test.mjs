@@ -28,7 +28,8 @@ let failed = 0;
 // Every tab's console, time-stamped, for a failure's story (CI prints it).
 const T0 = Date.now();
 const consoleLog = [];
-const LOG_FILE = join(dirname(fileURLToPath(import.meta.url)), '../../.cache/regress/out/multiuser-p2p-console.txt');
+// In regress.mjs's run folder when it runs this (REGRESS_OUT).
+const LOG_FILE = join(process.env.REGRESS_OUT || join(dirname(fileURLToPath(import.meta.url)), '../../.cache/regress/out'), 'multiuser-p2p-console.txt');
 const check = (ok, what) => {
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);

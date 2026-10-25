@@ -14,6 +14,7 @@ import { FormatUserName, getUserIpCode } from '../robotwars/s004-new-init';
 import { isBehindRouter } from '../robotwars/s005-changes';
 import { getMyIP } from '../robotwars/s034-get-my-ip';
 import { getranking } from '../robotwars/s240-getranking';
+import { gameFixes } from '../fixes';
 import { eq, setMU } from './util';
 
 // global SMUSmuInstance, P2PmuInstanceListen, P2PmuInstanceConnect, gLobbydata, gOnline,
@@ -21,6 +22,10 @@ import { eq, setMU } from './util';
 // gGameGlobals, gRobotData, ChallengeList, gPingTable
 
 const ERR_NO_CONNECTION = '-2147216214';
+
+/** gameFixes.lobbyPing: whether the clicked robot's connection (connectP2P) has opened. */
+let pingConnected = false;
+export const pingConnectionOpen = () => pingConnected;
 
 export function SearchAndReplace(theText: string, stringToFind: string, stringToInsert: string): string {
   let hasChar = offset(stringToFind, theText);
@@ -63,6 +68,7 @@ export function P2PMessageHandler(me: unknown, message: LPropList) {
     if (the.frameLabel === 'viewChallenge') {
       sendSprite(0, 'setState', sym('connected'));
     } else {
+      pingConnected = true;
       G.gPinglist = new LList();
       if (G.getOpponentState === sym('waitForRobot')) G.getOpponentState = sym('pingRobot');
       else if (G.getOpponentState === sym('waitforP2P')) G.getOpponentState = sym('connected');
@@ -82,6 +88,8 @@ export function P2PMessageHandler(me: unknown, message: LPropList) {
   } else if (eq(subject, 'P2P_Pong')) {
     put('************ PONG ************');
     const pl = G.gPinglist as LList;
+    // No ping waiting: the original reads item 0, a script error (#70).
+    if (gameFixes.lobbyPing && pl.count === 0) return undefined;
     pl.setAt(pl.count, the.milliSeconds - num(pl.getAt(pl.count)));
     if (pl.count <= 3) {
       PingP2P(me, sym('ping'), undefined);
@@ -132,6 +140,7 @@ export function DeclineChallenge(_me?: unknown) {
 }
 
 export function connectP2P(_me: unknown, ip: LValue) {
+  pingConnected = false;
   setMU('P2PmuInstanceConnect', new MultiuserXtra());
   let errCode = G.P2PmuInstanceConnect.setNetMessageHandler(sym('P2PMessageHandler'), 0, EMPTY, EMPTY, 1);
   if (errCode !== 0) alert('Problem with setNetMessageHandler');

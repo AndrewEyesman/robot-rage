@@ -10,7 +10,7 @@ export { scriptErrorListeners } from './errors';
 export * from './image';
 export * from './members';
 export { getNetText, preloadNetThing, netDone, netTextResult, netError, netAbort } from './net';
-export { MultiuserXtra, xtra, newMultiuser, ERR_NO_CONNECTION, type MultiuserMessage } from './multiuser';
+export { MultiuserXtra, xtra, newMultiuser, setRelaySession, ERR_NO_CONNECTION, type MultiuserMessage } from './multiuser';
 export { Player, warnOnce, STAGE_W, STAGE_H, type Timeout, type SpriteRenderer } from './player';
 export { registerCast, type CastScripts, type ScriptClass } from './registry';
 export { INK, remap } from './render';

@@ -60,15 +60,15 @@ anti-cheat rules and moderation.
 
 From `docs/port-issues.md`, the parts that matter most:
 
-- **Server (#56):** two accounts of one person can trade wins; weapon placement and
-  space aren't checked on save; rage-quitting a losing round voids it.
+- **Server (#56):** weapon placement and space aren't checked on save; the Super Pack
+  SMS check (only with `?quirks=superpack`) reloads the robot without taking its money.
+  Rage-quitting now loses the round. Win trading has a per-pair daily limit, off by
+  default (`RANKED_PER_PAIR_PER_DAY`) while there are few players.
 - **Fidelity gaps:** ink approximations (#16, #17), anti-aliased text greys (#9), text
   features not yet checked against Adobe (#10), the Super Pack 1 box text (#43), extra
   garage 3D models (#41), paintshop lines a pixel off (#42), rebuilt 3D normals (#14).
-- **Not yet compared with the original:** the lobby's ChallengeWait and P2P frames (#32),
-  `ReplaceWord`'s edge case (#26), the lobby door behavior in Adobe (#25).
-- **Tooling:** concurrent regression runs share `.cache/regress/out/` (#51); the
-  dirplayer patch must be regenerated from `vendor/dirplayer-rs` before it's lost (#21).
+- **Not yet compared with the original:** the lobby door behavior in Adobe (#25).
+- **Players' errors:** `client error` lines in the hosted server's log (#70 was the first).
 
 The maintainer judges look and feel; what they report becomes measurable checks.
 

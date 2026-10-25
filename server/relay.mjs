@@ -38,6 +38,14 @@
 // no larger than WS_MAX_PAYLOAD_KB, and RELAY_PEERS_PER_HOST peers per host. A socket
 // over them is closed, which its counterpart sees as the player leaving. A robot
 // that's banned (`admit`, from index.mjs) can't listen or log on.
+//
+// Sessions (the port, gameFixes.relayAuth): both URLs may carry `sid`, the player's
+// login session; `authenticate(sid, name)` says whether it owns the robot the socket
+// speaks for (the host's `user`, the peer's Logon sender). Such a socket can't be
+// replaced by one without the same account's session, and when it closes on its own (not
+// replaced, not dropped by the host) the relay calls `onLeave(leaver, other)` for
+// each counterpart: ranked results take that as the player leaving the match
+// (results.mjs). Sockets without a session work as before but never count as leaving.
 
 import { Bucket, LIMITS } from "./limits.mjs";
 
@@ -124,9 +132,12 @@ function takeFrames(state, chunk, max = 0) {
   return frames;
 }
 
+const sameName = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+
 export class Relay {
-  constructor({ log, iceServers = [], limits = LIMITS }) {
+  constructor({ log, iceServers = [], limits = LIMITS, onLeave = () => {} }) {
     this.log = log;
+    this.onLeave = onLeave;
     this.iceServers = iceServers;
     this.limits = limits;
     this.hosts = new Map(); // address -> { ws, user, peers: Map<lowercased userID, peer> }
@@ -199,16 +210,26 @@ export class Relay {
 
   // `clientAddress`: the player's real address (for kicks and the log); `admit(user)`
   // a reason to refuse that robot, or undefined.
-  listen(ws, { addr, user }, { clientAddress = "", admit = () => undefined } = {}) {
+  // `authenticate(sid, name)`: whether the session owns that robot (see the top).
+  listen(ws, { addr, user, sid }, { clientAddress = "", admit = () => undefined, authenticate = () => false } = {}) {
     if (!addr || !user) return ws.close(1008, "addr and user required");
     ws.clientAddress = clientAddress;
     const refused = admit(user);
     if (refused) return ws.close(1008, refused);
+    const authenticated = !!sid && authenticate(sid, user);
     const previous = this.hosts.get(addr);
-    const host = { ws, user, peers: new Map(), state: { buffer: Buffer.alloc(0) } };
+    // A listener with a session gives way only to the same account (the same tab back in the lobby, maybe with another robot).
+    if (previous?.authenticated && !(authenticated && (sameName(previous.user, user) || authenticate(sid, previous.user)))) {
+      this.log(`relay: ${user} refused at ${addr} (${previous.user} listens there, ${clientAddress})`);
+      return ws.close(1008, "address in use");
+    }
+    const host = { ws, user, authenticated, peers: new Map(), state: { buffer: Buffer.alloc(0) } };
     this.hosts.set(addr, host);
-    previous?.ws.close(1000, "replaced");
-    this.log(`relay: ${user} listening at ${addr}`);
+    if (previous) {
+      previous.replaced = true;
+      previous.ws.close(1000, "replaced");
+    }
+    this.log(`relay: ${user} listening at ${addr}${authenticated ? "" : " (no session)"}`);
     const allowed = this.meter(ws, () => user);
 
     ws.on("message", (data, isBinary) => {
@@ -236,6 +257,7 @@ export class Relay {
       for (const peer of host.peers.values()) {
         this.notify(peer.ws, { errorCode: ERR_NO_CONNECTION, subject: "ConnectionProblem", sender: user, recipient: peer.name });
         this.dropPeer(peer, "host left");
+        if (host.authenticated && !host.replaced) this.onLeave(user, peer.name);
       }
       this.log(`relay: ${user} stopped listening`);
     });
@@ -264,7 +286,7 @@ export class Relay {
     }
   }
 
-  connect(ws, { addr }, { clientAddress = "", admit = () => undefined } = {}) {
+  connect(ws, { addr, sid }, { clientAddress = "", admit = () => undefined, authenticate = () => false } = {}) {
     const host = this.hosts.get(addr);
     const state = { buffer: Buffer.alloc(0) };
     let peer = null;
@@ -299,9 +321,14 @@ export class Relay {
           if (relayPeersPerHost && host.peers.size >= relayPeersPerHost && !host.peers.has(env.sender.toLowerCase())) {
             return this.overLimit(ws, env.sender, "too many peers");
           }
-          peer = { ws, name: env.sender, expected: false };
-          const key = peer.name.toLowerCase();
+          const authenticated = !!sid && authenticate(sid, env.sender);
+          const key = env.sender.toLowerCase();
           const replaced = host.peers.get(key);
+          if (replaced?.authenticated && !authenticated) {
+            this.log(`relay: ${env.sender} refused by ${host.user} (connected with a session, ${clientAddress})`);
+            return ws.close(1008, "name in use");
+          }
+          peer = { ws, name: env.sender, expected: false, authenticated };
           host.peers.set(key, peer);
           if (replaced) this.dropPeer(replaced, "replaced");
           this.log(`relay: ${peer.name} connected to ${host.user}`);
@@ -316,6 +343,7 @@ export class Relay {
       host.peers.delete(peer.name.toLowerCase());
       if (!peer.expected) {
         this.notify(host.ws, { errorCode: ERR_NO_CONNECTION, subject: "ConnectionProblem", sender: peer.name, recipient: host.user });
+        if (peer.authenticated) this.onLeave(peer.name, host.user);
       }
       this.log(`relay: ${peer.name} left ${host.user}`);
     });

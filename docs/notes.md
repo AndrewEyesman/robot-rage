@@ -98,7 +98,10 @@ reads only SMUS envelopes (sender, recipients, subject) and forwards frames.
 ## dirplayer patches (`patches/dirplayer.patch`)
 
 The patch applies to upstream PR #244 (`cham/w3d-fullscreen`, b9b94666), not to `main`;
-see `docs/upstream.md` for why.
+see `docs/upstream.md` for why. After changing `vendor/dirplayer-rs`, save the patch
+with its new files too (a plain `git diff` leaves out untracked ones such as
+`vm-rust/tests/rr_score.rs`):
+`git -C vendor/dirplayer-rs add -N . && git -C vendor/dirplayer-rs diff > patches/dirplayer.patch`.
 
 - `new(timeout(), name, ...)` (Director 10 function form) and `timeout.persistent`.
 - `clearCache()` / `cacheSize()` as no-ops.

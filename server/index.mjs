@@ -65,7 +65,7 @@ function iceServers(value = "stun:stun.l.google.com:19302") {
   if (v.startsWith("[")) return JSON.parse(v);
   return [{ urls: v.split(",").map((u) => u.trim()).filter(Boolean) }];
 }
-const relay = new Relay({ log, iceServers: iceServers(process.env.ICE_SERVERS) });
+const relay = new Relay({ log, iceServers: iceServers(process.env.ICE_SERVERS), onLeave: handleMainAsp.playerLeft });
 
 // The game reads its server settings from main.ini. Hostnames ending in
 // .robotrage.local never resolve; the page's socket resolver maps them to
@@ -265,7 +265,7 @@ server.on("upgrade", (req, socket, head) => {
   // The emulator reports a successful connectToNetServer as soon as the socket
   // opens, so a connection to nobody must fail before that.
   if (url.pathname === "/ws/p2p/connect" && !relay.isListening(params.addr)) return reject(404, "Not Found");
-  const admission = { clientAddress: address, admit: handleMainAsp.robotRefused };
+  const admission = { clientAddress: address, admit: handleMainAsp.robotRefused, authenticate: handleMainAsp.sessionOwnsRobot };
   wss.handleUpgrade(req, socket, head, (ws) => {
     sockets.track(ws, address);
     ws.on("error", (err) => log(`ws: ${url.pathname} error (${address}): ${err.message}`));

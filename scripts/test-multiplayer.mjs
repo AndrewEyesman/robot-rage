@@ -117,12 +117,13 @@ class Irc {
 
 // One Multiuser instance on the relay: frames in, envelopes out.
 class Peer {
-  static async listen(addr, user) {
-    return Peer.wrap(await open(`${WS}/ws/p2p/listen?addr=${addr}&user=${user}`), user);
+  // `sid`: the port's session on the match connection (gameFixes.relayAuth).
+  static async listen(addr, user, { ws = WS, sid } = {}) {
+    return Peer.wrap(await open(`${ws}/ws/p2p/listen?addr=${addr}&user=${user}${sid ? `&sid=${sid}` : ""}`), user);
   }
 
-  static async connect(addr, user) {
-    const peer = Peer.wrap(await open(`${WS}/ws/p2p/connect?addr=${addr}`), user);
+  static async connect(addr, user, { ws = WS, sid } = {}) {
+    const peer = Peer.wrap(await open(`${ws}/ws/p2p/connect?addr=${addr}${sid ? `&sid=${sid}` : ""}`), user);
     peer.send("System", "Logon", "encrypted logon payload");
     return peer;
   }
@@ -178,7 +179,7 @@ async function step(name, fn) {
 
 const dataDir = mkdtempSync(join(tmpdir(), "robotrage-test-"));
 const server = startServer(dataDir);
-let server2, server3;
+let server2, server3, server4;
 
 try {
   await server.ready;
@@ -1036,6 +1037,129 @@ try {
     assert.equal(await mainAsp({ action: "getrobotmap", sessionid: host.sid, robotid: host.robotid }, HTTP3), "(*\u00ff*");
   });
 
+  // ---------------------------------------------------------------- walkovers
+  // A fourth server with a short report window and two ranked matches a day per pair of accounts.
+  const PORT4 = PORT + 3000;
+  const HTTP4 = `http://127.0.0.1:${PORT4}`;
+  const WS4 = `ws://127.0.0.1:${PORT4}`;
+  const dataDir4 = join(dataDir, "walkovers");
+  mkdirSync(dataDir4);
+  server4 = startServer(dataDir4, PORT4, { REPORT_WINDOW_SEC: "0.5", RANKED_PER_PAIR_PER_DAY: "2" });
+  await server4.ready;
+  const player4 = async (email, robotname, addr) => {
+    const sid = prop(await mainAsp({ action: "createmember", membername: email, password: "pw" }, HTTP4), "sid");
+    const robotid = Number(prop(await mainAsp({ action: "createrobot", sessionid: sid, robotname }, HTTP4), "robotid"));
+    return { sid, robotname, robotid, addr };
+  };
+  const p = await player4("p@test", "Hostbot", "10.6.6.1");
+  const q = await player4("q@test", "Guestbot", "10.6.6.2");
+  const r = await player4("r@test", "Thirdbot", "10.6.6.3");
+  const report4 = (from, to, winner) =>
+    mainAsp({ action: "setrobotscore", sessionid: from.sid, robotid: from.robotid, user1id: from.robotid, user2id: to.robotid, winner, checksum: 7 }, HTTP4);
+  const card4 = async (who) => {
+    const text = await mainAsp({ action: "getrobotall", robotid: who.robotid }, HTTP4);
+    const [, win, lose] = text.match(/#Win: (\d+), #lose: (\d+)/).map(Number);
+    return { win, lose };
+  };
+  const start4 = (host, guest) =>
+    mainAsp({ action: "setrwgames", sessionid: host.sid, gamegescription: `[#server: ${host.robotid}, #client: ${guest.robotid}, #servername: "${host.robotname}", #clientname: "${guest.robotname}", #serverip: "${host.robotname}"]` }, HTTP4);
+  // A match's two connections, as the lobby makes them: host p listening, guest q connected.
+  const connect4 = async ({ hostSid = p.sid, guestSid = q.sid } = {}) => {
+    const host = await Peer.listen(p.addr, p.robotname, { ws: WS4, sid: hostSid });
+    const guest = await Peer.connect(p.addr, q.robotname, { ws: WS4, sid: guestSid });
+    await host.expect("WaitForNetConnection");
+    return { host, guest };
+  };
+  const pastWindow = () => sleep(1500); // the window (0.5 s) and the server's resolve timer
+
+  await step("relay sessions: a match connection with its owner's session can't be taken over", async () => {
+    const { host, guest } = await connect4();
+    const thief = Peer.wrap(await open(`${WS4}/ws/p2p/listen?addr=${p.addr}&user=${p.robotname}`), p.robotname);
+    await waitFor(() => thief.closed, "a listener without the session refused");
+    const impostor = await Peer.connect(p.addr, q.robotname, { ws: WS4, sid: r.sid });
+    await waitFor(() => impostor.closed, "a peer with another member's session refused");
+    assert.ok(!host.closed && !guest.closed, "the real connections stay");
+    guest.send(p.robotname, "hello");
+    await host.expect("hello");
+    // The same account back in the lobby with another robot, from the same tab, takes the address over.
+    await mainAsp({ action: "createrobot", sessionid: p.sid, robotname: "Spareparts" }, HTTP4);
+    const again = await Peer.listen(p.addr, "Spareparts", { ws: WS4, sid: p.sid });
+    await waitFor(() => host.closed, "the old listener replaced");
+    await waitFor(() => guest.closed, "guest dropped with the host");
+    again.ws.close();
+  });
+
+  await step("a player who leaves a ranked round loses it: the survivor's walkover claim counts and ends the match", async () => {
+    await start4(p, q);
+    const { host, guest } = await connect4();
+    await report4(p, q, p.robotid);
+    await report4(q, p, p.robotid);
+    assert.deepEqual(await card4(p), { win: 1, lose: 0 });
+    guest.ws.close();
+    await host.expect("ConnectionProblem");
+    await report4(p, q, p.robotid);
+    assert.deepEqual(await card4(p), { win: 1, lose: 0 }, "not before the window has passed");
+    await pastWindow();
+    assert.deepEqual(await card4(p), { win: 2, lose: 0 });
+    assert.deepEqual(await card4(q), { win: 0, lose: 2 });
+    assert.match(server4.output(), /walkover: the other side left/);
+    // The match is over: later reports find no match.
+    await report4(p, q, p.robotid);
+    await report4(q, p, p.robotid);
+    assert.deepEqual(await card4(p), { win: 2, lose: 0 });
+    host.ws.close();
+  });
+
+  await step("a leave without a session, the claimant leaving first, or a disputed claim still void the round", async () => {
+    // The guest's connection had no session: its closing proves nothing.
+    await start4(p, q);
+    let c = await connect4({ guestSid: "" });
+    c.guest.ws.close();
+    await c.host.expect("ConnectionProblem");
+    await report4(p, q, p.robotid);
+    await pastWindow();
+    assert.deepEqual(await card4(p), { win: 2, lose: 0 });
+    c.host.ws.close();
+    // The guest leaves and claims the round, but the host stays and disputes it.
+    await start4(p, q);
+    c = await connect4();
+    c.guest.ws.close();
+    await c.host.expect("ConnectionProblem");
+    await report4(q, p, q.robotid);
+    await report4(p, q, p.robotid);
+    await pastWindow();
+    assert.deepEqual(await card4(q), { win: 0, lose: 2 });
+    assert.deepEqual(await card4(p), { win: 2, lose: 0 });
+    c.host.ws.close();
+    // The host closes its own listener (taking the guest with it) and claims the round.
+    await start4(p, q);
+    c = await connect4();
+    c.host.ws.close();
+    await waitFor(() => c.guest.closed, "guest dropped");
+    await report4(p, q, p.robotid);
+    await pastWindow();
+    assert.deepEqual(await card4(p), { win: 2, lose: 0 }, "the claimant left first");
+  });
+
+  await step("win trading: two accounts play two ranked matches a day, later ones unranked; other pairs aren't affected", async () => {
+    // One ranked match with a confirmed round so far (the walkover); a second counts.
+    await start4(p, q);
+    await report4(q, p, q.robotid);
+    await report4(p, q, q.robotid);
+    assert.deepEqual(await card4(q), { win: 1, lose: 2 });
+    // A third: its rounds are checked but change nothing.
+    await start4(q, p);
+    await report4(q, p, q.robotid);
+    await report4(p, q, q.robotid);
+    assert.deepEqual(await card4(q), { win: 1, lose: 2 });
+    assert.match(server4.output(), /unranked: 2 ranked matches between these accounts today/);
+    // Another pair still plays ranked.
+    await start4(r, q);
+    await report4(r, q, r.robotid);
+    await report4(q, r, r.robotid);
+    assert.deepEqual(await card4(r), { win: 1, lose: 0 });
+  });
+
   console.log(`\n${results.length} checks passed`);
 } catch (err) {
   console.error(`\nFAILED after ${results.length} checks:`, err);
@@ -1044,5 +1168,6 @@ try {
   server.child.kill();
   server2?.child.kill();
   server3?.child.kill();
+  server4?.child.kill();
   rmSync(dataDir, { recursive: true, force: true });
 }

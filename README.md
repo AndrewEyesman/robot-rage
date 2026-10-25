@@ -124,13 +124,18 @@ The server doesn't take the client's word for results or money.
 **Ranked results** (`server/results.mjs`). The challenge host reports each match it
 starts (`setrwgames`, naming both robots), and both players report every ranked round
 (`setrobotscore`). A round counts (wins, losses, draws, score, prize) only when both
-reports agree, arrive within 30 s of each other, and belong to a match the server saw
-start (open until 2 h without activity, first to 3 wins, at most 15 rounds; never between
-two robots of one account). A report from one side only, two reports that disagree, or a
-report with no started match records nothing. When a player disconnects or vanishes,
-their side never reports, so the round in progress doesn't count for anyone: faking a
-disconnect can't win, it only voids that round (rounds already confirmed stand). A
-surrender counts, since the surrendering player reports the opponent as the winner.
+reports agree, arrive within 30 s of each other (`REPORT_WINDOW_SEC`), and belong to a
+match the server saw start (open until 2 h without activity, first to 3 wins, at most 15
+rounds; never between two robots of one account). A report from one side only, two reports
+that disagree, or a report with no started match records nothing, with one exception: a
+player who quits loses. The port's match connections carry the login session, so when one
+closes on its own the relay knows that player left; the survivor's arena claims the round
+as a walkover, and that claim counts if the leaver never reported (the match ends there).
+Closing your own connection or cutting the other side's still wins nothing, and rounds
+already confirmed stand. A surrender counts, since the surrendering player reports the
+opponent as the winner. Against trading wins between one person's accounts,
+`RANKED_PER_PAIR_PER_DAY` limits the ranked matches two accounts play each other a day
+(later ones play unranked); it's off (0) by default while there are few players.
 
 **Money and parts** (`server/economy.mjs`). The server keeps each robot's ledger (its
 money and the parts it owns) and checks every save (`setrobot`) against it, with the

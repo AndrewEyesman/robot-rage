@@ -45,4 +45,4 @@ jobs:
           P2P_PLAIN_IPS: "1"
       - name: Direct-connection logs
         if: failure()
-        run: cat .cache/regress/out/multiuser-p2p-console.txt || true
+        run: cat .cache/regress/out/latest/multiuser-p2p-console.txt || true

@@ -68,6 +68,8 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
   const loggedInFrom = new Map();
 
   const results = createResults(store, log, {
+    reportWindowMs: limits.reportWindowMs,
+    rankedPerPairPerDay: limits.rankedPerPairPerDay,
     onRound(winner, own, opponent) {
       if (winner === own.robotid) recordWin(own, opponent);
       else if (winner === opponent.robotid) recordWin(opponent, own);
@@ -106,6 +108,8 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
   }
   prune();
   setInterval(prune, PRUNE_EVERY_MS).unref();
+  // Walkovers count once their report window has passed (results.mjs).
+  setInterval(() => results.resolveAll(), Math.min(5000, Math.max(250, limits.reportWindowMs / 2))).unref();
 
   /** Pay a robot's prizes for settled matches and its queued credits into its saved data. */
   function settleAndPay(robot) {
@@ -556,10 +560,26 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
     return robot && robot.memberId === member.id ? undefined : "Not your robot";
   }
 
+  /** For the relay: whether `sid` is a live session of the account that owns the robot named `name`. */
+  function sessionOwnsRobot(sid, name) {
+    const member = sid ? sessionMember(String(sid)) : undefined;
+    const robot = member && store.robotByName(String(name ?? "").trim());
+    return !!robot && robot.memberId === member.id;
+  }
+
+  /** For the relay: `leaver`'s session-checked connection to `other` closed on its own (robot names). */
+  function playerLeft(leaver, other) {
+    const a = store.robotByName(String(leaver ?? "").trim());
+    const b = store.robotByName(String(other ?? "").trim());
+    if (a && b && a !== b) results.left(a, b);
+  }
+
   return Object.assign(handleMainAsp, {
     /** For the relay: a reason to refuse this robot (a banned account's), or undefined. */
     robotRefused: (name) => (robotBan(name) ? "banned" : undefined),
     ircRefused,
+    sessionOwnsRobot,
+    playerLeft,
   });
 }
 

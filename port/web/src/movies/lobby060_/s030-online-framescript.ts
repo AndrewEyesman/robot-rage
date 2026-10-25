@@ -13,7 +13,7 @@ import { FormatUserName, Hex2Num, formatInternalUserName, getUserIpCode } from '
 import { text2image } from '../robotwars/s007-jump-movie';
 import { getranking } from '../robotwars/s240-getranking';
 import {
-  DeclineChallenge, DisconnectFromSMUS, PingP2P, ReplaceWord, SendchallengeSMUS, SetRobotPing, changeroom, connectP2P,
+  DeclineChallenge, DisconnectFromSMUS, PingP2P, pingConnectionOpen, ReplaceWord, SendchallengeSMUS, SetRobotPing, changeroom, connectP2P,
   getRankClass, getrankingindex,
 } from './s004-lobby-moviescript';
 import { gameFixes, withRobotDefaults } from '../fixes';
@@ -238,7 +238,10 @@ export class OnlineFramescript extends Behavior {
       connectP2P(this, dot(G.gRobotData, 'Userip'));
       this.pTimer = the.milliSeconds;
     } else if (st === sym('pingRobot')) {
-      PingP2P(this, sym('ping'), undefined);
+      // The original pings at once, while the connection is still opening, and pings
+      // again when it opens (P2PMessageHandler): two pings go round (#70). The fix
+      // waits for the connection, whose arrival comes back here.
+      if (!gameFixes.lobbyPing || pingConnectionOpen()) PingP2P(this, sym('ping'), undefined);
       G.getOpponentState = sym('waitForRobot');
       this.pTimer = the.milliSeconds;
     } else if (st === sym('waitForRobot')) {

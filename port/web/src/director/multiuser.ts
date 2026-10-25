@@ -32,6 +32,17 @@ import { byteToChar, charToByte } from '../lingo/charset';
 import { DirectLink, p2pSetting, webrtcAvailable, type Control, type Transport } from './p2p';
 import { LFloat, LList, LPoint, LPropList, LRect, LSymbol, isInt, lingoString, num, sym, type LValue } from '../lingo';
 
+/** The game's login session for the P2P relay (set by movies/fixes.ts, gameFixes.relayAuth), or ''. */
+let relaySession: () => string = () => '';
+export function setRelaySession(get: () => string) {
+  relaySession = get;
+}
+/** The relay URLs' session: the relay counts a player leaving only from a socket that has one (server/relay.mjs). */
+const sidParam = () => {
+  const sid = relaySession();
+  return sid ? `&sid=${encodeURIComponent(sid)}` : '';
+};
+
 /** "There is no current connection": a connection that failed or went away. The arena and lobby test for it. */
 export const ERR_NO_CONNECTION = -2147216214;
 
@@ -153,7 +164,7 @@ export class MultiuserXtra {
     this.mode = (mode instanceof LSymbol && mode.name.toLowerCase() === 'text') || mode === 1 ? 'text' : 'smus';
     this.userID = user;
     this.listener = false;
-    const url = IRC_PORTS.has(port) ? `${wsBase()}/ws/irc?addr=${encodeURIComponent(myAddress())}` : port === 1626 ? `${wsBase()}/ws/p2p/connect?addr=${encodeURIComponent(host)}` : '';
+    const url = IRC_PORTS.has(port) ? `${wsBase()}/ws/irc?addr=${encodeURIComponent(myAddress())}` : port === 1626 ? `${wsBase()}/ws/p2p/connect?addr=${encodeURIComponent(host)}${sidParam()}` : '';
     if (!url) {
       warnOnce(`Multiuser: no route to ${host}:${port}`);
       this.receive({ errorCode: ERR_NO_CONNECTION, recipients: [user], senderID: 'System', subject: 'ConnectToNetServer', content: undefined, timeStamp: 0 });
@@ -172,7 +183,7 @@ export class MultiuserXtra {
     this.mode = 'smus';
     this.listener = true;
     this.peers = [];
-    this.open(`${wsBase()}/ws/p2p/listen?addr=${encodeURIComponent(myAddress())}&user=${encodeURIComponent(user)}`, null, false);
+    this.open(`${wsBase()}/ws/p2p/listen?addr=${encodeURIComponent(myAddress())}&user=${encodeURIComponent(user)}${sidParam()}`, null, false);
     return 0;
   }
 

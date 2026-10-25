@@ -68,6 +68,12 @@ export function loadLimits(env = process.env) {
     relayMsgsPerSec: int(env, "RELAY_MSGS_PER_SEC", 1000),
     relayBytesPerSec: int(env, "RELAY_KB_PER_SEC", 1024) * 1024,
     relayPeersPerHost: int(env, "RELAY_PEERS_PER_HOST", 8),
+    // Ranked results (results.mjs): how close together a round's two reports must arrive,
+    // and the ranked matches two accounts may play each other a day (later ones play
+    // unranked, against trading wins between one person's accounts). 0, the default, is
+    // no limit: with few players, the same two often play each other all evening.
+    reportWindowMs: int(env, "REPORT_WINDOW_SEC", 30) * 1000,
+    rankedPerPairPerDay: int(env, "RANKED_PER_PAIR_PER_DAY", 0),
     // Error reports from players' browsers (clienterrors.mjs), errors per address per minute.
     clientErrorsPerMinute: int(env, "CLIENT_ERRORS_PER_MIN", 30),
     // Sessions expire after this long unused (each use refreshes them).

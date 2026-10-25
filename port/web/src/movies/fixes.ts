@@ -78,8 +78,20 @@
 //   fix, logging in without retyping it sent no email ("Not a valid email/password!").
 //   The behavior now takes the field's text when a script set it behind its back, and
 //   logging in reads that text.
+// - The lobby's ping (?quirks=lobbyping, #70): clicking a robot connects to it and, the
+//   next frame, pings it, while the connection is still opening; the Multiuser Xtra sends
+//   that ping once it opens, and the connection's arrival (ConnectToNetServer) empties
+//   the ping list and pings again. Two pings went round, each pong sending the next, so
+//   when four times were in and the list emptied, the other pong found it empty: a script
+//   error (the first players' error report) and a ping read from half the samples. The
+//   first ping now waits for the connection, and a pong with no ping waiting is ignored.
+// - A session on the match connection (?quirks=relayauth, #56): the P2P relay sockets
+//   (the lobby's listener and connections, which carry the match) send the login
+//   session, so the server knows a connection that closes is really that player's.
+//   A player who quits a ranked round then loses it (the other side's walkover claim
+//   counts) instead of voiding it (server/results.mjs).
 
-import { G, TextualMember, dot, member, netDone, netError, netTextResult, player } from '../director';
+import { G, TextualMember, dot, member, netDone, netError, netTextResult, player, setRelaySession } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
 import { rocket_encrypt } from './robotwars/s072-rocket-encrypt';
 import { emptyRobotProplist } from './robotwars/s011-purl';
@@ -103,7 +115,14 @@ export const gameFixes = {
   scrollSelect: !quirks.includes('scrollselect'),
   scrollText: !quirks.includes('scrolltext'),
   keepLogin: !quirks.includes('keeplogin'),
+  lobbyPing: !quirks.includes('lobbyping'),
+  relayAuth: !quirks.includes('relayauth'),
 };
+
+setRelaySession(() => {
+  const sid = gameFixes.relayAuth ? dot(G.gLobby, 'session') : undefined;
+  return typeof sid === 'string' ? sid : '';
+});
 
 /**
  * gameFixes.longEmail: the whole text of a field member that a "Horizontal scroll

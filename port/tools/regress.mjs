@@ -27,12 +27,13 @@
 //
 // Screenshots are compared with approved ones in .cache/regress/approved/ (game art, so
 // never committed): a check records its image the first time, and later fails when
-// more than 0.5% of pixels differ by more than 24/255. Diffs go to .cache/regress/out/.
+// more than 0.5% of pixels differ by more than 24/255. Diffs go to the run's folder in
+// .cache/regress/out/ (see OUT).
 // Approve a deliberate change with --approve after looking at the diff.
 import { chromium } from 'playwright-core';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, copyFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -52,9 +53,25 @@ const SERVER_PORT = live ? 8091 : await freePort();
 const DEV_PORT = live ? 8092 : await freePort();
 const APP = `http://127.0.0.1:${DEV_PORT}`;
 const APPROVED = join(ROOT, '.cache/regress/approved');
-const OUT = join(ROOT, '.cache/regress/out');
+// Each run's logs and diffs go to a folder of their own (several agents may run the suite at
+// once, docs/port-issues.md #51), .cache/regress/out/<time>-<pid>; `latest` links to the newest.
+// The tools the suite runs (p2p-test, prod-test) write there too (REGRESS_OUT). Runs older
+// than two days are deleted.
+const OUT_ROOT = join(ROOT, '.cache/regress/out');
+const OUT = join(OUT_ROOT, `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`);
 mkdirSync(APPROVED, { recursive: true });
 mkdirSync(OUT, { recursive: true });
+process.env.REGRESS_OUT = OUT;
+for (const e of readdirSync(OUT_ROOT, { withFileTypes: true })) {
+  const path = join(OUT_ROOT, e.name);
+  if (e.isDirectory() && Date.now() - statSync(path).mtimeMs > 2 * 24 * 3600_000) rmSync(path, { recursive: true, force: true });
+}
+try {
+  rmSync(join(OUT_ROOT, 'latest'), { force: true });
+  symlinkSync(basename(OUT), join(OUT_ROOT, 'latest'));
+} catch {
+  // A link another run made at the same moment: either is fine.
+}
 
 const args = args0;
 const fast = args.includes('--fast');
@@ -99,6 +116,21 @@ const KEPT_TO_GARAGE = [
 const KEPT = `localStorage.getItem('rr-login')`;
 
 /** In the lobby: the point on a name's line in the room's user list (sprite 9, 13 px lines). */
+// Collects the lobby's P2PMessageHandler script errors in window.__p2pErrors, and
+// makes the tab's P2P connections open 300 ms late, as over the internet: #70 needs a
+// connection that's still opening on the frame after connectP2P, which never happens
+// between two local tabs.
+const PING_ERRORS = `import('/src/director/errors.ts').then((m) => {
+  window.__p2pErrors = [];
+  m.scriptErrorListeners.push((w, e) => { if (/P2PMessageHandler/.test(w)) window.__p2pErrors.push(w + ': ' + e); });
+  const Real = window.WebSocket;
+  window.WebSocket = class extends Real {
+    constructor(...a) { super(...a); this.late = this.url.includes('/ws/p2p/connect'); }
+    get readyState() { return this.late && super.readyState === Real.OPEN ? Real.CONNECTING : super.readyState; }
+    set onopen(f) { super.onopen = (e) => (this.late ? setTimeout(() => { this.late = false; f.call(this, e); }, 300) : f.call(this, e)); }
+    get onopen() { return super.onopen; }
+  };
+})`;
 const LINE_OF = (name) => `(() => { const b = p.sprite(9).bounds; const i = p.member('rvtext').text.split('\\r').findIndex((l) => l.startsWith('${name}\\t')); return [b.left + 40, b.top + 13 * i + 6]; })()`;
 /** In the lobby: that robot's card is shown and can be challenged. */
 const CARD_OF = (name) =>
@@ -736,6 +768,8 @@ const CHECKS = [
       ['shot', 'lobby-countries'],
       // docs/port-issues.md #57 (gameFixes.ircAuth): the server let the nick in (IRC_REQUIRE_SESSION=1) with the login session as PASS.
       ['expect', 'the lobby registered with its session as the IRC password', `String(p.globals.gIRC.pIRCUserPassword) === String(p.globals.gLobby.getaProp(sym('session'))) && p.globals.gIRC.pIRCUserPassword.length > 0`, 1000],
+      // docs/port-issues.md #56 (gameFixes.relayAuth): the match listener carries the session, so the server can tell a player leaving.
+      ['expect', 'the lobby listens for matches with its session', `String(p.globals.P2PmuInstanceListen?.ws?.url).includes('&sid=' + encodeURIComponent(p.globals.gLobby.getaProp(sym('session'))))`, 5000],
       // gameFixes.robotReply: an error reply to the lobby's getrobotall for its own robot (#err -1, robot 0) leaves it waiting, stats unchanged, no script error.
       ['eval', `(async () => { const d = await import('/src/director/index.ts'); const L = await import('/src/lingo/index.ts'); window.__L = L;
         const fs = p.frameScript; window.__stats = L.lingoString(p.globals.gUserData.getaProp(sym('GameStats')));
@@ -795,6 +829,7 @@ const CHECKS = [
     slow: true,
     steps: [
       ['expect', 'Regress reached the lobby', `p.movie.name === 'lobby060_' && p.frame >= 10`, 30000],
+      ['eval', PING_ERRORS],
       ['wait', 1500],
       ['click', 50, 350],
       ['wait', 2000],
@@ -811,6 +846,8 @@ const CHECKS = [
       ['expect', 'Regress sees Fresh', `/(^|\\r)Fresh\\t/.test(p.member('rvtext').text)`, 10000],
       ['clickAt', LINE_OF('Fresh')],
       ['expect', "the never-saved robot's card opens, with its 3D robot and CHALLENGE", CARD_OF('Fresh') + ` && !!p.member('robot').group('robot')`, 15000],
+      ['wait', 1500],
+      ['expect', 'its ping went round once, with no pong left over (#70)', `window.__p2pErrors.length === 0`, 1000],
       ['clickAt', LINE_OF('Regress')],
       ['expect', 'another card opens after it', CARD_OF('Regress'), 15000],
       ['use', 'fresh'],
@@ -1041,7 +1078,7 @@ async function flow(check) {
   });
   const ctx = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
   const errors = [];
-  // Every tab's console, saved as .cache/regress/out/<check>-console.txt for a failure's story.
+  // Every tab's console, saved as <run folder>/<check>-console.txt for a failure's story.
   const consoleLog = [];
   const t0 = Date.now();
   // Flows with ['tab', name, url] steps play several tabs (players) at once; the first
@@ -1353,12 +1390,12 @@ for (const c of selected) {
   console.log(`${r.ok ? 'PASS' : 'FAIL'} ${c.name} (${secs}s)`);
   if (!r.ok || c.steps || c.match) {
     // A failed command: its last 15 lines, after any FAIL lines above them; all of it
-    // goes to .cache/regress/out/<check>.txt.
+    // goes to <run folder>/<check>.txt.
     const lines = r.out.trim().split('\n');
     const shown = [...lines.slice(0, -15).filter((l) => /^\s*FAIL\b/.test(l)), ...lines.slice(-15)];
     if (c.cmd && !r.ok) {
       writeFileSync(join(OUT, `${c.name}.txt`), r.out);
-      shown.push(`(all of it: .cache/regress/out/${c.name}.txt)`);
+      shown.push(`(all of it: ${relative(ROOT, join(OUT, `${c.name}.txt`))})`);
     }
     const text = c.cmd && !r.ok ? shown.map((l) => '  ' + l).join('\n') : r.out;
     if (text.trim()) console.log(text);
