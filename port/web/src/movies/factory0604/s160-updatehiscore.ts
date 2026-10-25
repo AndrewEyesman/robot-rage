@@ -111,8 +111,8 @@ export class UpdateHiscore extends Behavior {
         const m = member('highscores');
         m.text = EMPTY;
         for (const p of L.getaProp(sym('hiscore')) as LList) {
-          // p.count: the entry's #count property if it has one, else (as on this
-          // server) the number of its properties.
+          // p.count: the entry's #count property (its rank, which the server sends)
+          // if it has one, else the number of its properties.
           const pl = p as LPropList;
           const count = pl.getaProp(sym('count')) ?? pl.count;
           m.text = m.text + lingoString(count) + TAB + lingoString(dot(p, 'robotname')) + TAB + lingoString(dot(p, 'score')) + RETURN;

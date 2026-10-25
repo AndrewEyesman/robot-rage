@@ -710,7 +710,7 @@ const CHECKS = [
       ['click', 589, 185],
       ['expect', 'STATS tab (through its label) shows the stats', `p.sprite(98).locV === 210 && /Crusher/.test(p.sprite(98).member.text)`, 2000],
       ['click', 730, 192],
-      ['expect', 'HIGHSCORE tab loads the list', `p.sprite(99).locV === 310 && /Crusher/.test(p.member('highscores').text)`, 6000],
+      ['expect', 'HIGHSCORE tab loads the list, ranked', `p.sprite(99).locV === 310 && /^1\t/.test(p.member('highscores').text) && /Crusher/.test(p.member('highscores').text)`, 6000],
       ['click', 731, 501],
       ['expect', 'TRAINING door goes to the arena', `p.movie?.name === 'arena104'`, 20000],
     ],

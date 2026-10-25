@@ -399,7 +399,7 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
         .allRobots()
         .sort((a, b) => (b.score ?? DEFAULT_SCORE) - (a.score ?? DEFAULT_SCORE))
         .slice(0, 20)
-        .map((r) => ({ robotname: r.robotname, score: r.score ?? DEFAULT_SCORE }));
+        .map((r, i) => ({ count: i + 1, robotname: r.robotname, score: r.score ?? DEFAULT_SCORE }));
       return { err: 0, hiscore };
     },
 
