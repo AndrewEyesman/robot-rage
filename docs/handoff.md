@@ -46,8 +46,8 @@ anti-cheat rules and moderation.
   `port/tools/regress-seed.json`, so it never touches a running server.
 - `node port/tools/regress.mjs --fast` skips the slow checks (a couple of minutes); the
   pre-commit hook (`scripts/git-hooks/pre-commit`) runs it for commits touching `port/` or
-  `server/`. `--full` adds the weapon traces against dirplayer (10-30 minutes): only after
-  arena, weapon or physics changes.
+  `server/`. `--full` adds the weapon and two-robot traces against dirplayer (20-45 minutes): only
+  after arena, weapon or physics changes.
 - `npm run test:server` alone for server changes.
 - GitHub Actions (`.github/workflows/test.yml`) runs only what needs no game files: the
   server tests, typecheck, unit tests (without text layout, which needs the extracted

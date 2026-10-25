@@ -21,7 +21,6 @@ const SECTIONS: [string, Row[]][] = [
     [
       { key: 'wide', label: 'Widescreen arena', hint: "The 3D view fills the window's width. L switches it in the arena." },
       { key: 'smooth', label: 'Smooth 3D motion', hint: "Draws the arena at your screen's refresh rate." },
-      { key: 'doors', label: 'Doors slide all the way', hint: 'The original snapped them shut halfway.' },
       { key: 'flame', label: 'Flames stream forward', hint: 'The flames go where the robot faces. Looks only: hits are the same.' },
     ],
   ],

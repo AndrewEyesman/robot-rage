@@ -17,8 +17,6 @@ const DEFS = {
   wide: { default: true, address: () => (query.has('layout') ? query.get('layout') !== 'original' : undefined) },
   /** arenaView.smooth: the 3D view drawn at the display's rate. */
   smooth: { default: true, address: () => (query.has('smooth') ? query.get('smooth') !== '0' : undefined) },
-  /** gameFixes.doorClose: screen doors slide all the way. */
-  doors: quirk('doors'),
   /** arenaFixes.flameForward: the flame thrower's flames go the robot's way (looks only, the hit is the same). */
   flame: quirk('flame'),
   /** arenaFixes.ambient: the wind loop in matches. */

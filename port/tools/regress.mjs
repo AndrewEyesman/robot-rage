@@ -6,7 +6,7 @@
 //   node port/tools/regress.mjs                  everything
 //   node port/tools/regress.mjs login garage     only checks whose name contains a word
 //   node port/tools/regress.mjs --fast           skip the slow checks (two-tab matches, traces, the production build): a couple of minutes
-//   node port/tools/regress.mjs --full           also the weapons against the original (weapon-trace, 10-30 min)
+//   node port/tools/regress.mjs --full           also the weapons and two robots against the original (weapon-trace, robots-trace, 20-45 min)
 //   node port/tools/regress.mjs --approve        re-record the approved screenshots
 //   node port/tools/regress.mjs --live           use the running dev server (8092) and test server (8091)
 //
@@ -75,7 +75,7 @@ try {
 
 const args = args0;
 const fast = args.includes('--fast');
-// The `full` checks (weapon-trace) take 10-30 minutes: only with --full or named.
+// The `full` checks (weapon-trace, robots-trace) take 10-30 minutes each: only with --full or named.
 const full = args.includes('--full');
 const approve = args.includes('--approve');
 const filters = args.filter((a) => !a.startsWith('--'));
@@ -347,6 +347,7 @@ const CHECKS = [
   { name: 'prod-build', cmd: ['node', 'port/tools/prod-test.mjs'], slow: true },
   // The arena's weapons against the original in dirplayer, tick by tick (11 scenarios, ~12 min).
   { name: 'weapon-trace', cmd: ['node', 'port/tools/weapon-trace.mjs', `--server=${SERVER_PORT}`, `--app=${APP}`], slow: true, full: true, timeout: 2400000 },
+  { name: 'robots-trace', cmd: ['node', 'port/tools/robots-trace.mjs', `--server=${SERVER_PORT}`, `--app=${APP}`], slow: true, full: true, timeout: 2400000 },
   {
     name: 'loader-to-login',
     url: '/game.html',
@@ -1045,8 +1046,9 @@ const CHECKS = [
   },
   {
     // Screen entries: the door halves (robotwars 263) slide all the way to their closed
-    // positions and arrive together; the original braked toward x = 0 and snapped
-    // halfway (docs/port-issues.md #47). Garage, lobby and arena (the control panel).
+    // positions and arrive together, as the original's bytecode does; an earlier
+    // translation braked toward x = 0 and snapped halfway (docs/port-issues.md #47).
+    // Garage, lobby and arena (the control panel).
     name: 'door-slides',
     url: '/game.html',
     steps: [

@@ -74,6 +74,7 @@ chats). Two improvements, kept apart from the translated scripts in
 ## Checking it against the original
 
     node port/tools/physics-trace.mjs 8091    # needs the dev server and a test server
+    node port/tools/robots-trace.mjs --server=8091   # two robots meeting, against the original
 
 Drives the original robot behavior in dirplayer tick by tick (paused movie, one
 `prepareFrame` per tick, keys from `tools/schedule.mjs`), then the translated robot

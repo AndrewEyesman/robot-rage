@@ -21,11 +21,6 @@
 //   gChallengeGo set, so the new server connects again instead of waiting: the swap
 //   never worked and both players went back to the lobby. The swap now clears it, and
 //   the new server's second ConnectToMe no longer undoes a connection already made.
-// - Closing doors (?quirks=doors): the door halves (robotwars 263, on every screen's
-//   entry: garage, lobby, the arena's control panel) brake toward x = 0 instead of their
-//   closed positions, and the first half to stop advances the playhead, so the slide
-//   snapped halfway (the maintainer). Each half now slides to its own closed position; all
-//   arrive together.
 // - The server owns the economy (?quirks=economy restores the original client): the
 //   server checks every save (setrobot) against its own record of the robot's money and
 //   parts and keeps no more money than legal buying and selling allow, and pays prizes
@@ -118,7 +113,6 @@ export const gameFixes = {
   challengeCard: !quirks.includes('challengecard'),
   gridNoChassis: !quirks.includes('grid'),
   p2pSwap: !quirks.includes('p2pswap'),
-  doorClose: setting('doors'),
   economy: !quirks.includes('economy'),
   matchSession: !quirks.includes('results'),
   ircAuth: !quirks.includes('ircauth'),
@@ -135,8 +129,7 @@ export const gameFixes = {
   touchClick: !quirks.includes('touchclick'),
 };
 
-// The doors and the kept login change only this browser: the player's Settings choose them.
-onSettingChange('doors', (v) => (gameFixes.doorClose = v));
+// The kept login changes only this browser: the player's Settings choose it.
 onSettingChange('keepLogin', (v) => {
   // Turned off, the login kept now is forgotten too (this page stays logged in).
   gameFixes.keepLogin = v;

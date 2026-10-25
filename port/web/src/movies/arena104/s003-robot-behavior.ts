@@ -630,8 +630,15 @@ export class RobotBehavior extends Behavior {
     this.speed = 0.0 * this.speed;
   }
 
-  getDist(dx: number, dy: number) {
-    return dx * dx + dy * dy;
+  /**
+   * The robot's own speed squared, whatever it's given: the handler's parameters are
+   * named dx and dy like the behavior's properties, and its bytecode reads the
+   * properties (getprop), as Adobe's player and dirplayer run it. The decompiled source
+   * reads as if it took the distance (docs/port-issues.md #80). So hit's push apart on
+   * every fifth bump is 0.1 px per pixel of offset over the robot's speed, not a unit push.
+   */
+  getDist(_dx: number, _dy: number) {
+    return this.dx * this.dx + this.dy * this.dy;
   }
 
   tip() {

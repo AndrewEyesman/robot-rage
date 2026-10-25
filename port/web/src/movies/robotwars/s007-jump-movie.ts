@@ -3,7 +3,7 @@
 // text2image: run-length coded palette indices, sent with setrobotmap).
 
 import { DColor, DImage, G, dot, go, gotoNetMovie, member, the } from '../../director';
-import { EMPTY, LPropList, char, charToNum, item, itemDelimiter, lf, lingoString, numToChar, setItemDelimiter, stringp, symbol, type LValue } from '../../lingo';
+import { EMPTY, LPropList, char, charToNum, item, itemDelimiter, lf, lingoString, numToChar, setItemDelimiter, sqrt, stringp, symbol, type LValue } from '../../lingo';
 import { eq } from './util';
 import { gameFixes } from '../fixes';
 
@@ -45,7 +45,8 @@ export function GetAngle2(pt1: { locH: number; locV: number }, pt2: { locH: numb
 }
 
 export function getDist(dx: number, dy: number) {
-  return lf(Math.sqrt(dx * dx + dy * dy));
+  // Lingo's sqrt: the rounded integer for whole-pixel distances (the hammer's and claw's).
+  return sqrt(dx * dx + dy * dy);
 }
 
 export function debug(_s?: LValue) {}

@@ -3,7 +3,7 @@
 Everything the port does that has been checked to work, one line each, with how it's
 checked. A change must not lose any of these. `node port/tools/regress.mjs` runs the
 automated checks (marked with their check names; `--fast` skips the slow ones, `--full`
-adds weapon-trace); the rest are checked by hand or by a tool that needs the reference
+adds weapon-trace and robots-trace); the rest are checked by hand or by a tool that needs the reference
 player, until they're automated.
 
 Add a line whenever something is verified to work, and an automated check to
@@ -39,11 +39,11 @@ Add a line whenever something is verified to work, and an automated check to
 | Backspace in the login's fields: the password field deletes star after star, and the email box deletes the selection Tab makes (`?quirks=scrollselect` for the email box's original) | `login-field-delete` |
 | The remembered email opens the LOG IN tab; Backspace deletes one character of it, typing adds to it, and logging in with it untouched works (the original's first key replaced it; `?quirks=scrolltext`) | `login-remembered-email` |
 | A login is kept in the browser: a reload goes straight to the robot list; QUIT forgets it; a dead session is forgotten and the login screen stays (`?quirks=keeplogin` keeps nothing) | `login-keep` |
-| The player's Settings (game.html): a "Settings" link beside Privacy in the black bar (none with no bar, none in the arena) opens a dialog of the switches that change only this browser's game (widescreen, smooth drawing, the doors, the flames' look, the wind, Training's restart, staying logged in, touch controls, and the direct connection, whose off keeps matches on the relay as `?p2p=relay` does); a choice applies at once (touch controls from the next load) and is kept in the browser (`rr-settings`), no key reaches the game while it's open, Escape closes it and gives the keyboard back, an address flag (`?layout=`, `?quirks=`, `?ambient=`, `?touch=`...) still decides for its page and shows as set there, L in the arena keeps the layout as the setting, and Reset to defaults puts every one back | `settings` |
+| The player's Settings (game.html): a "Settings" link beside Privacy in the black bar (none with no bar, none in the arena) opens a dialog of the switches that change only this browser's game (widescreen, smooth drawing, the flames' look, the wind, Training's restart, staying logged in, touch controls, and the direct connection, whose off keeps matches on the relay as `?p2p=relay` does); a choice applies at once (touch controls from the next load) and is kept in the browser (`rr-settings`), no key reaches the game while it's open, Escape closes it and gives the keyboard back, an address flag (`?layout=`, `?quirks=`, `?ambient=`, `?touch=`...) still decides for its page and shows as set there, L in the arena keeps the layout as the setting, and Reset to defaults puts every one back | `settings` |
 | No caret is left blinking in a label after the fields go (the focus goes with its sprite) | `login-robot-list`, `runtime-unit` |
 | Clicking a robot selects it with the highlight bar | `login-robot-list` (screenshot) |
 | Settings tab opens; CHAT toggles and is saved | `login-robot-list` |
-| Screen entries: the door halves (and the arena's control panel) slide all the way to their places and arrive together (the original snapped halfway; `?quirks=doors`) | `door-slides` |
+| Screen entries: the door halves (and the arena's control panel) slide all the way to their places and arrive together, as the original's bytecode does (docs/port-issues.md #47) | `door-slides` |
 | USE ROBOT goes to the garage | `garage-preview` |
 
 ## Garage (factory0604)
@@ -69,6 +69,8 @@ Add a line whenever something is verified to work, and an automated check to
 | Behaviour | Check |
 | --- | --- |
 | Driving is the original's, tick for tick (229 ticks identical to dirplayer running the original scripts, incl. a wall hit) | `physics-trace` |
+| Two robots meeting are the original's, tick for tick (dirplayer running the original scripts, both robots real, in Training): head-on and side rams, glancing blows, a long shove (6 bumps, the push apart on the fifth), the spike, drill, saw and roller driven in (bumps and damage), spears (damage), the grenade's and rockets' recoil and blast on the shooter, the hammer, minigun, EMP and claw going off, mines, nails, glue and oil driven over (thrown up, slipping), flames, laser and discs; 12 scenarios. Not covered: what only a match does (the claw catching, the EMP stunning, grenades and rockets hitting the other robot: gGamePlace), and the opponent's network updates | `robots-trace` (`--full`) |
+| The bump (`hit`) gives what Adobe's player gives for the same two robots, the fifth bump's push apart included (real robot behaviors on two sprites in the reference player, four cases) | refeval (by hand, docs/port-issues.md #80) |
 | Training: the robot is ready to drive and moves forward with the up arrow | `training` |
 | No ambient wind in the arena (the maintainer's request; `?ambient=1` restores it) | `training` |
 | A two-tab match starts, and your own keys act within 5 ms (the original's 300 ms ping bug fixed; `?quirks=ping` restores it) | `match-input-delay` |

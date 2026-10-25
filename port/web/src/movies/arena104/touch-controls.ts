@@ -26,7 +26,7 @@ import { BackyardFramescript } from './s004-backyard-framescript';
 import { PANEL_TOP } from './enhancements';
 
 /** The frame scripts' states in which the robot is driven (and the countdown before). */
-const MATCH_STATES = ['three', 'wait3', 'two', 'wait2', 'one', 'wait1', 'run', 'initfadeout', 'fadeout', 'activate', 'idle'].map(sym);
+const MATCH_STATES = ['three', 'wait3', 'two', 'wait2', 'one', 'wait1', 'run', 'initfadeout', 'fadeOut', 'activate', 'idle'].map(sym);
 const TRAINING_STATES = ['init', 'init2', 'idle'].map(sym);
 
 /** A match or Training is being played: the controls are up. */

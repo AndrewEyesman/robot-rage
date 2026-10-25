@@ -845,12 +845,20 @@ export function abs(v: LValue): LNum {
 }
 
 /**
- * sqrt of an integer is the rounded integer (sqrt(10) = 3, sqrt(15) = 4); of a float or
- * numeric string, a float. Negative gives NAN. dirplayer always returns a float.
+ * Switches to dirplayer's arithmetic where it differs from Adobe's player, for the traces
+ * that compare the port's translations with dirplayer running the original scripts
+ * (port/tools/robots-trace.mjs), as Sprite.truncate does for sprite positions.
+ */
+export const lingoCompat = { floatSqrt: false };
+
+/**
+ * sqrt of an integer is the rounded integer (sqrt(10) = 3, sqrt(15) = 4; in Adobe's
+ * player sqrt(1300) = 36, sqrt(24) = 5); of a float or numeric string, a float. Negative
+ * gives NAN. dirplayer always returns a float (lingoCompat.floatSqrt).
  */
 export function sqrt(v: LValue): LNum {
   const x = num(v);
-  if (isInt(v) && x >= 0) return Math.round(Math.sqrt(x));
+  if (isInt(v) && x >= 0 && !lingoCompat.floatSqrt) return Math.round(Math.sqrt(x));
   return lf(Math.sqrt(x));
 }
 

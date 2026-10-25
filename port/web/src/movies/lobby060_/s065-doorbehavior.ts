@@ -63,7 +63,7 @@ export class Doorbehavior extends Behavior {
     } else if (st === sym('moveclose')) {
       return; // sprite(sp).visibility = 1: the script error ends the handler here.
       this.counter = this.counter + 1;
-      // ScrollTo(me, 0), not dest, as in robotwars' version.
+      // ScrollTo(me, 0): ScrollTo slides to the dest property whatever it's given (below).
       if (this.ScrollTo(0) === sym('done')) this.pState = sym('done');
     }
   }
@@ -77,7 +77,9 @@ export class Doorbehavior extends Behavior {
     this.pState = action;
   }
 
-  ScrollTo(dest: number): LSymbol | undefined {
+  /** Slides toward the dest property, not the argument (the bytecode's getprop: robotwars s263). */
+  ScrollTo(_dest: number): LSymbol | undefined {
+    const dest = this.dest;
     if (dest !== this.x) {
       if (Math.trunc(((this.dx + 1) * (this.dx + 2)) / 2) <= Math.abs(this.x - dest)) this.dx = this.dx + 1;
       else this.dx = this.dx - 1;
