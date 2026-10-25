@@ -3,8 +3,8 @@
 //
 // - Widescreen: the 3D view spans the window above the original control panel, at the
 //   original's vertical field of view; the panel's frame art is repeated out to the
-//   window's sides. L switches between it and the original 4:3 stage (also
-//   ?layout=original).
+//   window's sides. L switches between it and the original 4:3 stage, as does the
+//   player's Settings dialog (settings.ts; ?layout=original sets it for a page).
 // - Smooth drawing: the scripts still run at the movie's 20 frames a second, and the 3D
 //   view draws at the display's rate with every node placed between its last two
 //   frame-cycle poses (?smooth=0 turns it off).
@@ -52,28 +52,41 @@
 //   opponent's walkover. A hidden desktop tab keeps playing (above), so neither happens
 //   to it while its connection lasts (?quirks=away restores the original).
 
-import { BitmapMember, STAGE_H, STAGE_W, bootHooks, member, mutedSounds, type Player, type Sprite } from '../../director';
+import { BitmapMember, STAGE_H, STAGE_W, bootHooks, member, mutedSounds, sound, type Player, type Sprite } from '../../director';
 import { install3d, Shockwave3dMember, type ViewRect } from '../../director/s3d';
+import { changeSetting, onSettingChange, setByAddress, setting } from '../../settings';
 
 const query = new URLSearchParams(location.search);
 
+// Widescreen, smooth drawing, the flames, the wind and Training's restart change only this
+// browser's game: the player's Settings (settings.ts) choose them, an address flag still wins.
 export const arenaView = {
-  wide: query.get('layout') !== 'original',
-  smooth: query.get('smooth') !== '0',
+  wide: setting('wide'),
+  smooth: setting('smooth'),
 };
 
 const quirks = (query.get('quirks') ?? '').split(',');
 export const arenaFixes = {
   pingDelay: !quirks.includes('ping'),
-  ambient: query.get('ambient') === '1',
+  ambient: setting('ambient'),
   startSync: !quirks.includes('sync'),
   tabSwitch: !quirks.includes('speedgear'),
-  trainingRespawn: !quirks.includes('pit'),
-  flameForward: !quirks.includes('flame'),
+  trainingRespawn: setting('respawn'),
+  flameForward: setting('flame'),
   bothReport: !quirks.includes('results'),
   awayLoss: !quirks.includes('away'),
 };
 if (!arenaFixes.ambient) mutedSounds.add('ambient sound');
+onSettingChange('smooth', (v) => (arenaView.smooth = v));
+onSettingChange('respawn', (v) => (arenaFixes.trainingRespawn = v));
+onSettingChange('flame', (v) => (arenaFixes.flameForward = v));
+onSettingChange('ambient', (v) => {
+  // Back from the next match on; turned off, a wind playing now stops.
+  arenaFixes.ambient = v;
+  if (v) return mutedSounds.delete('ambient sound');
+  mutedSounds.add('ambient sound');
+  for (let n = 1; n <= 8; n++) if (sound(n).member?.name.toLowerCase() === 'ambient sound') sound(n).stop();
+});
 
 /** The opponent's silence before its arena takes the round as a walkover (CheckPing: 20 s). */
 export const SILENCE_MS = 20000;
@@ -122,6 +135,8 @@ const inArena = (p: Player) => p.movie?.name === 'arena104';
 const wideNow = (p: Player) => arenaView.wide && inArena(p) && innerWidth / innerHeight > STAGE_W / STAGE_H;
 
 function layout(p: Player) {
+  // The page's Settings link keeps off the arena's screen (settings-panel.ts).
+  document.documentElement.classList.toggle('in-arena', inArena(p));
   const W = innerWidth;
   const H = innerHeight;
   if (wideNow(p)) {
@@ -170,7 +185,14 @@ bootHooks.push((p) => {
   addEventListener('keydown', (e) => {
     // L, unless a text field has the keyboard (the chat line).
     if (e.code !== 'KeyL' || e.ctrlKey || e.metaKey || e.altKey || !inArena(p) || p.focus) return;
-    arenaView.wide = !arenaView.wide;
+    // Kept as the player's setting, unless the address sets the layout for this page.
+    if (setByAddress('wide')) {
+      arenaView.wide = !arenaView.wide;
+      p.layout();
+    } else changeSetting('wide', !arenaView.wide);
+  });
+  onSettingChange('wide', (v) => {
+    arenaView.wide = v;
     p.layout();
   });
   p.layout();

@@ -108,6 +108,7 @@ import { G, TextualMember, dot, member, netDone, netError, netTextResult, player
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
 import { rocket_encrypt } from './robotwars/s072-rocket-encrypt';
 import { emptyRobotProplist } from './robotwars/s011-purl';
+import { onSettingChange, setting } from '../settings';
 
 const query = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 const quirks = (query.get('quirks') ?? '').split(',');
@@ -117,7 +118,7 @@ export const gameFixes = {
   challengeCard: !quirks.includes('challengecard'),
   gridNoChassis: !quirks.includes('grid'),
   p2pSwap: !quirks.includes('p2pswap'),
-  doorClose: !quirks.includes('doors'),
+  doorClose: setting('doors'),
   economy: !quirks.includes('economy'),
   matchSession: !quirks.includes('results'),
   ircAuth: !quirks.includes('ircauth'),
@@ -127,12 +128,20 @@ export const gameFixes = {
   mapEdge: !quirks.includes('mapedge'),
   scrollSelect: !quirks.includes('scrollselect'),
   scrollText: !quirks.includes('scrolltext'),
-  keepLogin: !quirks.includes('keeplogin'),
+  keepLogin: setting('keepLogin'),
   lobbyPing: !quirks.includes('lobbyping'),
   relayAuth: !quirks.includes('relayauth'),
   lobbyLost: !quirks.includes('lobbylost'),
   touchClick: !quirks.includes('touchclick'),
 };
+
+// The doors and the kept login change only this browser: the player's Settings choose them.
+onSettingChange('doors', (v) => (gameFixes.doorClose = v));
+onSettingChange('keepLogin', (v) => {
+  // Turned off, the login kept now is forgotten too (this page stays logged in).
+  gameFixes.keepLogin = v;
+  if (!v) forgetLogin();
+});
 
 setRelaySession(() => {
   const sid = gameFixes.relayAuth ? dot(G.gLobby, 'session') : undefined;

@@ -4,7 +4,8 @@
 //
 //   - a touch device: its primary pointer is coarse (a finger), or the first touch
 //     event (a laptop's touch screen);
-//   - ?touch=1 (forced on, for testing with a mouse) - ?touch=0 never starts it.
+//   - ?touch=1 (forced on, for testing with a mouse) - ?touch=0 never starts it. The
+//     player's Settings (settings.ts) can choose always or never too, from the next load.
 //
 // In touch mode the page gets the class "touch": no pull-to-refresh or overscroll, no
 // long-press callout or text selection, no pinch zoom (game.html's viewport meta covers
@@ -15,8 +16,9 @@
 // already, and never on an iPhone, whose Safari has no full screen for pages).
 // The arena's touch controls are in movies/arena104/touch-controls.ts.
 
-const query = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
-const forced = query.get('touch');
+import { setting } from './settings';
+
+const forced = setting('touch');
 
 let on = false;
 const listeners: (() => void)[] = [];
@@ -101,8 +103,8 @@ function enterFullscreen() {
   return document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 
-if (typeof window !== 'undefined' && forced !== '0') {
-  if (forced === '1' || matchMedia('(pointer: coarse)').matches) {
+if (typeof window !== 'undefined' && forced !== 'off') {
+  if (forced === 'on' || matchMedia('(pointer: coarse)').matches) {
     if (document.body) start();
     else addEventListener('DOMContentLoaded', start, { once: true });
   } else {

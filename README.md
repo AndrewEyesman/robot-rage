@@ -12,7 +12,9 @@ reimplemented in `server/`.
 The goal is the original game as it played in 2004, with a few improvements on top:
 higher frame rates, widescreen, Super Packs bought with in-game credits, and fixes for
 the original's bugs. Each improvement can be switched off to get the original
-behaviour back (`?quirks=` and the others in `docs/port-behaviors.md`).
+behaviour back (`?quirks=` and the others in `docs/port-behaviors.md`), and the ones that
+change only a player's own game (widescreen, smooth drawing, the wind...) are in the
+game's Settings, next to the Privacy link.
 
 ## Status
 

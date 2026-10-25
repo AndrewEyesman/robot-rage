@@ -131,6 +131,9 @@ const PING_ERRORS = `import('/src/director/errors.ts').then((m) => {
     get onopen() { return super.onopen; }
   };
 })`;
+/** The middle of the page's element `sel`, for a clickAt step; SETTING(key) is the Settings dialog's control for it. */
+const CENTER_OF = (sel) => `(() => { const r = document.querySelector('${sel}').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`;
+const SETTING = (key) => `document.querySelector('#settings [name=${key}]')`;
 const LINE_OF = (name) => `(() => { const b = p.sprite(9).bounds; const i = p.member('rvtext').text.split('\\r').findIndex((l) => l.startsWith('${name}\\t')); return [b.left + 40, b.top + 13 * i + 6]; })()`;
 /** In the lobby: that robot's card is shown and can be challenged. */
 const CARD_OF = (name) =>
@@ -575,6 +578,56 @@ const CHECKS = [
       ['click', 475, 309],
       ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
       ['expect', 'with ?quirks=keeplogin nothing is kept', `!${KEPT}`],
+    ],
+  },
+  {
+    // The player's Settings (settings.ts, settings-panel.ts): a link in the black bar beside
+    // the stage, a dialog whose switches apply at once and are kept in the browser, no key
+    // reaching the game while it's open, an address flag still deciding for its page, in
+    // the arena no link (the page knows it's there) and L keeping the layout too, and
+    // Reset to defaults.
+    name: 'settings',
+    url: '/game.html',
+    context: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 },
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['expect', 'the Settings link sits in the black bar, clear of the stage', `(() => { const r = document.getElementById('settings-link').getBoundingClientRect(); return r.width > 0 && r.left >= p.left + 800 * p.scale; })()`],
+      ['clickAt', CENTER_OF('#settings-link')],
+      ['expect', 'the dialog opens with the defaults', `document.getElementById('settings').open && ${SETTING('wide')}.checked && !${SETTING('ambient')}.checked && ${SETTING('touch')}.value === 'auto' && !${SETTING('wide')}.disabled`],
+      ['eval', `window.__keys = 0; addEventListener('keydown', () => window.__keys++)`],
+      ['key', 'KeyA'],
+      ['expect', 'no key reaches the game while it is open', `window.__keys === 0 && !p.keysDown.size && document.getElementById('settings').open`],
+      ['clickAt', CENTER_OF('#settings [name=ambient]')],
+      ['clickAt', CENTER_OF('#settings [name=wide]')],
+      ['expect', 'the choices apply at once and are kept', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); const d = await import('/src/director/index.ts'); const s = JSON.parse(localStorage.getItem('rr-settings')); return s.ambient === true && s.wide === false && e.arenaFixes.ambient && !e.arenaView.wide && !d.mutedSounds.has('ambient sound'); })()`],
+      ['key', 'Escape'],
+      ['expect', 'Escape closes it and gives the keyboard back to the game', `!document.getElementById('settings').open && document.activeElement === p.canvas`],
+      ['key', 'Enter'],
+      ['expect', 'Enter then goes to the game, not the link', `!document.getElementById('settings').open && window.__keys > 0`],
+      ['tab', 'reload', '/game.html'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['expect', 'after a reload the choices hold', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); return !e.arenaView.wide && e.arenaFixes.ambient && e.arenaFixes.flameForward; })()`],
+      ['tab', 'address', '/game.html?ambient=0&quirks=flame'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['expect', 'the address decides for its page', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); return !e.arenaFixes.ambient && !e.arenaFixes.flameForward && !e.arenaView.wide; })()`],
+      ['clickAt', CENTER_OF('#settings-link')],
+      ['expect', 'and the dialog shows those as set by it', `${SETTING('ambient')}.disabled && !${SETTING('ambient')}.checked && ${SETTING('flame')}.disabled && !${SETTING('flame')}.checked && !${SETTING('wide')}.disabled`],
+      ['tab', 'arena', '/index.html?parts=r1,h2,ma1,b1,v6&pos=f&pansar=50&name=Crusher'],
+      ['expect', 'Training ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ['expect', 'the arena takes the kept layout and knows it is the arena (the link hides)', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); return !e.arenaView.wide && document.documentElement.classList.contains('in-arena'); })()`],
+      ['key', 'KeyL'],
+      ['expect', 'L switches widescreen and keeps it', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); return e.arenaView.wide && JSON.parse(localStorage.getItem('rr-settings')).wide === undefined; })()`],
+      ['tab', 'reset', '/game.html'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['clickAt', CENTER_OF('#settings-link')],
+      ['expect', 'Reset to defaults is there for the wind still on', `!document.querySelector('#settings .reset').disabled && ${SETTING('ambient')}.checked`],
+      ['clickAt', CENTER_OF('#settings .reset')],
+      ['expect', 'it puts everything back, saves nothing and greys out', `(async () => { const e = await import('/src/movies/arena104/enhancements.ts'); return localStorage.getItem('rr-settings') === null && !e.arenaFixes.ambient && !${SETTING('ambient')}.checked && document.querySelector('#settings .reset').disabled && document.getElementById('settings').open; })()`],
+      ['clickAt', CENTER_OF('#settings [name=direct]')],
+      ['expect', 'direct connection off: matches stay on the relay', `(async () => { const m = await import('/src/director/p2p.ts'); return m.p2pSetting() === 'relay' && JSON.parse(localStorage.getItem('rr-settings')).direct === false; })()`],
+      ['tab', 'p2p-address', '/game.html?p2p=fail'],
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['expect', '?p2p=fail still decides for its page', `import('/src/director/p2p.ts').then((m) => m.p2pSetting() === 'fail')`],
     ],
   },
   {

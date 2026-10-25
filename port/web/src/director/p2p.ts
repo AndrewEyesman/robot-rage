@@ -30,9 +30,12 @@
 // hasn't got, ignores the channel from then on, and the sender carries on over the
 // relay. The relay socket stays open all match: it reports the opponent leaving.
 //
-// Settings: ?p2p=relay (or localStorage.rrP2P = 'relay') keeps every connection on
-// the relay, so the opponent never learns this player's IP address. ?p2p=fail breaks
+// Settings: ?p2p=relay, or the player's Settings with "Direct connection to opponents"
+// off (settings.ts; localStorage.rrP2P = 'relay' too, from before), keeps every
+// connection on the relay, so the opponent never learns this player's IP address. ?p2p=fail breaks
 // ICE (only relay candidates, and there is no TURN server): for testing the fallback.
+
+import { setting } from '../settings';
 
 /** How long a link may take to open its channel before it settles on the relay. */
 export const CONNECT_TIMEOUT = 5000;
@@ -45,11 +48,12 @@ const TIMESTAMP_OFFSET = 10;
 export type Transport = 'connecting' | 'direct' | 'relay';
 export type P2PSetting = 'auto' | 'relay' | 'fail';
 
-/** The page's setting: ?p2p=relay|fail, else localStorage.rrP2P, else auto. */
+/** The page's setting: ?p2p=relay|fail, else the player's Settings (or localStorage.rrP2P), else auto. */
 export function p2pSetting(): P2PSetting {
   let v: string | null = null;
   try {
     v = new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('p2p');
+    if (v === null && !setting('direct')) v = 'relay';
     if (v === null && typeof localStorage !== 'undefined') v = localStorage.getItem('rrP2P');
   } catch {
     // no storage
