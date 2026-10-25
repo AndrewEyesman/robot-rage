@@ -42,6 +42,24 @@ export function preloadSound(m: SoundMember) {
   void buffer(m.url);
 }
 
+/**
+ * Not Director's: a sound played once outside the eight channels, so no channel's stop
+ * cuts it (gameFixes.touchClick: the button click on a touch screen).
+ */
+export function playOneShot(m: SoundMember, volume = 255) {
+  if (mutedSounds.has(m.name.toLowerCase())) return;
+  const ac = audio();
+  void buffer(m.url).then((buf) => {
+    if (!buf) return;
+    const source = ac.createBufferSource();
+    const gain = ac.createGain();
+    source.buffer = buf;
+    gain.gain.value = Math.max(0, Math.min(255, volume)) / 255;
+    source.connect(gain).connect(master!);
+    source.start();
+  });
+}
+
 export class SoundChannel {
   private source: AudioBufferSourceNode | null = null;
   private gain: GainNode | null = null;

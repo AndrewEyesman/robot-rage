@@ -95,6 +95,14 @@
 //   it keeps in the background; the lobby stayed on screen but dead (an old user list,
 //   invisible to everyone else, a clicked robot loading forever). It now enters the
 //   lobby again (back into its room) saying the connection was lost (lobby060_ s030).
+// - The button click on a touch screen (?quirks=touchclick): buttons click on mouseDown
+//   (robotwars 52, playsound "knappljud"), and some stop every sound channel on the
+//   release: the garage doors' opening (robotwars 254) silences channels 1-8 before its
+//   own sound, and a movie switch stops them all. A mouse button is held long enough for
+//   most of the 0.16 s click to play first; a finger's release comes a few milliseconds
+//   after its press, so the click was cut before it could be heard. In touch mode the
+//   click plays on its own, outside the channels (s030 playsound). A mouse and keyboard
+//   session is unchanged.
 
 import { G, TextualMember, dot, member, netDone, netError, netTextResult, player, setRelaySession } from '../director';
 import { LPropList, lingoString, sym, value, type LValue } from '../lingo';
@@ -123,6 +131,7 @@ export const gameFixes = {
   lobbyPing: !quirks.includes('lobbyping'),
   relayAuth: !quirks.includes('relayauth'),
   lobbyLost: !quirks.includes('lobbylost'),
+  touchClick: !quirks.includes('touchclick'),
 };
 
 setRelaySession(() => {

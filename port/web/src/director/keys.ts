@@ -20,12 +20,23 @@ const CHARS: Record<string, string> = {
   ArrowLeft: '\x1c', ArrowRight: '\x1d', ArrowUp: '\x1e', ArrowDown: '\x1f', Home: '\x01', End: '\x04', PageUp: '\x0b', PageDown: '\x0c',
 };
 
+/**
+ * The key's KeyboardEvent code. A phone's keyboard sends some keys with an empty code
+ * (Gboard's Backspace and Enter): the key's name or character tells which it is then.
+ */
+function codeOf(e: KeyboardEvent): string {
+  if (e.code) return e.code;
+  if (e.key in CODES || e.key in CHARS) return e.key;
+  return e.key.length === 1 ? keyForChar(e.key).code : '';
+}
+
 export function macKeyCode(e: KeyboardEvent): number {
-  return CODES[e.code] ?? 0;
+  return CODES[codeOf(e)] ?? 0;
 }
 
 export function keyChar(e: KeyboardEvent): string {
-  if (CHARS[e.code]) return CHARS[e.code];
+  const code = codeOf(e);
+  if (CHARS[code]) return CHARS[code];
   return e.key.length === 1 ? e.key : '';
 }
 

@@ -406,7 +406,8 @@ const CHECKS = [
   {
     // Typing on a touch screen (a phone, landscape): a tap on a field focuses a hidden
     // input, which opens the on-screen keyboard; its text, key presses (not doubled),
-    // Android's keyless input (keydown 229, composition) and Enter reach the fields'
+    // Android's keyless input (keydown 229, composition), and Gboard's Backspace and Enter
+    // (key events with no code) reach the fields'
     // scripts as typed keys; the keyboard follows the focus and closes when the field goes;
     // the stage moves up when the keyboard would cover the field.
     name: 'touch-text',
@@ -424,7 +425,9 @@ const CHECKS = [
       ['key', 'Backspace'],
       ['insert', 'n'],
       ['expect', 'inserted text and key presses each typed once', `p.member('username_box').text === 'tester@home.lan'`, 2000],
-      ['key', 'Enter'],
+      // Gboard's Enter (as recorded on a real phone, like its Backspace below): a key event with no code.
+      ['eval', `(() => { document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+        document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true })); return 1; })()`],
       ['expect', "Enter runs the box's RETURN: the password field takes the focus, with a password keyboard", `p.keyboardFocusSprite === 13 && document.activeElement?.type === 'password'`, 2000],
       ['compose', 'rage'],
       ['eval', `(() => { const el = document.activeElement; el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, bubbles: true }));
@@ -444,6 +447,9 @@ const CHECKS = [
       ['expect', "NEW's script gives the robot name field the focus on the release: the keyboard opens", `p.keyboardFocusSprite === 25 && document.activeElement === p.el.querySelector('input') && document.activeElement.type === 'text'`, 2000],
       ['insert', 'Tapper'],
       ['expect', 'and types into it', `p.sprite(25).member.text === 'Tapper'`, 2000],
+      ['eval', `(() => { for (let i = 0; i < 2; i++) { document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', keyCode: 8, bubbles: true, cancelable: true }));
+        document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key: 'Backspace', keyCode: 8, bubbles: true })); } return 1; })()`],
+      ['expect', "Gboard's Backspace (a key event with no code) deletes", `p.sprite(25).member.text === 'Tapp'`, 2000],
       ['tap', 100, 500],
       ['expect', 'a tap off the field closes the keyboard', `document.activeElement !== p.el.querySelector('input')`, 2000],
     ],
@@ -779,6 +785,35 @@ const CHECKS = [
     ],
   },
   {
+    // The button click on a touch screen (gameFixes.touchClick): the TRAINING door's
+    // release opens the doors, which stops every sound channel; a finger's release comes
+    // at once, so the click played on a channel was cut before it could be heard. In
+    // touch mode it plays outside the channels and is heard to its end.
+    name: 'garage-touch-click',
+    url: '/game.html',
+    mobile: true,
+    steps: [
+      ['expect', 'login movie running', `p.movie.name === 'login013_'`, 15000],
+      ['wait', 500],
+      ['tap', 310, 148],
+      ['expect', 'login tab', `p.frameLabel === 'login'`],
+      ['tap', 400, 222],
+      ['insert', 'tester@home.lan'],
+      ['tap', 400, 260],
+      ['insert', 'rage2005'],
+      ['tap', 475, 309],
+      ['expect', 'robot list loaded', `p.member('robotname1').text === 'Crusher'`, 15000],
+      ['tap', 300, 235],
+      ['tap', 480, 375],
+      ['expect', 'garage loaded', `p.movie.name === 'factory0604' && p.frameLabel === 'build'`, 25000],
+      ['wait', 1500],
+      ['eval', `(() => { window.__clicks = []; const st = AudioBufferSourceNode.prototype.start; AudioBufferSourceNode.prototype.start = function (...x) {
+        const t = performance.now(); if (this.buffer.duration < 0.2) this.addEventListener('ended', () => window.__clicks.push(performance.now() - t)); return st.apply(this, x); }; return 1; })()`],
+      ['tap', 731, 501],
+      ['expect', 'a tap on the TRAINING door: its click plays to the end (0.16 s), the doors\' stop notwithstanding', `window.__clicks.length === 1 && window.__clicks[0] > 140`, 3000],
+    ],
+  },
+  {
     name: 'garage-tabs-doors',
     url: '/game.html',
     steps: [
@@ -802,7 +837,7 @@ const CHECKS = [
       ['hold', 'ArrowUp', 1500],
       ['expect', 'robot drives forward', `p.sprite(10).getProp('y') !== window.__y`, 2000],
       ['expect', 'no ambient wind', `!Array.from({ length: 8 }, (_, i) => i + 1).some((n) => { const m = window.__sound?.(n)?.member; return m && m.name === 'ambient sound'; })`, 500],
-      ['expect', 'with a mouse and keyboard, no touch mode, no touch controls, no full screen button and no manifest', `!document.querySelector('link[rel=manifest]') && !document.getElementById('fullscreen') && !document.documentElement.classList.contains('touch') && !document.getElementById('touch-controls') && !document.getElementById('rotate')`, 500],
+      ['expect', 'with a mouse and keyboard, no touch mode, no touch controls, no full screen button and no manifest', `!document.querySelector('link[rel=manifest]') && !document.getElementById('fullscreen') && !document.documentElement.classList.contains('touch') && !document.getElementById('touch-controls')`, 500],
     ],
   },
   {
@@ -817,6 +852,8 @@ const CHECKS = [
       ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
       ['expect', 'touch mode, the controls up', `document.documentElement.classList.contains('touch') && document.getElementById('touch-controls').classList.contains('up')`, 2000],
       ['expect', 'the full screen button is up (headless Chrome can go full screen)', `document.getElementById('fullscreen').classList.contains('up')`, 2000],
+      ['tap', 400, 200],
+      ['expect', 'a tap on the game is no request for full screen (only the button is)', `!document.fullscreenElement && document.getElementById('fullscreen').classList.contains('up')`, 1000],
       ['expect', 'buttons for X (Land Mines) and C (Kamikaze Bomb), none for the plough', `(() => { const f = [...document.querySelectorAll('#touch-controls .fire')].map((b) => b.style.display === 'none' ? '' : b.textContent + ' ' + b.getAttribute('aria-label')); return f[0] === '' && f[1] === 'X Land Mines' && f[2] === 'C Kamikaze Bomb'; })()`, 2000],
       ['expect', 'the controls clear of the control panel', `(() => { const top = p.top + 457 * p.scale, l = p.left, r = p.left + 800 * p.scale; return [...document.querySelectorAll('#touch-controls > div')].every((e) => { const b = e.getBoundingClientRect(); return b.bottom <= top || b.right <= l || b.left >= r; }); })()`, 500],
       ['eval', `(() => { window.__xy = [p.sprite(10).getProp('x'), p.sprite(10).getProp('y')]; window.__keys = new Set(); const f = p.virtualKey.bind(p); p.virtualKey = (k, d) => { if (d) window.__keys.add(k); return f(k, d); }; })()`],
@@ -826,6 +863,21 @@ const CHECKS = [
       ['expect', 'every key let go', `p.keysDown.size === 0 && p.charsDown.size === 0`, 1000],
       ['touch', [['#touch-controls .cam']], 100],
       ['expect', 'the camera button steps to view 2', `String(p.globals.pNowCam) === '2'`, 1000],
+    ],
+  },
+  {
+    // The same on a phone held upright: no prompt to turn it; the 4:3 stage fills the
+    // width, the controls sit in the black bar under it and drive, the camera button above it.
+    name: 'training-touch-portrait',
+    url: '/index.html?parts=r1,h2,ma1,b1,v6,v1,v21&pos=f,b,t&pansar=50&name=Crusher',
+    context: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+    steps: [
+      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ['expect', 'the controls up, nothing over the stage', `document.getElementById('touch-controls').classList.contains('up') && !document.getElementById('rotate')`, 2000],
+      ['expect', 'the stick and fire buttons under the stage, the camera button above it', `(() => { const bottom = p.top + 600 * p.scale; return [...document.querySelectorAll('#touch-controls .stick, #touch-controls .fire')].every((e) => e.style.display === 'none' || e.getBoundingClientRect().top >= bottom) && document.querySelector('#touch-controls .cam').getBoundingClientRect().bottom <= p.top; })()`, 500],
+      ['eval', `(() => { window.__xy = [p.sprite(10).getProp('x'), p.sprite(10).getProp('y')]; })()`],
+      ['touch', [['#touch-controls .stick', 0, -0.3]], 1500],
+      ['expect', 'the stick drives', `Math.hypot(p.sprite(10).getProp('x') - window.__xy[0], p.sprite(10).getProp('y') - window.__xy[1]) > 50`, 500],
     ],
   },
   {

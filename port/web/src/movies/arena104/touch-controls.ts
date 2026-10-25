@@ -9,8 +9,8 @@
 //   (initWeapons numbers them as the control panel lists them, "(Z) Flamethrower"), held
 //   for as long as the key would be. A passive part (the plough, the spikes), which has
 //   no key, gets no button;
-// - a camera button in the 3D view's top right corner, which steps through the views
-//   1, 2 and 3 as the keys do.
+// - a camera button at the 3D view's top right (just above it when held upright), which
+//   steps through the views 1, 2 and 3 as the keys do.
 //
 // They press the keys through Player.virtualKey, so the arena reads them exactly as the
 // keyboard's (keyMap, the frame script's keyUp). On a phone they sit on the strips of
@@ -239,23 +239,31 @@ class TouchControls {
     const cluster = Math.round(B * 2.25);
     const stageBottom = p.top + STAGE_H * p.scale;
     const panelTop = p.top + PANEL_TOP * p.scale;
-    // The lowest place for both: the black bar under the stage, the strips beside the
-    // panel (art, or black bars), else just above the panel.
-    let bottom: number;
-    if (H - stageBottom >= S + 2 * m) bottom = H - m;
-    else if (p.left >= Math.max(S, cluster) + m) bottom = H - m;
-    else bottom = panelTop - m;
+    // Where the stick and the fire buttons (2.15 buttons high) sit: just under the stage
+    // in the black bar there (a phone or tablet held upright), as the camera button sits
+    // just over it, else as low as they can, on the strips beside the panel (art, or
+    // black bars), else just above the panel.
+    const fireH = B * 2.15;
+    let stickBottom: number;
+    let fireBottom: number;
+    if (H - stageBottom >= S + 2 * m) {
+      stickBottom = Math.round(stageBottom + m + S);
+      fireBottom = Math.round(stageBottom + m + fireH);
+    } else {
+      stickBottom = fireBottom = p.left >= Math.max(S, cluster) + m ? H - m : panelTop - m;
+    }
     const box = (el: HTMLElement, x: number, y: number, d: number) =>
       Object.assign(el.style, { left: `${x}px`, top: `${y}px`, width: `${d}px`, height: `${d}px`, fontSize: `${Math.round(d * 0.26)}px` });
-    box(this.stick, m, bottom - S, S);
+    box(this.stick, m, stickBottom - S, S);
     // Z in the corner, X to its left, C above it: an arc round the right thumb.
     const right = W - m;
-    box(this.fires[0], right - B, bottom - B, B);
-    box(this.fires[1], right - B * 2.1, bottom - B * 0.8, B);
-    box(this.fires[2], right - B * 1.05, bottom - B * 2.15, B);
-    // The camera in the 3D view's top right corner, away from the thumbs.
+    box(this.fires[0], right - B, fireBottom - B, B);
+    box(this.fires[1], right - B * 2.1, fireBottom - B * 0.8, B);
+    box(this.fires[2], right - B * 1.05, fireBottom - fireH, B);
+    // The camera at the right, away from the thumbs: in the black bar over the stage when
+    // there is one (held upright), just above the stage, else in the 3D view's top right corner.
     const c = Math.round(B * 0.7);
-    box(this.cam, right - c, Math.max(0, p.top) + m, c);
+    box(this.cam, right - c, p.top >= c + 2 * m ? p.top - m - c : Math.max(0, p.top) + m, c);
   }
 }
 

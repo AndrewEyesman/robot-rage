@@ -1,11 +1,30 @@
 {
-  "name": "Robot Rage 2: Rearmed",
-  "short_name": "Robot Rage 2",
-  "start_url": "/",
+  "name": "Robot Rage",
+  "short_name": "Robot Rage",
+  "start_url": "/game.html",
   "scope": "/",
   "display": "fullscreen",
-  "orientation": "landscape",
-  "background_color": "#000000",
+  "orientation": "any",
+  "background_color": "#2e4442",
   "theme_color": "#000000",
-  "icons": [{ "src": "/assets/login013_/bitmaps/1-76.png", "sizes": "196x196", "type": "image/png", "purpose": "any" }]
+  "icons": [
+    {
+      "src": "/assets/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
 }

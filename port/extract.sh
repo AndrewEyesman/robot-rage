@@ -30,3 +30,6 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$ROOT/port/assets/fonts/system":/out 
 VENV=.cache/fontvenv
 [ -x "$VENV/bin/python" ] || { python3 -m venv "$VENV" && "$VENV/bin/pip" -q install freetype-py==2.5.1 fonttools numpy pillow; }
 "$VENV/bin/python" -I port/extract/system-fonts.py port/assets/fonts/system
+
+# The phones' home-screen icon: the logo on a dark square (port/extract/app-icon.py).
+"$VENV/bin/python" -I port/extract/app-icon.py port/assets

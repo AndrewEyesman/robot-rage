@@ -2,7 +2,7 @@
 // cycle and api.ts for the Lingo commands.
 
 export * from './api';
-export { SoundChannel, mutedSounds, preloadSound, stopAllSounds } from './audio';
+export { SoundChannel, mutedSounds, playOneShot, preloadSound, stopAllSounds } from './audio';
 export * from './behavior';
 export * from './color';
 export { pass, stopEvent, dontPassEvent, hasHandler, findHandler, invoke, setScriptProp, getScriptProp } from './dispatch';
