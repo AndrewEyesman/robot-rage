@@ -26,6 +26,24 @@ export function touchMode(): boolean {
   return on;
 }
 
+let probe: HTMLElement | null = null;
+
+/**
+ * The screen's safe area in touch mode: the page reaches under a phone's camera cutout
+ * (game.html's viewport-fit=cover, so full screen has no black bar along it), and
+ * controls keep out of it. All 0 where there's no cutout, and on a desktop.
+ */
+export function safeInsets(): { top: number; right: number; bottom: number; left: number } {
+  if (!on) return { top: 0, right: 0, bottom: 0, left: 0 };
+  if (!probe) {
+    probe = document.createElement('div');
+    probe.style.cssText = 'position: fixed; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);';
+    document.body.append(probe);
+  }
+  const cs = getComputedStyle(probe);
+  return { top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0, bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0 };
+}
+
 /** Run `f` when touch mode starts (now, if it has). */
 export function onTouchMode(f: () => void) {
   if (on) f();
@@ -42,7 +60,7 @@ function start() {
 const CSS = `
 html.touch, html.touch body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 html.touch input, html.touch textarea { -webkit-user-select: text; user-select: text; }
-#fullscreen { display: none; position: fixed; left: 6px; top: 6px; z-index: 10; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box;
+#fullscreen { display: none; position: fixed; left: calc(6px + env(safe-area-inset-left)); top: calc(6px + env(safe-area-inset-top)); z-index: 10; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box;
   align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.40); color: rgba(255, 255, 255, 0.85); }
 #fullscreen.up { display: flex; }
 `;

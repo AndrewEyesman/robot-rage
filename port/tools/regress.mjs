@@ -855,7 +855,7 @@ const CHECKS = [
       ['tap', 400, 200],
       ['expect', 'a tap on the game is no request for full screen (only the button is)', `!document.fullscreenElement && document.getElementById('fullscreen').classList.contains('up')`, 1000],
       ['expect', 'buttons for X (Land Mines) and C (Kamikaze Bomb), none for the plough', `(() => { const f = [...document.querySelectorAll('#touch-controls .fire')].map((b) => b.style.display === 'none' ? '' : b.textContent + ' ' + b.getAttribute('aria-label')); return f[0] === '' && f[1] === 'X Land Mines' && f[2] === 'C Kamikaze Bomb'; })()`, 2000],
-      ['expect', 'the controls clear of the control panel', `(() => { const top = p.top + 457 * p.scale, l = p.left, r = p.left + 800 * p.scale; return [...document.querySelectorAll('#touch-controls > div')].every((e) => { const b = e.getBoundingClientRect(); return b.bottom <= top || b.right <= l || b.left >= r; }); })()`, 500],
+      ['expect', 'the controls above the control panel', `(() => { const top = p.top + 457 * p.scale; return [...document.querySelectorAll('#touch-controls > div')].every((e) => e.style.display === 'none' || e.getBoundingClientRect().bottom <= top); })()`, 500],
       ['eval', `(() => { window.__xy = [p.sprite(10).getProp('x'), p.sprite(10).getProp('y')]; window.__keys = new Set(); const f = p.virtualKey.bind(p); p.virtualKey = (k, d) => { if (d) window.__keys.add(k); return f(k, d); }; })()`],
       ['touch', [['#touch-controls .stick', 0.3, -0.3], ['#touch-controls .fire[data-key=KeyC]']], 1500],
       ['expect', 'stick up-right and C at once: forward, right and fire pressed', `['ArrowUp', 'ArrowRight', 'KeyC'].every((k) => window.__keys.has(k)) && !window.__keys.has('ArrowLeft') && !window.__keys.has('ArrowDown')`, 500],
