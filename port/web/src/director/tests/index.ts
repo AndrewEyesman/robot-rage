@@ -12,6 +12,7 @@ import './render.test';
 import './text.test';
 import './image.test';
 import './net.test';
+import './s3d.test';
 
 interface Result {
   area: string;

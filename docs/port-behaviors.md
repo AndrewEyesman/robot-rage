@@ -74,9 +74,13 @@ Add a line whenever something is verified to work, and an automated check to
 | Two-tab matches always get past the start sync (the original could hang there; `?quirks=sync` restores it) | `match-start-sync` (4 matches) |
 | A two-tab match plays over the direct DataChannel; with `?p2p=relay`, or with ICE broken (`?p2p=fail`), it starts and plays over the relay | `match-transport` |
 | A hidden tab keeps playing: 25 s hidden, it runs its frames and both players stay in the match; a tab switch or stall never strikes the robot for speed hacking (`?quirks=speedgear` restores the strike) | `match-hidden-tab` |
-| Every weapon and its shots move, hit and spend ammo, energy and armour tick for tick as in the original (dirplayer), 11 Training scenarios covering all 27 weapons; the spear gun fires all 5 spears | `weapon-trace` (`--full`) |
-| The power axe at the front or back swings forward (the original swung a front axe backwards over its own robot; `?quirks=axe`) | `axe-swings-forward-front`, `axe-swings-forward-back` |
-| A spear gun at the front or back fires forward, head first (the original flew spears tail first, and a front gun's out of the robot's back; `?quirks=spear`) | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
+| Every weapon and its shots move, hit and spend ammo, energy and armour tick for tick as in the original (dirplayer, with the port splitting mirrors as dirplayer does: `?s3d=dirplayer`), 11 Training scenarios covering all 27 weapons; the spear gun fires all 5 spears | `weapon-trace` (`--full`) |
+| Mirrored parts (every weapon, wheel and claw half: the files' Scene Root mirrors z) turn, move and aim as in Adobe's player: rotate, translate, pointAt, transform.rotation and .scale split the matrix with the mirror on z (docs/port-issues.md #71) | `runtime-unit` ("3d transforms") |
+| The power axe at the front swings forward | `axe-swings-forward-front` |
+| The claw at the front reaches out ahead of the chassis while it opens and closes | `claw-reaches-forward` |
+| The laser cannon's beam goes forward from the cannon | `laser-fires-forward` |
+| The flame thrower's flames stream ahead of the robot (the original mirrored them in z; `?quirks=flame`) | `flame-streams-forward` |
+| A spear gun fires head first out of its muzzle: forward from the front, backward from the back | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
 | Training starts again 3 s after the robot falls into the pit, off the roof or loses its armour (the original left it lying there; `?quirks=pit` restores that) | `training-respawn` |
 | A ranked two-tab match records a round once both players report it (the loser reports too; `?quirks=results` restores the winner-only report), the same for both robots | `match-ranked` |
 | Match flow: countdown, mirrored driving, chat, losing a round and playing again with the score kept, draw, surrender, walkover on disconnect or silence, declining revenge, ranked score saved | `port/tools/arena-match.mjs` steps (by hand) |

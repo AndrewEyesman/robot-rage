@@ -134,16 +134,37 @@ const STORED_MAP = `(async () => { const g = p.globals; const body = new URLSear
 
 /** Each check: a command, or a flow of steps in a fresh browser context. */
 /**
- * The spear gun mounted at the front or back (arenaFixes.spearForward, docs/port-issues.md
- * #53): its spear flies forward (Training's robot starts facing -z), head first. The
- * head is the wide end of the spear model, at its -z; the original flew it along +z.
+ * In-page helpers for the weapon checks: `__verts(node)` lists a 3D node's mesh vertices
+ * in world space; `__inst(name)` finds a behavior instance by its class name.
+ */
+const WEAPON_HELPERS = `(() => {
+  window.__inst = (n) => p.sprites.flatMap((s) => s?.scriptInstanceList ?? []).find((b) => b.constructor.name === n);
+  window.__verts = (node) => {
+    const o = node.obj, out = [];
+    o.updateWorldMatrix(true, true);
+    o.traverse((c) => {
+      const a = c.geometry?.attributes?.position;
+      for (let i = 0; a && i < a.count; i++) out.push(new c.position.constructor(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix4(c.matrixWorld));
+    });
+    return out;
+  };
+  return 1;
+})()`;
+/** Training with a robot of these parts (Training's robot starts facing -z). */
+const weaponUrl = (parts, pos) => `/index.html?layout=original&parts=${parts}&pos=${pos}&pansar=50&name=Crusher`;
+const ROBOT_READY = ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000];
+
+/**
+ * The spear gun at the front or back (docs/port-issues.md #53, #71): the spear flies out
+ * of the gun head first, forward from the front, backward from the back (mounting at the
+ * back turns the gun round). The head is the wide end of the spear model, at its -z.
  */
 function spearHeadFirst(pos) {
   return {
     name: `spear-head-first-${pos === 'f' ? 'front' : 'back'}`,
-    url: `/index.html?layout=original&parts=r1,h2,ma1,b1,v24&pos=${pos}&pansar=50&name=Crusher`,
+    url: weaponUrl('r1,h2,ma1,b1,v24', pos),
     steps: [
-      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
+      ROBOT_READY,
       [
         'eval',
         `window.__spear = () => {
@@ -163,16 +184,18 @@ function spearHeadFirst(pos) {
           return { pos: [e[12], e[13], e[14]], head: [e[8], e[9], e[10]].map((v) => (k * v) / n) };
         }`,
       ],
+      // Training's robot starts 900 units from the wall behind it: drive away from it first.
+      ...(pos === 'b' ? [['hold', 'ArrowUp', 2000], ['wait', 1500]] : []),
       ['hold', 'z', 150],
       [
         'expect',
-        'the spear flies forward, head first',
+        `the spear flies ${pos === 'f' ? 'forward' : 'backward'}, head first`,
         `(() => {
           const s = window.__spear();
           if (!s) return false;
           if (!window.__s0) return (window.__s0 = s), false;
           const d = s.pos.map((v, i) => v - window.__s0.pos[i]), n = Math.hypot(...d);
-          return n > 1 && d[2] / n < -0.9 && d.reduce((a, v, i) => a + (v / n) * s.head[i], 0) > 0.9;
+          return n > 1 && ${pos === 'f' ? '' : '-'}d[2] / n < -0.9 && d.reduce((a, v, i) => a + (v / n) * s.head[i], 0) > 0.9;
         })()`,
         3000,
       ],
@@ -181,30 +204,99 @@ function spearHeadFirst(pos) {
 }
 
 /**
- * The power axe mounted at the front or back (arenaFixes.axeForward, docs/port-issues.md
- * #62): it swings forward (Training's robot starts facing -z), its up axis tipping
- * toward -z; at the front the original swung it backwards over its own robot.
+ * The power axe (docs/port-issues.md #62, #71; the game mounts it only at the front):
+ * it swings forward, its up axis tipping toward -z.
  */
-function axeForward(pos) {
-  return {
-    name: `axe-swings-forward-${pos === 'f' ? 'front' : 'back'}`,
-    url: `/index.html?layout=original&parts=r1,h2,ma1,b1,v8&pos=${pos}&pansar=50&name=Crusher`,
-    steps: [
-      ['expect', 'robot ready', `String(p.sprite(10).getProp('state')) === '#move'`, 20000],
-      [
-        'eval',
-        `window.__axeUp = () => {
-          const b = p.sprites.flatMap((s) => s?.scriptInstanceList ?? []).find((b) => b.constructor.name === 'VapenV8');
-          b.m.obj.updateWorldMatrix(true, true);
-          const e = b.m.obj.matrixWorld.elements, n = Math.hypot(e[4], e[5], e[6]);
-          return [e[4] / n, e[5] / n, e[6] / n];
-        }`,
-      ],
-      ['hold', 'z', 60],
-      ['expect', 'the axe swings forward', `(() => { const [, y, z] = window.__axeUp(); return y < 0.5 && z < -0.5; })()`, 2000],
+const AXE_FORWARD = {
+  name: 'axe-swings-forward-front',
+  url: weaponUrl('r1,h2,ma1,b1,v8', 'f'),
+  steps: [
+    ROBOT_READY,
+    [
+      'eval',
+      `window.__axeUp = () => {
+        const b = p.sprites.flatMap((s) => s?.scriptInstanceList ?? []).find((b) => b.constructor.name === 'VapenV8');
+        b.m.obj.updateWorldMatrix(true, true);
+        const e = b.m.obj.matrixWorld.elements, n = Math.hypot(e[4], e[5], e[6]);
+        return [e[4] / n, e[5] / n, e[6] / n];
+      }`,
     ],
-  };
-}
+    ['hold', 'z', 60],
+    ['expect', 'the axe swings forward', `(() => { const [, y, z] = window.__axeUp(); return y < 0.5 && z < -0.5; })()`, 2000],
+  ],
+};
+
+/**
+ * The claw at the front (#71): its halves keep the mirror they were mounted with while
+ * they open and close, so the prongs reach out ahead of the chassis (the port used to
+ * drop the mirror on `transform.rotation = ...` and fold them back into the robot).
+ */
+const CLAW_FORWARD = {
+  name: 'claw-reaches-forward',
+  url: weaponUrl('r1,h2,ma1,b1,v9', 'f'),
+  steps: [
+    ROBOT_READY,
+    ['eval', WEAPON_HELPERS],
+    [
+      'eval',
+      `window.__claw = () => {
+        const b = __inst('VapenV9');
+        const body = Math.min(...b.m1.parent.children.filter((c) => c !== b.m1 && c !== b.m2 && c.kind === 'model' && String(c.visibility) !== '#none').flatMap(__verts).map((v) => v.z));
+        return body - Math.min(...__verts(b.m1).concat(__verts(b.m2)).map((v) => v.z));
+      }`,
+    ],
+    ['expect', 'at rest the claw reaches 150 units past the chassis front', `window.__claw() > 150`, 2000],
+    ['hold', 'z', 250],
+    ['expect', 'closing, it still does', `window.__claw() > 150`, 500],
+  ],
+};
+
+/** The laser cannon (#71): the beam goes forward from the cannon, never behind it. */
+const LASER_FORWARD = {
+  name: 'laser-fires-forward',
+  url: weaponUrl('r1,t1,h2,ma1,b1,v3', 't'),
+  steps: [
+    ROBOT_READY,
+    ['eval', WEAPON_HELPERS],
+    ['hold', 'z', 200],
+    [
+      'expect',
+      'the beam reaches 1000 units ahead of the cannon and nothing behind it',
+      `(() => {
+        const w = p.globals.gRobot1.member, z = w.model('laserkanon1').worldPosition.z, v = __verts(w.model('laserray1')).map((a) => a.z);
+        return Math.min(...v) < z - 1000 && Math.max(...v) < z + 100;
+      })()`,
+      2000,
+    ],
+  ],
+};
+
+/**
+ * The flame thrower (#72, arenaFixes.flameForward): the flames stream along the robot's
+ * heading, ahead of the nozzle (the original mirrored them in z: out of the back here).
+ */
+const FLAME_FORWARD = {
+  name: 'flame-streams-forward',
+  url: weaponUrl('r1,t1,h2,ma1,b1,v2', 't'),
+  steps: [
+    ROBOT_READY,
+    ['eval', WEAPON_HELPERS],
+    ['hold', 'z', 200],
+    ['wait', 700],
+    [
+      'expect',
+      'the emitter points forward and the flames are 700 units ahead of the nozzle on average',
+      `(() => {
+        const b = __inst('ThrowfireBehavior'), ps = b?.m?.particles;
+        if (!ps) return false;
+        let n = 0, z = 0;
+        for (let i = 0; i < ps.count; i++) if (ps.alive[i]) (n++, (z += ps.pos[i * 3 + 2]));
+        return ps.p.direction[2] < -0.9 && n > 0 && z / n < b.grp.worldPosition.z - 700;
+      })()`,
+      1000,
+    ],
+  ],
+};
 
 const CHECKS = [
   { name: 'typecheck', cmd: ['npx', 'tsc', '--noEmit'], cwd: 'port/web' },
@@ -670,7 +762,10 @@ const CHECKS = [
     ],
   },
   ...['f', 'b'].map(spearHeadFirst),
-  ...['f', 'b'].map(axeForward),
+  AXE_FORWARD,
+  CLAW_FORWARD,
+  LASER_FORWARD,
+  FLAME_FORWARD,
   {
     // The paintshop's grid button with no chassis (#40): it used to fail before toggling.
     name: 'garage-grid-nochassis',
@@ -1257,9 +1352,14 @@ for (const c of selected) {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   console.log(`${r.ok ? 'PASS' : 'FAIL'} ${c.name} (${secs}s)`);
   if (!r.ok || c.steps || c.match) {
-    // A failed command: its last 15 lines, after any FAIL lines above them.
+    // A failed command: its last 15 lines, after any FAIL lines above them; all of it
+    // goes to .cache/regress/out/<check>.txt.
     const lines = r.out.trim().split('\n');
     const shown = [...lines.slice(0, -15).filter((l) => /^\s*FAIL\b/.test(l)), ...lines.slice(-15)];
+    if (c.cmd && !r.ok) {
+      writeFileSync(join(OUT, `${c.name}.txt`), r.out);
+      shown.push(`(all of it: .cache/regress/out/${c.name}.txt)`);
+    }
     const text = c.cmd && !r.ok ? shown.map((l) => '  ' + l).join('\n') : r.out;
     if (text.trim()) console.log(text);
   }

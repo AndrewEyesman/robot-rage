@@ -8,9 +8,7 @@ import { div, num, point, sym, type LSymbol, type LValue, type LVector } from '.
 import { GetDistance } from '../robotwars/s004-new-init';
 import { playsound } from '../robotwars/s030-soundscript';
 import { VectorToPoint } from './s006-arena-3d';
-import { monteringsplats } from '../robotwars/s006-3d-scripts';
-import { arenaFixes } from './enhancements';
-import { eq, sp, world } from './weapon-util';
+import { sp, world } from './weapon-util';
 
 // global world, gPlog, gPartDescription, gPlayerNumber
 
@@ -39,8 +37,6 @@ export class SpearBehavior {
   pSTill: LValue = undefined;
   height: LValue = undefined;
   suffix: string;
-  /** Which way along its z the spear flies: the original's +1 flies it tail first. */
-  dir = 1;
 
   constructor(sp0: number, _name: string, _v0: LVector, rsp: number) {
     this.sp = sp0;
@@ -63,16 +59,6 @@ export class SpearBehavior {
     this.m = world().model('speargun' + this.suffix).child[1] as Model;
     this.m.shader = world().model('spear' + this.suffix).shader;
     world().group('world').addChild(this.m, sym('preserveWorld'));
-    // Enhancement (enhancements.ts, ?quirks=spear): the spear model's head is at its -z,
-    // but the original flies it along +z, tail first: out of the back of a gun at the
-    // front, and forward from a gun at the back with its head pointing back. Fixed, every
-    // spear flies forward head first; a gun at the back still fires forward, as it did.
-    if (arenaFixes.spearForward) {
-      this.dir = -1;
-      if (eq(monteringsplats(sp(this.robotSprite, 'robotRD'), sym('v24')), sym('b'))) {
-        this.m.rotate(0, 180, 0);
-      }
-    }
     sprite(this.sp).rotation = sprite(this.robotSprite).rotation - 90;
     this.state = sym('move');
   }
@@ -82,7 +68,7 @@ export class SpearBehavior {
       case sym('move'): {
         const m = this.m!;
         this.pCounter = num(this.pCounter) + 1;
-        m.translate(0, 0, 200 * this.dir);
+        m.translate(0, 0, 200);
         sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
         if (intersects(this.sp, this.robot2Sp)) {
           playsound('hit_33', 255);
@@ -144,11 +130,11 @@ export class SpearBehavior {
     // Quirk kept: the loop exits after its first pass, so the spear backs off at most once.
     while (intersects(this.sp, spri)) {
       steps = steps + 0.5;
-      m.translate(0, 0, -this.dir);
+      m.translate(0, 0, -1);
       sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
       break;
     }
-    m.translate(0, 0, this.dir * steps);
+    m.translate(0, 0, steps);
     sprite(this.sp).loc = VectorToPoint(div(m.worldPosition, 5.0) as LVector);
   }
 }

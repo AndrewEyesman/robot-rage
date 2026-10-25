@@ -7,6 +7,7 @@ import { transform, vector, type Group3D, type Model, type ModelResource } from 
 import { LList, point, rgb, sym, type LSymbol, type LVector } from '../../lingo';
 import { VectorToPoint } from './s006-arena-3d';
 import { DEG, world } from './weapon-util';
+import { arenaFixes } from './enhancements';
 
 // global world, gRobot1, gRobot2, gPartDescription, gPlayerNumber
 
@@ -95,7 +96,11 @@ export class ThrowfireBehavior {
       case sym('explode'): {
         this.angle = sprite(this.robotSp).rotation;
         const TRN = transform();
-        TRN.rotation.y = this.angle;
+        // Enhancement (enhancements.ts, ?quirks=flame): the x axis of a turn by the
+        // heading is the heading mirrored in z (x = cos, z = -sin; the robot moves along
+        // z = +sin), so the original's flames went out of the back facing up or down the
+        // arena. Turned the other way, they follow the robot's heading and its hit.
+        TRN.rotation.y = arenaFixes.flameForward ? -this.angle : this.angle;
         this.pr!.emitter.direction = TRN.xAxis;
         this.pr!.emitter.loop = 1;
         const pos = this.grp!.worldPosition;

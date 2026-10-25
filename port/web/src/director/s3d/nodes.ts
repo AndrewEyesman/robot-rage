@@ -10,7 +10,7 @@ import { warnOnce } from '../player';
 import { nameKey, nodeList, symName, type NodeList } from './lists';
 import { ParticleSystem, type ParticleParams } from './particles';
 import { ModelResource, Shader, Texture3D, rgb255, type AnyColor } from './resources';
-import { boundVector, eulerMatrix, fromThree, toThree, Transform, rotationOf, Vector } from './vector';
+import { boundVector, directorBasis, eulerMatrix, fromThree, mirrorsOnZ, s3dCompat, toThree, Transform, rotationOf, Vector } from './vector';
 import type { Shockwave3dMember } from './member';
 
 export type NodeKind = 'model' | 'group' | 'light' | 'camera';
@@ -120,37 +120,48 @@ export abstract class Node3D {
       r = eulerMatrix(a, b as number, c as number);
       rel = d;
     }
-    const pivot = a instanceof Vector && b instanceof Vector;
-    if (!pivot && (rel === undefined || symName(rel) === 'self')) {
-      // About the node's own axes: Director keeps a per-axis scale on the axes it was
-      // on, M' = (R * Rdelta) * S, when the basis is a clean rotation x scale (as
-      // dirplayer found against Rasterwerks); a sheared basis takes M * Rdelta.
-      this.rotateSelf(r);
+    if (rel === undefined || symName(rel) === 'self') {
+      // dirplayer turns about a point scaled with the node (M * delta; s3dCompat).
+      if (a instanceof Vector && b instanceof Vector && s3dCompat.dirplayerMirrors) this.applyInFrame(r, rel);
+      else this.applySelf(r);
       return;
     }
     this.applyInFrame(r, rel);
   }
 
-  private rotateSelf(r: THREE.Matrix4) {
+  /**
+   * A rotation (or a turn about a point) in the node's own frame: Director splits the
+   * transform into T * R * S (directorBasis: a mirror is S's negative z) and makes it
+   * T * R * delta * S, so the axes and the pivot point are R's, unscaled and never
+   * mirrored. Measured in Adobe's player on mirrored and scaled models; a plain M * delta
+   * turned a mirrored part the wrong way about x and y (the claws, the axe). A sheared
+   * basis takes M * delta.
+   */
+  private applySelf(delta: THREE.Matrix4) {
     const m = this.obj.matrix;
-    const e = m.elements;
+    const { rot, scale } = directorBasis(m);
+    const e = rot.elements;
     const cols = [0, 1, 2].map((c) => new THREE.Vector3(e[c * 4], e[c * 4 + 1], e[c * 4 + 2]));
-    const s = cols.map((v) => v.length());
-    const prod = Math.max(s[0] * s[1], s[0] * s[2], s[1] * s[2], 1e-6);
     const maxDot = Math.max(Math.abs(cols[0].dot(cols[1])), Math.abs(cols[0].dot(cols[2])), Math.abs(cols[1].dot(cols[2])));
-    const pos = new THREE.Vector3().setFromMatrixPosition(m);
-    if (maxDot / prod < 1e-3 && s.every((x) => x > 1e-8)) {
-      const rot = new THREE.Matrix4().makeBasis(cols[0].divideScalar(s[0]), cols[1].divideScalar(s[1]), cols[2].divideScalar(s[2]));
-      rot.multiply(r).scale(new THREE.Vector3(s[0], s[1], s[2]));
-      m.copy(rot);
-    } else {
-      m.multiply(r);
+    if (!(maxDot < 1e-3 && [scale.x, scale.y, scale.z].every((x) => Math.abs(x) > 1e-8))) {
+      m.multiply(delta);
+      this.touch();
+      return;
     }
-    m.setPosition(pos);
+    const pos = new THREE.Vector3().setFromMatrixPosition(m);
+    const out = rot.multiply(delta).scale(scale);
+    out.elements[12] += pos.x;
+    out.elements[13] += pos.y;
+    out.elements[14] += pos.z;
+    m.copy(out);
     this.touch();
   }
 
-  /** translate(x, y, z {, relativeTo}) / translate(vector {, relativeTo}); #self moves along the node's own (unscaled) axes. */
+  /**
+   * translate(x, y, z {, relativeTo}) / translate(vector {, relativeTo}); #self moves
+   * along the node's own unscaled axes, R's of directorBasis: on a mirrored node z
+   * points against the matrix's z column (measured in Adobe's player).
+   */
   translate(a: number | Vector, b?: number | RelativeTo, c?: number, d?: RelativeTo) {
     const v = a instanceof Vector ? toThree(a) : new THREE.Vector3(a, b as number, c);
     const rel = a instanceof Vector ? (b as RelativeTo) : d;
@@ -170,9 +181,10 @@ export abstract class Node3D {
       e[13] += v.y;
       e[14] += v.z;
     } else {
+      const mirror = mirrorsOnZ(m);
       for (let c2 = 0; c2 < 3; c2++) {
         const l = Math.hypot(e[c2 * 4], e[c2 * 4 + 1], e[c2 * 4 + 2]) || 1;
-        const k = [v.x, v.y, v.z][c2] / l;
+        const k = ((c2 === 2 && mirror ? -1 : 1) * [v.x, v.y, v.z][c2]) / l;
         e[12] += e[c2 * 4] * k;
         e[13] += e[c2 * 4 + 1] * k;
         e[14] += e[c2 * 4 + 2] * k;
@@ -194,8 +206,10 @@ export abstract class Node3D {
   }
 
   /**
-   * pointAt(vector or node {, up}): turn the node (in place, keeping its scale) so its
-   * -Z axis faces the target, with Y toward `up` (default vector(0, 1, 0)).
+   * pointAt(vector or node {, up}): turn the node in place so the -Z axis of its world
+   * rotation (directorBasis) faces the target, with Y toward `up` (default
+   * vector(0, 1, 0)), keeping its world scale, a mirror too. Measured in Adobe's player:
+   * a mirrored node's matrix z column ends up pointing at the target (the laser beam).
    */
   pointAt(target: Vector | Node3D, up?: Vector) {
     const t = target instanceof Node3D ? target.worldMatrix() : null;
@@ -206,16 +220,8 @@ export abstract class Node3D {
     let u = up ? toThree(up).normalize() : new THREE.Vector3(0, 1, 0);
     const fwd = tp.clone().sub(pos).normalize();
     if (Math.abs(u.dot(fwd)) > 0.999) u = new THREE.Vector3(1, 0, 0);
-    const look = new THREE.Matrix4().lookAt(pos, tp, u).setPosition(pos);
-    const local = this.parentWorld().invert().multiply(look);
-    const e0 = this.obj.matrix.elements;
-    const scale = [0, 1, 2].map((c) => Math.hypot(e0[c * 4], e0[c * 4 + 1], e0[c * 4 + 2]) || 1);
-    const e = local.elements;
-    for (let c = 0; c < 3; c++) {
-      const l = Math.hypot(e[c * 4], e[c * 4 + 1], e[c * 4 + 2]) || 1;
-      for (let r = 0; r < 3; r++) e[c * 4 + r] *= scale[c] / l;
-    }
-    this.obj.matrix.copy(local);
+    const look = new THREE.Matrix4().lookAt(pos, tp, u).scale(directorBasis(world).scale).setPosition(pos);
+    this.obj.matrix.copy(this.parentWorld().invert().multiply(look));
     this.touch();
   }
 

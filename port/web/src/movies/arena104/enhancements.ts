@@ -30,15 +30,11 @@
 //   the player had to leave Training and come back. Three seconds after the crash the
 //   port plays Training's entry again, as the garage's door does (?quirks=pit restores
 //   the original).
-// - Spear gun: the spear model's head is at its -z but the original flies it along +z,
-//   tail first. A gun at the front shot through its own robot and out of the back; a gun
-//   at the back (turned round when mounted) shot forward with the head pointing back.
-//   The port flies every spear head first and forward, from either mount (?quirks=spear
-//   restores the original).
-// - Power axe at the front: the axe is modelled to sit at the back (mounting there turns
-//   it round) and swing forward over the robot; at the front or on top it swung
-//   backwards, over its own robot, while the hit is checked in front of the robot. The
-//   port swings it forward from every mount (?quirks=axe restores the original).
+// - Flame thrower: the flames' direction is the x axis of a rotation by the robot's
+//   heading, which mirrors it in z: facing up or down the arena the flames shot out of
+//   the back, at an angle they went off to the side, while the hit still travels
+//   forward. The port sends them along the heading (?quirks=flame restores the
+//   original).
 // - Ranked results from both players: after each ranked round only the winner reported
 //   the result (the host alone for a tie), and the server believed it. Now the loser
 //   reports too (and both report ties), so the server counts a round only when both
@@ -61,8 +57,7 @@ export const arenaFixes = {
   startSync: !quirks.includes('sync'),
   tabSwitch: !quirks.includes('speedgear'),
   trainingRespawn: !quirks.includes('pit'),
-  spearForward: !quirks.includes('spear'),
-  axeForward: !quirks.includes('axe'),
+  flameForward: !quirks.includes('flame'),
   bothReport: !quirks.includes('results'),
 };
 if (!arenaFixes.ambient) mutedSounds.add('ambient sound');

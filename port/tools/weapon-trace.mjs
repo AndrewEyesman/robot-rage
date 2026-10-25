@@ -256,8 +256,12 @@ async function ported(browser, sc, orig, fixes = false) {
     if (m.type() === 'error') logs.push(m.text().slice(0, 400));
   });
   page.on('pageerror', (e) => logs.push('pageerror ' + e.message));
-  // The port's enhancements that change weapons are off for the comparison (?quirks=).
-  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard${fixes ? '' : '&quirks=spear,axe'}`);
+  // For the comparison the port's enhancements that change weapons are off (?quirks=),
+  // and it splits mirrored transforms as dirplayer does (?s3d=dirplayer, docs/port-issues.md
+  // #71): dirplayer turns and moves mirrored parts the other way from Adobe's player, so
+  // the trace compares the translated weapons with the original Lingo, not the two 3D
+  // runtimes. `fixes` runs the port as it plays.
+  await page.goto(`${APP}/game.html?movie=arena104&frame=backyard${fixes ? '' : '&quirks=flame&s3d=dirplayer'}`);
   await page.waitForFunction(() => window.__player?.movie?.name === 'arena104', null, { timeout: 60000 });
   await sleep(1500);
   const result = await page.evaluate(
@@ -610,8 +614,8 @@ function compare(name, orig, port) {
 }
 
 /**
- * With the port's fix on (enhancements.ts arenaFixes.spearForward), every spear of a
- * front-mounted gun flies forward: the robot faces -z in these scenarios, so each spear
+ * The port as it plays (Adobe's mirrored transforms, #53 and #71): every spear of a
+ * front-mounted gun flies forward. The robot faces -z in these scenarios, so each spear
  * model's z must fall from tick to tick while it flies.
  */
 async function checkForward(browser, name, sc, orig) {
@@ -625,7 +629,7 @@ async function checkForward(browser, name, sc, orig) {
   });
   const backward = [...zs].filter(([, z]) => z.length < 2 || z[1] >= z[0]);
   const ok = zs.size === sc.forward && !backward.length;
-  console.log(`${name} (port fix on): ${ok ? 'ok' : 'FAIL'}, ${zs.size} of ${sc.forward} spears fired${backward.length ? `, backwards: ${backward.map(([n]) => n).join(', ')}` : ', all forward'}`);
+  console.log(`${name} (the port as it plays): ${ok ? 'ok' : 'FAIL'}, ${zs.size} of ${sc.forward} spears fired${backward.length ? `, backwards: ${backward.map(([n]) => n).join(', ')}` : ', all forward'}`);
   return ok;
 }
 

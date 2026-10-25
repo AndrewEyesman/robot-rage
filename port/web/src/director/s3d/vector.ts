@@ -48,8 +48,48 @@ export function eulerMatrix(rx: number, ry: number, rz: number): THREE.Matrix4 {
   return new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rx * DEG, ry * DEG, rz * DEG, 'ZYX'));
 }
 
+/**
+ * For comparisons with dirplayer (port/tools/weapon-trace.mjs, ?s3d=dirplayer): dirplayer
+ * splits a mirrored matrix without putting the mirror on z, as the port did before
+ * (docs/port-issues.md #71), so its own-axis operations on mirrored nodes go the other
+ * way; and it turns rotate(point, axis, angle) about a point scaled with the node. The trace runs the port the same way, to compare the translated weapons with the
+ * original Lingo tick by tick.
+ */
+export const s3dCompat = {
+  dirplayerMirrors: typeof location !== 'undefined' && new URLSearchParams(location.search).get('s3d') === 'dirplayer',
+};
+
+/** Whether Director reads the matrix as mirrored (a negative z scale; directorBasis). */
+export function mirrorsOnZ(m: THREE.Matrix4): boolean {
+  return m.determinant() < 0 && !s3dCompat.dirplayerMirrors;
+}
+
+/**
+ * Director's split of a matrix's 3x3 part into rotation x scale: the scale is the
+ * columns' lengths, with z's negative when the matrix mirrors; the rotation is what's
+ * left. Measured in Adobe's player: a mirror on any axis reads as scale (1, 1, -1)
+ * (`t.scale = vector(-1, 1, 1)` then reads scale (1, 1, -1), rotation (180, 0, -180)).
+ * The game's models all sit under the W3D's mirroring "Scene Root", so every part
+ * cloned with its world transform is mirrored, and a node's own-axis operations
+ * (rotate, translate, pointAt, transform.rotation and .scale) work in this split.
+ */
+export function directorBasis(m: THREE.Matrix4): { rot: THREE.Matrix4; scale: THREE.Vector3 } {
+  const e = m.elements;
+  const scale = new THREE.Vector3(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+  if (mirrorsOnZ(m)) scale.z = -scale.z;
+  const k = [scale.x, scale.y, scale.z].map((x) => (Math.abs(x) > 1e-12 ? 1 / x : 0));
+  const rot = new THREE.Matrix4().set(
+    e[0] * k[0], e[4] * k[1], e[8] * k[2], 0,
+    e[1] * k[0], e[5] * k[1], e[9] * k[2], 0,
+    e[2] * k[0], e[6] * k[1], e[10] * k[2], 0,
+    0, 0, 0, 1,
+  );
+  return { rot, scale };
+}
+
 /** The rotation vector of a matrix's rotation part (scale removed), as Director reports it. */
-export function matrixEuler(m: THREE.Matrix4): Vector {
+export function matrixEuler(m0: THREE.Matrix4): Vector {
+  const m = directorBasis(m0).rot;
   const e = m.elements;
   const s0 = Math.hypot(e[0], e[1], e[2]) || 1;
   const s1 = Math.hypot(e[4], e[5], e[6]) || 1;
@@ -106,20 +146,19 @@ export class Transform {
     this.changed?.();
   }
 
+  /** Director's scale: z's negative on a mirrored transform (directorBasis). */
   get scale(): Vector {
-    const e = this.m.elements;
-    const s = new THREE.Vector3(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
-    return boundVector(s, (v) => (this.scale = v));
+    return boundVector(directorBasis(this.m).scale, (v) => (this.scale = v));
   }
-  /** Keeps the rotation and position. */
+  /** Keeps the rotation and position: M = T * R * S(v), so a positive scale ends a mirror (as in Adobe's player). */
   set scale(v: Vector) {
+    const { scale: s } = directorBasis(this.m);
     const e = this.m.elements;
     const target = [v.x, v.y, v.z];
+    const cur = [s.x, s.y, s.z];
     for (let c = 0; c < 3; c++) {
-      const l = Math.hypot(e[c * 4], e[c * 4 + 1], e[c * 4 + 2]);
-      const k = l > 1e-12 ? target[c] / l : 0;
-      if (l <= 1e-12) e[c * 4 + c] = target[c];
-      else for (let r = 0; r < 3; r++) e[c * 4 + r] *= k;
+      if (Math.abs(cur[c]) <= 1e-12) e[c * 4 + c] = target[c];
+      else for (let r = 0; r < 3; r++) e[c * 4 + r] *= target[c] / cur[c];
     }
     this.changed?.();
   }
@@ -127,11 +166,11 @@ export class Transform {
   get rotation(): Vector {
     return boundVector(toThree(matrixEuler(this.m)), (v) => (this.rotation = v));
   }
-  /** Keeps the scale and position: M = T * R(v) * S. */
+  /** Keeps the scale (a mirror too) and position: M = T * R(v) * S. */
   set rotation(v: Vector) {
-    const s = this.scale;
+    const s = directorBasis(this.m).scale;
     const p = new THREE.Vector3().setFromMatrixPosition(this.m);
-    const r = eulerMatrix(v.x, v.y, v.z).scale(new THREE.Vector3(s.x, s.y, s.z));
+    const r = eulerMatrix(v.x, v.y, v.z).scale(s);
     r.setPosition(p);
     this.m.copy(r);
     this.changed?.();

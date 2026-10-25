@@ -14,6 +14,7 @@ import type { Sprite } from '../sprite';
 import { num } from '../../lingo';
 import { Shockwave3dMember } from './member';
 import { rgb255, type Texture3D } from './resources';
+import { directorBasis, s3dCompat } from './vector';
 import { Camera3D, type Node3D, type Overlay } from './nodes';
 
 /** A rect in CSS pixels, relative to the player's element. */
@@ -120,11 +121,13 @@ export class Shockwave3dRenderer implements SpriteRenderer {
 
   private threeCamera(v: View, c: Camera3D, aspect: number): THREE.Camera {
     // The camera's world placement without scale (a mirrored parent, like the files'
-    // "Scene Root", must not mirror the view).
+    // "Scene Root", must not mirror the view): it looks down the -Z of Director's
+    // rotation (directorBasis, where pointAt aims it).
     const w = c.worldMatrix();
-    const pos = new THREE.Vector3();
+    const pos = new THREE.Vector3().setFromMatrixPosition(w);
     const q = new THREE.Quaternion();
-    w.decompose(pos, q, new THREE.Vector3());
+    if (s3dCompat.dirplayerMirrors) w.decompose(pos, q, new THREE.Vector3());
+    else q.setFromRotationMatrix(directorBasis(w).rot);
     let cam: THREE.PerspectiveCamera | THREE.OrthographicCamera;
     if (c.isOrthographic) {
       const o = v.ortho;
