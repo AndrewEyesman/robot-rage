@@ -93,10 +93,8 @@ html.in-arena #settings-link { display: none; }
 #privacy-view .done { padding: 4px 14px; background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; font: inherit; }
 #privacy-view iframe { flex: 1; width: 100%; border: 0; }
 html.touch #credit, html.touch #privacy { display: none; }
-/* In touch mode: a button like mobile.ts's full screen one, clear of the screen's rounded
-   corners: at the side bar's bottom middle in landscape, right under the stage's right edge upright. */
-html.touch #links { bottom: calc(10px + env(safe-area-inset-bottom)); right: max(calc((100vw - 400vh / 3) / 4 - 17px), calc(10px + env(safe-area-inset-right))); }
-@media (max-aspect-ratio: 1/1) { html.touch #links { top: calc(50dvh + 37.5vw + 12px); bottom: auto; right: calc(12px + env(safe-area-inset-right)); } }
+/* In touch mode: a button like mobile.ts's full screen one, in the top right corner as that is in the top left. */
+html.touch #links { top: calc(6px + env(safe-area-inset-top)); right: calc(6px + env(safe-area-inset-right)); bottom: auto; }
 html.touch #settings-link { display: flex; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.55); }
 html.touch.in-arena #settings-link { display: none; }
