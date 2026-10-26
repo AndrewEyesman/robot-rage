@@ -3,8 +3,11 @@
 // in the black bars beside (or under) the 4:3 stage, never over the game: the link is
 // hidden when the window has no bars, and in the arena (the widescreen view and the touch
 // controls use the bars there). While the dialog is open the game gets no keys.
+// In touch mode (mobile.ts) the bars hold only a small dim gear for it: the credit and
+// Privacy move into the dialog's foot, as text in a phone's bars distracted from the game.
 
 import type { Player } from './director';
+import { onTouchMode, touchMode } from './mobile';
 import { anySettingChanged, changeSetting, resetSettings, savedSetting, setByAddress, setting, type SettingKey } from './settings';
 
 interface Row {
@@ -77,6 +80,12 @@ html.in-arena #settings-link { display: none; }
 #settings .reset { background: none; border-color: #3a3a3a; color: #aaa; }
 #settings .done:hover, #settings .reset:hover:enabled { color: #fff; }
 #settings .reset:disabled { opacity: 0.4; cursor: default; }
+#settings .foot { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid #2a2a2a; color: #777; font-size: 12px; }
+#settings .foot a { color: #aaa; }
+html.touch #credit, html.touch #privacy { display: none; }
+html.touch #links { right: calc(6px + env(safe-area-inset-right)); bottom: calc(6px + env(safe-area-inset-bottom)); }
+html.touch #settings-link { display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.28); }
+html.touch.in-arena #settings-link { display: none; }
 `;
 
 /** A control changed: save it, and let the reset button know there's something to reset. */
@@ -162,6 +171,17 @@ export function installSettings(player: Player) {
       cols.append(section);
     }
     dialog.replaceChildren(header, note, cols);
+    if (touchMode()) {
+      const foot = document.createElement('p');
+      foot.className = 'foot';
+      const privacy = document.createElement('a');
+      privacy.href = '/privacy.html';
+      privacy.target = '_blank';
+      privacy.rel = 'noopener';
+      privacy.textContent = 'Privacy';
+      foot.append(privacy, ' · © Raketspel / Miniclip');
+      dialog.append(foot);
+    }
   };
   const open = () => {
     render();
@@ -193,4 +213,8 @@ export function installSettings(player: Player) {
   link.addEventListener('click', open);
   const privacy = document.getElementById('privacy');
   privacy?.parentElement?.insertBefore(link, privacy);
+  onTouchMode(() => {
+    link.setAttribute('aria-label', 'Settings');
+    link.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M10.3 2.5h3.4l.5 2.6 1.9.8 2.2-1.5 2.4 2.4-1.5 2.2.8 1.9 2.6.5v3.4l-2.6.5-.8 1.9 1.5 2.2-2.4 2.4-2.2-1.5-1.9.8-.5 2.6h-3.4l-.5-2.6-1.9-.8-2.2 1.5-2.4-2.4 1.5-2.2-.8-1.9-2.6-.5v-3.4l2.6-.5.8-1.9-1.5-2.2 2.4-2.4 2.2 1.5 1.9-.8z"/></svg>';
+  });
 }
