@@ -83,8 +83,12 @@ html.in-arena #settings-link { display: none; }
 #settings .foot { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid #2a2a2a; color: #777; font-size: 12px; }
 #settings .foot a { color: #aaa; }
 html.touch #credit, html.touch #privacy { display: none; }
-html.touch #links { right: calc(6px + env(safe-area-inset-right)); bottom: calc(6px + env(safe-area-inset-bottom)); }
-html.touch #settings-link { display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.28); }
+/* In touch mode: a button like mobile.ts's full screen one, at the bar's bottom middle, clear
+   of the screen's rounded corners (the side bar's in landscape, the bar under the stage upright). */
+html.touch #links { bottom: calc(10px + env(safe-area-inset-bottom)); right: max(calc((100vw - 400vh / 3) / 4 - 17px), calc(10px + env(safe-area-inset-right))); }
+@media (max-aspect-ratio: 1/1) { html.touch #links { right: calc(50vw - 17px); } }
+html.touch #settings-link { display: flex; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.55); }
 html.touch.in-arena #settings-link { display: none; }
 `;
 
@@ -215,6 +219,6 @@ export function installSettings(player: Player) {
   privacy?.parentElement?.insertBefore(link, privacy);
   onTouchMode(() => {
     link.setAttribute('aria-label', 'Settings');
-    link.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M10.3 2.5h3.4l.5 2.6 1.9.8 2.2-1.5 2.4 2.4-1.5 2.2.8 1.9 2.6.5v3.4l-2.6.5-.8 1.9 1.5 2.2-2.4 2.4-2.2-1.5-1.9.8-.5 2.6h-3.4l-.5-2.6-1.9-.8-2.2 1.5-2.4-2.4 1.5-2.2-.8-1.9-2.6-.5v-3.4l2.6-.5.8-1.9-1.5-2.2 2.4-2.4 2.2 1.5 1.9-.8z"/></svg>';
+    link.innerHTML = '<svg viewBox="0 0 24 24" width="70%" height="70%"><path fill="currentColor" fill-rule="evenodd" d="M19.64 9.64 L22.29 9.91 L22.29 14.09 L19.64 14.36 L19.08 15.73 L20.75 17.80 L17.80 20.75 L15.73 19.08 L14.36 19.64 L14.09 22.29 L9.91 22.29 L9.64 19.64 L8.27 19.08 L6.20 20.75 L3.25 17.80 L4.92 15.73 L4.36 14.36 L1.71 14.09 L1.71 9.91 L4.36 9.64 L4.92 8.27 L3.25 6.20 L6.20 3.25 L8.27 4.92 L9.64 4.36 L9.91 1.71 L14.09 1.71 L14.36 4.36 L15.73 4.92 L17.80 3.25 L20.75 6.20 L19.08 8.27Z M15.6 12a3.6 3.6 0 1 0-7.2 0a3.6 3.6 0 1 0 7.2 0Z"/></svg>';
   });
 }
