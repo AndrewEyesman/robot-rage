@@ -5,6 +5,9 @@
 // controls use the bars there). While the dialog is open the game gets no keys.
 // In touch mode (mobile.ts) the bars hold only a small dim gear for it: the credit and
 // Privacy move into the dialog's foot, as text in a phone's bars distracted from the game.
+// Privacy opens there in a panel over the game, not as a page: an installed app has no
+// browser to go back from it in, and the phone's back gesture closes the panel or the
+// dialog (a history entry each) instead of leaving the game, which would close the app.
 
 import type { Player } from './director';
 import { onTouchMode, touchMode } from './mobile';
@@ -82,6 +85,13 @@ html.in-arena #settings-link { display: none; }
 #settings .reset:disabled { opacity: 0.4; cursor: default; }
 #settings .foot { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid #2a2a2a; color: #777; font-size: 12px; }
 #settings .foot a { color: #aaa; }
+#privacy-view { width: min(760px, calc(100vw - 24px)); height: calc(100dvh - 24px); box-sizing: border-box; padding: 0; outline: none;
+  background: #111; border: 1px solid #3a3a3a; border-radius: 6px; font: 13px/1.3 sans-serif; }
+#privacy-view[open] { display: flex; flex-direction: column; }
+#privacy-view::backdrop { background: rgba(0, 0, 0, 0.6); }
+#privacy-view header { display: flex; justify-content: flex-end; padding: 8px 10px; border-bottom: 1px solid #2a2a2a; }
+#privacy-view .done { padding: 4px 14px; background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; font: inherit; }
+#privacy-view iframe { flex: 1; width: 100%; border: 0; }
 html.touch #credit, html.touch #privacy { display: none; }
 /* In touch mode: a button like mobile.ts's full screen one, at the bar's bottom middle, clear
    of the screen's rounded corners (the side bar's in landscape, the bar under the stage upright). */
@@ -97,6 +107,57 @@ function changed(k: SettingKey, v: boolean | string) {
   changeSetting(k, v as never);
   const reset = document.querySelector<HTMLButtonElement>('#settings .reset');
   if (reset) reset.disabled = !anySettingChanged();
+}
+
+// Touch mode's back gesture (see the top): the open dialogs with a history entry, newest last.
+const backStack: HTMLDialogElement[] = [];
+let ownBacks = 0;
+
+/** showModal, and in touch mode a history entry that the back gesture takes to close it. */
+function showModal(d: HTMLDialogElement) {
+  d.showModal();
+  if (!touchMode()) return;
+  history.pushState(null, '');
+  backStack.push(d);
+}
+
+/** Closed by a button or Escape: take its history entry back off. */
+function closedSelf(d: HTMLDialogElement) {
+  const i = backStack.lastIndexOf(d);
+  if (i < 0) return;
+  backStack.splice(i, 1);
+  ownBacks++;
+  history.back();
+}
+
+addEventListener('popstate', () => {
+  if (ownBacks) ownBacks--;
+  else backStack.pop()?.close();
+});
+
+let privacyView: HTMLDialogElement | null = null;
+
+/** The privacy page in a panel over the game (touch mode). */
+function openPrivacy() {
+  if (!privacyView) {
+    const d = (privacyView = document.createElement('dialog'));
+    d.id = 'privacy-view';
+    d.setAttribute('aria-label', 'Privacy');
+    const header = document.createElement('header');
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'done';
+    done.textContent = 'Done';
+    done.addEventListener('click', () => d.close());
+    header.append(done);
+    const frame = document.createElement('iframe');
+    frame.title = 'Privacy';
+    frame.src = '/privacy.html';
+    d.append(header, frame);
+    d.addEventListener('close', () => closedSelf(d));
+    document.body.append(d);
+  }
+  showModal(privacyView);
 }
 
 function row(r: Row): HTMLLabelElement {
@@ -183,13 +244,17 @@ export function installSettings(player: Player) {
       privacy.target = '_blank';
       privacy.rel = 'noopener';
       privacy.textContent = 'Privacy';
+      privacy.addEventListener('click', (e) => {
+        e.preventDefault();
+        openPrivacy();
+      });
       foot.append(privacy, ' · © Raketspel / Miniclip');
       dialog.append(foot);
     }
   };
   const open = () => {
     render();
-    dialog.showModal();
+    showModal(dialog);
     // Open at the top with no control picked out (Tab reaches them).
     dialog.scrollTop = 0;
     dialog.focus();
@@ -202,7 +267,10 @@ export function installSettings(player: Player) {
     }
   });
   // The keyboard back to the game, not left on the link (Enter would open it again).
-  dialog.addEventListener('close', () => player.canvas.focus());
+  dialog.addEventListener('close', () => {
+    closedSelf(dialog);
+    player.canvas.focus();
+  });
   // No key reaches the game (window listeners) while it's open; the dialog's own keys still work.
   for (const type of ['keydown', 'keyup', 'keypress']) {
     addEventListener(type, (e) => {
