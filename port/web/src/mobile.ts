@@ -63,7 +63,7 @@ const CSS = `
 html.touch, html.touch body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 html.touch input, html.touch textarea { -webkit-user-select: text; user-select: text; }
 #fullscreen { display: none; position: fixed; left: calc(6px + env(safe-area-inset-left)); top: calc(6px + env(safe-area-inset-top)); z-index: 10; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box;
-  align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.40); color: rgba(255, 255, 255, 0.85); }
+  align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.55); }
 #fullscreen.up { display: flex; }
 `;
 

@@ -96,7 +96,7 @@ html.touch #credit, html.touch #privacy { display: none; }
 /* In touch mode: a button like mobile.ts's full screen one, in the top right corner as that is in the top left. */
 html.touch #links { top: calc(6px + env(safe-area-inset-top)); right: calc(6px + env(safe-area-inset-right)); bottom: auto; }
 html.touch #settings-link { display: flex; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.40); color: rgba(255, 255, 255, 0.85); }
+  background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.55); }
 html.touch.in-arena #settings-link { display: none; }
 `;
 
