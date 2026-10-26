@@ -89,6 +89,12 @@ function installShell() {
   document.head.append(manifest);
   // iOS ignores the viewport's user-scalable=no: its pinch gesture events zoom unless stopped.
   for (const t of ['gesturestart', 'gesturechange']) document.addEventListener(t, (e) => e.preventDefault());
+  // No long-press gesture on the game (Android buzzes for it, even with its menu stopped): the
+  // stage and the arena's controls work on pointer events alone. The page's own controls and
+  // dialogs keep theirs (their taps are clicks, and the dialogs scroll).
+  document.addEventListener('touchstart', (e) => {
+    if (!(e.target as Element).closest?.('dialog, a, button, input, select, textarea, label, [role=button]')) e.preventDefault();
+  }, { passive: false });
 }
 
 /** Whether the page could go full screen and isn't: not an installed app, not already, and the browser can. */
