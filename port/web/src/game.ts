@@ -2,9 +2,9 @@
 // scores with their scripts translated to TypeScript, starting at the loader as the
 // fan wrapper did. ?movie=name[&frame=label] starts elsewhere (development).
 
-import { boot, loadSystemFonts } from './director';
+import { boot, loadSystemFonts, STAGE_H, STAGE_W } from './director';
 import { reportErrors } from './error-report';
-import './mobile';
+import { onTouchMode, placeBesideStage } from './mobile';
 import './movies';
 import { installSettings } from './settings-panel';
 
@@ -13,4 +13,11 @@ await loadSystemFonts('/assets');
 const player = boot(document.getElementById('stage') as HTMLDivElement, '/assets');
 if (query.get('reporterrors') !== '0') reportErrors(player);
 installSettings(player);
+onTouchMode(() =>
+  placeBesideStage(() => {
+    const a = player.toPage(0, 0);
+    const b = player.toPage(STAGE_W, STAGE_H);
+    return { left: a.x, top: a.y, right: b.x, bottom: b.y };
+  }),
+);
 void player.start(query.get('movie') ?? 'loader002', query.get('frame') ?? 1);

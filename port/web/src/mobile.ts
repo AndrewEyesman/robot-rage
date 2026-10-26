@@ -11,7 +11,7 @@
 // long-press callout or text selection, no pinch zoom (game.html's viewport meta covers
 // double-tap zoom). Either way up works: held upright, the 4:3 stage fills the width
 // and the arena's controls sit in the black bar under it.
-// Full screen only when asked for: a small button in the window's top left corner, up
+// Full screen only when asked for: a small button beside the stage's top left corner, up
 // whenever the page could go full screen and isn't (not in an installed app, which is
 // already, and never on an iPhone, whose Safari has no full screen for pages).
 // The arena's touch controls are in movies/arena104/touch-controls.ts.
@@ -62,10 +62,53 @@ function start() {
 const CSS = `
 html.touch, html.touch body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 html.touch input, html.touch textarea { -webkit-user-select: text; user-select: text; }
-#fullscreen { display: none; position: fixed; left: calc(6px + env(safe-area-inset-left)); top: calc(6px + env(safe-area-inset-top)); z-index: 10; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box;
+#fullscreen { display: none; position: fixed; left: var(--beside-left, calc(6px + env(safe-area-inset-left))); top: var(--beside-top, calc(6px + env(safe-area-inset-top))); z-index: 10; width: 34px; height: 34px; border-radius: 8px; box-sizing: border-box;
   align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); border: 2px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.55); }
 #fullscreen.up { display: flex; }
+html.in-arena #fullscreen { left: calc(6px + env(safe-area-inset-left)); top: calc(6px + env(safe-area-inset-top)); }
 `;
+
+/**
+ * Touch mode's two small buttons (full screen here, Settings in settings-panel.ts) sit just
+ * outside the stage's top corners: beside it when the bars are at the sides, above it when
+ * the bar is above, in the window's corners when there's no room. The page gets their
+ * places as CSS variables (--beside-left, --beside-right, --beside-top). `stage` gives the
+ * stage's rect in page pixels. In the arena the full screen button keeps the window's corner.
+ */
+export function placeBesideStage(stage: () => { left: number; top: number; right: number; bottom: number }) {
+  const BUTTON = 34;
+  const GAP = 8;
+  const EDGE = 6;
+  let last = '';
+  const place = () => {
+    requestAnimationFrame(place);
+    const r = stage();
+    const inset = safeInsets();
+    const minX = inset.left + EDGE;
+    const maxX = innerWidth - inset.right - EDGE - BUTTON;
+    const minY = inset.top + EDGE;
+    let left = minX;
+    let right = maxX;
+    let top = minY;
+    if (r.left - GAP - BUTTON >= minX) {
+      left = r.left - GAP - BUTTON;
+      right = Math.min(r.right + GAP, maxX);
+      top = Math.max(r.top, minY);
+    } else if (r.top - GAP - BUTTON >= minY) {
+      left = Math.max(r.left, minX);
+      right = Math.min(r.right - BUTTON, maxX);
+      top = r.top - GAP - BUTTON;
+    }
+    const key = `${left} ${right} ${top}`;
+    if (key === last) return;
+    last = key;
+    const css = document.documentElement.style;
+    css.setProperty('--beside-left', `${Math.round(left)}px`);
+    css.setProperty('--beside-right', `${Math.round(right)}px`);
+    css.setProperty('--beside-top', `${Math.round(top)}px`);
+  };
+  place();
+}
 
 function installShell() {
   document.documentElement.classList.add('touch');
