@@ -246,7 +246,7 @@ export function installSettings(player: Player) {
         e.preventDefault();
         openPrivacy();
       });
-      foot.append(privacy, ' · Unofficial fan server · game © Raketspel / Miniclip');
+      foot.append(privacy, ' · Unofficial fan server');
       dialog.append(foot);
     }
   };
