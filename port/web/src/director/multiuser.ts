@@ -135,6 +135,10 @@ export class MultiuserXtra {
   /** Why this connection has no direct link, when it has none. */
   private relayReason = 'not connected';
   private lastKeepAlive = -Infinity;
+  /** Not Director's: how the last socket closed, for the lobby's report (see closeInfo). */
+  private lastClose = '';
+  private openedAt = 0;
+  private heardAt = 0;
 
   /** setNetMessageHandler(#handler, scriptObject, subject, sender, passMessage) */
   setNetMessageHandler(handler: unknown, target?: unknown, subject?: unknown, sender?: unknown, passMessage?: unknown): number {
@@ -317,6 +321,13 @@ export class MultiuserXtra {
     return { transport: this.transport, setting: p2pSetting(), reason: links.length ? links.map((l) => l.reason).join('; ') : this.relayReason, clockOffset: this.signalling?.offset, links };
   }
 
+  /** Not Director's: why the connection isn't open, for the server's log. */
+  get closeInfo(): string {
+    if (this.closedByUs) return 'closed by the game';
+    if (this.ws) return `still ${['connecting', 'open', 'closing', 'closed'][this.ws.readyState]}`;
+    return this.lastClose || 'never opened';
+  }
+
   /** Not Director's: the keepalive, from the player's cycle (see the top). */
   keepAlive(now: number) {
     if (!this.signalling || this.ws?.readyState !== WebSocket.OPEN || now - this.lastKeepAlive < KEEPALIVE_MS) return;
@@ -343,9 +354,15 @@ export class MultiuserXtra {
     this.ws = ws;
     live.add(this);
     const current = () => this.ws === ws && !this.closedByUs;
+    // Every close, ours too, with the code: 1006 is a drop without a closing handshake.
+    const secs = (t: number) => ((performance.now() - t) / 1000).toFixed(1);
+    ws.addEventListener('close', (e) => {
+      this.lastClose = `code ${e.code}${e.reason ? ` "${e.reason}"` : ''}${e.wasClean ? '' : ' unclean'}, open ${this.opened ? secs(this.openedAt) : 'never'} s, last message ${this.opened ? secs(this.heardAt) : '-'} s ago`;
+    });
     ws.onopen = () => {
       if (!current()) return;
       this.opened = true;
+      this.openedAt = this.heardAt = performance.now();
       if (logon) ws.send(logon);
       // Ask the relay for direct-connection signalling (a relay without it never answers).
       if (this.mode === 'smus') ws.send(JSON.stringify({ t: 'hello', c: performance.now() }));
@@ -354,6 +371,7 @@ export class MultiuserXtra {
     };
     ws.onmessage = (e) => {
       if (!current()) return;
+      this.heardAt = performance.now();
       if (typeof e.data === 'string' && this.mode === 'smus') {
         this.onControl(e.data);
       } else if (typeof e.data === 'string') {
@@ -367,9 +385,10 @@ export class MultiuserXtra {
       }
     };
     // Browsers follow an error with close; some WebSocket implementations stop at the error.
-    ws.onclose = ws.onerror = () => {
+    ws.onclose = ws.onerror = (e) => {
       if (!current()) return;
       this.ws = null;
+      if (e.type === 'error') this.lastClose = 'error before close';
       live.delete(this);
       this.closeLinks();
       // A connection that never opened failed to connect; one that did was lost.

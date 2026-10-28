@@ -267,6 +267,7 @@ export class SocketGuard {
     for (const set of this.open.values()) {
       for (const ws of set) {
         if (!ws.alive) {
+          ws.closedBy = "no pong";
           ws.terminate();
           continue;
         }

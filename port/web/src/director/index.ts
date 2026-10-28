@@ -6,7 +6,7 @@ export { SoundChannel, mutedSounds, playOneShot, preloadSound, stopAllSounds } f
 export * from './behavior';
 export * from './color';
 export { pass, stopEvent, dontPassEvent, hasHandler, findHandler, invoke, setScriptProp, getScriptProp } from './dispatch';
-export { scriptErrorListeners } from './errors';
+export { scriptError, scriptErrorListeners } from './errors';
 export * from './image';
 export * from './members';
 export { getNetText, preloadNetThing, netDone, netTextResult, netError, netAbort } from './net';

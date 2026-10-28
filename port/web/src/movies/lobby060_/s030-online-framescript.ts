@@ -4,7 +4,7 @@
 // shows its card and 3D model, sends challenges and accepts incoming ones, and goes to
 // "ChallengeWait" when a match is agreed.
 
-import { Behavior, G, dot, go, member, netDone, netError, netTextResult, pass, postNetText, put, sendAllSprites, sendSprite, the } from '../../director';
+import { Behavior, G, dot, go, member, netDone, netError, netTextResult, pass, postNetText, put, scriptError, sendAllSprites, sendSprite, the } from '../../director';
 import {
   EMPTY, LList, LPropList, LingoError, TAB, chars, item, itemDelimiter, lingoString, numToChar, random, setItemDelimiter, sym, value,
   voidp, type LSymbol, type LValue,
@@ -14,7 +14,7 @@ import { text2image } from '../robotwars/s007-jump-movie';
 import { getranking } from '../robotwars/s240-getranking';
 import {
   DeclineChallenge, DisconnectFromSMUS, PingP2P, pingConnectionOpen, ReplaceWord, SendchallengeSMUS, SetRobotPing, changeroom, connectP2P,
-  getRankClass, getrankingindex, lobbyConnectionLost,
+  getRankClass, getrankingindex, lobbyConnectionLost, lobbyLostReport,
 } from './s004-lobby-moviescript';
 import { gameFixes, withRobotDefaults } from '../fixes';
 import { eq, lobbyReentry, setMU } from './util';
@@ -233,6 +233,8 @@ export class OnlineFramescript extends Behavior {
       return false;
     }
     lobbyReentry.times.push(now);
+    // To the server's log (src/error-report.ts): which connection went, and how.
+    scriptError('lobby lost', lobbyLostReport());
     put('lobby: connection lost, entering again');
     sendAllSprites('hide3DRobot');
     G.gRoom.LeaveRoom();

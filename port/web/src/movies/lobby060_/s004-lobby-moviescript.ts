@@ -29,6 +29,12 @@ export function lobbyConnectionLost(): boolean {
   return !open(G.gMultiuserInstanceIRC) || !open(G.P2PmuInstanceListen);
 }
 
+/** Which of the lobby's connections is gone and how it closed (MultiuserXtra.closeInfo). */
+export function lobbyLostReport(): string {
+  const info = (name: string, m: unknown) => (m instanceof MultiuserXtra ? (m.connected ? '' : `${name}: ${m.closeInfo}`) : `${name}: none`);
+  return [info('irc', G.gMultiuserInstanceIRC), info('listener', G.P2PmuInstanceListen)].filter(Boolean).join('; ');
+}
+
 /** gameFixes.lobbyPing: whether the clicked robot's connection (connectP2P) has opened. */
 let pingConnected = false;
 export const pingConnectionOpen = () => pingConnected;

@@ -269,6 +269,16 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => {
     sockets.track(ws, address);
     ws.on("error", (err) => log(`ws: ${url.pathname} error (${address}): ${err.message}`));
+    // Why each socket closed, to tell the network's drops (1006, no closing handshake)
+    // from the page's closes and the heartbeat's (SocketGuard).
+    const opened = Date.now();
+    let heard = opened;
+    ws.on("message", () => (heard = Date.now()));
+    ws.on("close", (code, reason) => {
+      const now = Date.now();
+      const why = ws.closedBy ? `${ws.closedBy}, ` : "";
+      log(`ws: ${url.pathname} closed (${address}, ${why}code ${code}${reason?.length ? ` "${reason}"` : ""}, open ${Math.round((now - opened) / 1000)} s, last message ${((now - heard) / 1000).toFixed(1)} s ago)`);
+    });
     switch (url.pathname) {
       case "/ws/irc": {
         const session = irc.connect({
