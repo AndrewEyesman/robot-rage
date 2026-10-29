@@ -48,8 +48,8 @@ export function loadLimits(env = process.env) {
     apiPerMinute: int(env, "API_PER_MIN", 600),
     apiMaxBody: int(env, "API_MAX_BODY_KB", 1024) * 1024,
     // WebSockets: open at once per address and in total, new ones per address per
-    // minute, the largest message, and the heartbeat (a socket that doesn't answer a
-    // ping within one interval is closed).
+    // minute, the largest message, and the heartbeat (a socket that sends nothing, not
+    // even an answer to a ping, for one interval is closed; see SocketGuard).
     wsPerAddress: int(env, "WS_PER_ADDRESS", 40),
     wsTotal: int(env, "WS_TOTAL", 2000),
     wsNewPerMinute: int(env, "WS_NEW_PER_MIN", 120),
@@ -224,6 +224,15 @@ export class Bucket {
  * The WebSocket caps: connections open per address and in total, new connections
  * per address per minute, and the heartbeat that closes sockets that stopped
  * answering (a closed laptop, a dropped network).
+ *
+ * A socket that answers in its own messages gets no WebSocket pings: through the
+ * Cloudflare tunnel a ping now and then cut the browser's side of a busy socket on
+ * the spot (code 1006; the server's side stayed open, unanswered), which threw players
+ * out of the lobby every few minutes. Any message counts as an answer. The relay's
+ * sockets that keep alive (relay.mjs, {t: "ka"} every second) need nothing more; the
+ * lobby's get an IRC PING (`ws.keepAliveLine`), which the game answers with a PONG.
+ * Only sockets that do neither (the dirplayer page's relay sockets, which never send
+ * a keepalive) are still pinged.
  */
 export class SocketGuard {
   constructor(limits = LIMITS, log = () => {}) {
@@ -255,6 +264,7 @@ export class SocketGuard {
     this.total++;
     ws.alive = true;
     ws.on("pong", () => (ws.alive = true));
+    ws.on("message", () => (ws.alive = true));
     ws.once("close", () => {
       set.delete(ws);
       if (!set.size && this.open.get(address) === set) this.open.delete(address);
@@ -267,13 +277,14 @@ export class SocketGuard {
     for (const set of this.open.values()) {
       for (const ws of set) {
         if (!ws.alive) {
-          ws.closedBy = "no pong";
+          ws.closedBy = "no answer";
           ws.terminate();
           continue;
         }
         ws.alive = false;
         try {
-          ws.ping();
+          if (ws.keepAliveLine) ws.keepAliveLine();
+          else if (!ws.keepsAlive) ws.ping();
         } catch {
           // closing already
         }

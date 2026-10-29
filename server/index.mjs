@@ -293,6 +293,7 @@ server.on("upgrade", (req, socket, head) => {
         // The emulator's Multiuser Xtra writes text-mode messages as UTF-8.
         ws.on("message", (data) => session.receive(data.toString("utf8")));
         ws.on("close", () => session.disconnect());
+        ws.keepAliveLine = session.ping;
         return;
       }
       case "/ws/p2p/listen":

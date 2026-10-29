@@ -936,13 +936,32 @@ try {
     await waitFor(() => big.closed, "an oversized message closing the socket");
     assert.equal(big.code, 1009);
     const dead = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.2", { autoPong: false });
+    // The lobby is asked with IRC PINGs, which the game answers; no WebSocket pings
+    // (through the Cloudflare tunnel they cut busy sockets).
     const alive = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.3");
+    let framePings = 0;
+    alive.on("ping", () => framePings++);
+    alive.on("message", (data) => /^PING /m.test(String(data)) && alive.send("PONG robotrage.local\n\r"));
     await ircLogin(alive, "_R0Alive4F2A");
+    // A relay socket that keeps alive ({t: "ka"}) gets no pings either; one that's silent does.
+    const keeper = await ws2("/ws/p2p/listen?addr=10.9.9.1&user=Keeper", "10.0.9.5");
+    let keeperPings = 0;
+    keeper.on("ping", () => keeperPings++);
+    const ka = setInterval(() => keeper.send('{"t":"ka"}'), 100);
+    const quiet = await ws2("/ws/p2p/listen?addr=10.9.9.2&user=Quiet", "10.0.9.6");
+    let quietPings = 0;
+    quiet.on("ping", () => quietPings++);
     await waitFor(() => dead.closed, "a socket that doesn't answer pings closing", 3000);
     const silent = await ws2("/ws/irc?addr=1.1.1.1", "10.0.9.4");
     await waitFor(() => silent.closed, "an unregistered lobby connection closing", 3000);
     assert.ok(!alive.closed, "a live, registered connection stays");
-    alive.close();
+    assert.ok(alive.lines.some((l) => l.startsWith("PING ")), "asked with an IRC PING");
+    assert.equal(framePings, 0, "the lobby gets no WebSocket pings");
+    clearInterval(ka);
+    assert.ok(!keeper.closed && !quiet.closed, "relay sockets that keep alive or answer pings stay");
+    assert.equal(keeperPings, 0, "a relay socket that keeps alive gets no WebSocket pings");
+    assert.ok(quietPings > 0, "a silent relay socket is still pinged");
+    for (const ws of [alive, keeper, quiet]) ws.close();
   });
 
   await step("limits: lobby line length, flood and chat", async () => {

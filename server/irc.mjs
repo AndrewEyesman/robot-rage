@@ -68,6 +68,8 @@ export class IrcServer {
     return {
       receive: (text) => this.receive(client, text),
       disconnect: () => this.quit(client, "Connection closed"),
+      // The heartbeat's question (limits.mjs SocketGuard): the game answers PONG.
+      ping: () => client.registered && client.send(`PING :${SERVER}\r\n`),
     };
   }
 
