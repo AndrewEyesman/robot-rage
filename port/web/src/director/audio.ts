@@ -94,14 +94,15 @@ export class SoundChannel {
 
   /**
    * play(member) / play([#member: m, #loopCount: n, #rateShift: semitones]), or play()
-   * for the first queued sound. A loopCount other than 1 (the arena queues 9999) loops.
+   * for the first queued sound. A loopCount other than 1 (the arena queues 9999) loops;
+   * with none, the member's Loop checkbox decides (the saw and drill loops have it).
    */
   play(m?: SoundMember, opts: { loopCount?: number; rateShift?: number } = {}) {
     if (!m) {
       const next = this.playList.shift();
       if (!next) return;
       m = next.member;
-      opts = { loopCount: next.loopCount === undefined || next.loopCount === 1 ? undefined : 0 };
+      opts = { loopCount: next.loopCount };
     }
     this.stop();
     if (mutedSounds.has(m.name.toLowerCase())) return;
@@ -118,7 +119,7 @@ export class SoundChannel {
       const source = ac.createBufferSource();
       const gain = ac.createGain();
       source.buffer = buf;
-      source.loop = opts.loopCount === 0;
+      source.loop = opts.loopCount === undefined ? m.loop : opts.loopCount !== 1;
       if (opts.rateShift) source.playbackRate.value = Math.pow(2, opts.rateShift / 12);
       gain.gain.value = this._volume / 255;
       source.connect(gain).connect(master!);

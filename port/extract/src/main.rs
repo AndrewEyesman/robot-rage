@@ -139,6 +139,9 @@ fn main() {
                 Chunk::Media(m) if m.is_compressed && !m.audio_data.is_empty() => Some(m),
                 _ => None,
             });
+            // The member's Loop checkbox: Director loops the sound unless bit 0x10 of the
+            // member info's flags is set (as dirplayer and ScummVM read it).
+            let looped = def.chunk.member_info.as_ref().is_some_and(|i| i.header.flags & 0x10 == 0);
             if let Some(m) = swa {
                 // Shockwave Audio: an MP3 stream, possibly after a few header bytes.
                 let data = &m.audio_data;
@@ -147,7 +150,7 @@ fn main() {
                     .unwrap_or(0);
                 let file = format!("sounds/{}-{}.mp3", lib, num);
                 fs::write(out.join(&file), &data[start..]).unwrap();
-                entry["sound"] = json!({ "file": file, "codec": "swa", "rate": m.sample_rate });
+                entry["sound"] = json!({ "file": file, "codec": "swa", "rate": m.sample_rate, "loop": looped });
             } else if let Some(snd) = sound_of(def).filter(|_| is_sound) {
                 let mp3 = snd.codec() == "mp3";
                 let file = format!("sounds/{}-{}.{}", lib, num, if mp3 { "mp3" } else { "wav" });
@@ -158,7 +161,7 @@ fn main() {
                 });
                 entry["sound"] = json!({
                     "file": file, "codec": snd.codec(), "rate": snd.sample_rate(),
-                    "channels": snd.channels(), "bits": snd.bits_per_sample(), "cuePoints": cues,
+                    "channels": snd.channels(), "bits": snd.bits_per_sample(), "cuePoints": cues, "loop": looped,
                 });
             }
             for xm in def.children.iter().filter_map(|c| match c {

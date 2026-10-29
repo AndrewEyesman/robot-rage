@@ -293,6 +293,20 @@ const CLAW_FORWARD = {
   ],
 };
 
+/**
+ * The saw (docs/port-issues.md #87): its "sag_loop" member has Director's Loop checkbox set, so the sound
+ * keeps going while the key is held, past the clip's 2.9 s (the port used to play it once).
+ */
+const SAW_SOUND_LOOPS = {
+  name: 'saw-sound-loops',
+  url: weaponUrl('r1,h2,ma1,b1,v11', 'f'),
+  steps: [
+    ROBOT_READY,
+    ['hold', 'z', 4000],
+    ['expect', 'held 4 s, the saw is still heard', `Array.from({ length: 8 }, (_, i) => window.__sound(i + 1)).some((c) => c.member?.name === 'sag_loop' && c.isBusy())`, 500],
+  ],
+};
+
 /** The laser cannon (#71): the beam goes forward from the cannon, never behind it. */
 const LASER_FORWARD = {
   name: 'laser-fires-forward',
@@ -1005,6 +1019,7 @@ const CHECKS = [
   CLAW_FORWARD,
   LASER_FORWARD,
   FLAME_FORWARD,
+  SAW_SOUND_LOOPS,
   {
     // The paintshop's grid button with no chassis (#40): it used to fail before toggling.
     name: 'garage-grid-nochassis',

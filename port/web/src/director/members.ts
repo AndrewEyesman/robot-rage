@@ -451,9 +451,12 @@ export class ShapeMember extends Member {
 
 export class SoundMember extends Member {
   url: string;
+  /** member.loop: the member's Loop checkbox, which a play with no #loopCount follows. */
+  loop: boolean;
   constructor(castLib: CastLib, number: number, name: string, doc: MemberDoc) {
     super(castLib, number, 'sound', name);
     this.url = `${castLib.base}/${doc.sound!.file}`;
+    this.loop = doc.sound!.loop ?? false;
   }
 }
 

@@ -95,7 +95,7 @@ export interface MemberDoc {
   text?: TextDoc;
   field?: FieldDoc;
   shape?: ShapeDoc;
-  sound?: { file: string; codec: string; rate: number; cuePoints?: number[] | null };
+  sound?: { file: string; codec: string; rate: number; cuePoints?: number[] | null; loop?: boolean };
   font?: { name: string; pixelFont: boolean; sizes: Record<string, FontSizeDoc> };
   w3d?: string;
   palette?: string[];
