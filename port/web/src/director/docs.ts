@@ -21,6 +21,7 @@ export interface TextDoc {
   defaultFont?: string | null;
   defaultSize?: number | null;
   defaultColor?: string | null;
+  defaultStyle?: { bold: boolean; italic: boolean; underline: boolean } | null;
   bg?: string | null;
   /** topSpacing/bottomSpacing: space before/after (px); tabs: [position, type 1 left 2 center 3 right 4 decimal]. */
   paragraphs?: { lineSpacing: number; topSpacing: number; bottomSpacing: number; leftIndent: number; firstIndent: number; justification: number; tabs?: [number, number][] }[];

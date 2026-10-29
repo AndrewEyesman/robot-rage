@@ -241,6 +241,8 @@ function spearHeadFirst(pos) {
         })()`,
         3000,
       ],
+      // The ammo counter, a text member authored empty in Verdana 9 bold: text set into it keeps the bold (measured in Adobe).
+      ['expect', 'the ammo counter reads 4, in bold', `(() => { const m = p.member('weapon1 num'); return m.text === '4' && m.styled.runs.every((r) => r.style.bold); })()`, 2000],
     ],
   };
 }

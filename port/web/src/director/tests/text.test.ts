@@ -177,4 +177,10 @@ describe('text layout', () => {
     m.text = 'Crusher';
     eq([m.font, m.fontSize], ['Arial', 18], 'after setting text');
   });
+
+  test('an empty text member keeps its default bold', 'Adobe measurement (member("weapon1 num").fontStyle is [#bold], authored empty)', () => {
+    const m = new TextMember(cast, ++n, '', { ...textDoc([{ text: '' }]), spans: [], defaultFont: 'Verdana', defaultSize: 9, defaultStyle: { bold: true, italic: false, underline: false }, size: [22, 0] });
+    m.text = '5';
+    eq([m.font, m.fontSize, m.fontStyle], ['Verdana', 9, ['bold']]);
+  });
 });

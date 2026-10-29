@@ -290,7 +290,7 @@ export class TextMember extends TextualMember {
     const real = (doc?.spans ?? []).filter((s) => s.text.length > 0);
     const fallback = {
       text: doc?.text ?? '', font: doc?.defaultFont ?? 'Arial', size: doc?.defaultSize ?? 12, color: doc?.defaultColor ?? '#000000',
-      bold: false, italic: false, underline: false,
+      bold: doc?.defaultStyle?.bold ?? false, italic: doc?.defaultStyle?.italic ?? false, underline: doc?.defaultStyle?.underline ?? false,
     };
     const spans = real.length ? real : [fallback];
     let pos = 0;

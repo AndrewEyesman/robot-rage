@@ -2,11 +2,11 @@
 // sprite geometry (sprite.ts rect, regPoint, stretch, rounding).
 
 import { DColor } from '../color';
-import { BitmapMember, CastLib } from '../members';
+import { BitmapMember, CastLib, TextMember } from '../members';
 import { drawSprite, inkedBitmap, remap } from '../render';
 import { Sprite } from '../sprite';
 import { DImage } from '../image';
-import { bitmap, describe, eq, ok, play, test, world3d } from './harness';
+import { bitmap, describe, eq, ok, play, test, text, textDoc, world3d } from './harness';
 
 const RED = new DColor(255, 0, 0);
 const WHITE = new DColor(255, 255, 255);
@@ -171,6 +171,14 @@ describe('sprite geometry', () => {
     eq([s.left, s.right], [80, 120]);
     s.width = 10;
     eq([s.left, s.right], [95, 105], 'width set by a script');
+  });
+
+  test("a text sprite is its member's size, not the score's stretched size", "Adobe measurement (arena104's match frame: weapon1 num, score 21x13 stretched, is rect(193, 539, 215, 552), its member's 22 px)", async () => {
+    const p = await play({ frames: 1, members: [text(1, textDoc([{ text: '5', size: 9 }], { size: [22, 0] }))], sprites: [{ ch: 1, frames: [1, 1], member: 1, loc: [193, 539], size: [21, 13], stretch: true }] });
+    p.stepFrame();
+    const s = p.sprite(1);
+    const m = s.member as TextMember;
+    eq([s.left, s.top, s.right, s.bottom], [193, 539, 215, 539 + m.height]);
   });
 
   test('setting sprite.rect moves and stretches the sprite to fill it', 'Director docs (sprite.rect)', async () => {

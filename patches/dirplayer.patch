@@ -79,7 +79,7 @@ index fff7c114..2031cc51 100644
          }
      }
 diff --git a/vm-rust/src/director/chunks/xmedia_styled_text.rs b/vm-rust/src/director/chunks/xmedia_styled_text.rs
-index 91e5d414..fe2718eb 100644
+index 91e5d414..6b52b008 100644
 --- a/vm-rust/src/director/chunks/xmedia_styled_text.rs
 +++ b/vm-rust/src/director/chunks/xmedia_styled_text.rs
 @@ -63,6 +63,8 @@ pub struct ParInfo {
@@ -99,7 +99,51 @@ index 91e5d414..fe2718eb 100644
          }
      }
  }
-@@ -1777,8 +1780,12 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+@@ -148,6 +151,12 @@ pub struct XmedStyledText {
+     /// `None` when Section 7 declares no styles — the consumer should keep its
+     /// existing fallback.
+     pub default_fore_color: Option<(u8, u8, u8)>,
++    /// Member-level default bold / italic / underline, from the same char-run →
++    /// Section 7 lookup as `default_font_name`. An empty member keeps its authored
++    /// style only there: Adobe's player reports `member.fontStyle` [#bold] for an
++    /// empty text member authored bold, and text set into it later is drawn bold.
++    /// `None` when no char run points at a parsed style.
++    pub default_style: Option<(bool, bool, bool)>,
+     /// Hyperlink ranges from Section 0x0129 (`hyperlink_key`), as 1-based
+     /// inclusive `[startChar, endChar]` pairs (Director's `the hyperlinks of
+     /// member` format). Empty when the member has no links. Each XMED record
+@@ -773,6 +782,22 @@ pub fn parse_xmed(data: &[u8]) -> Result<XmedStyledText, String> {
+     let default_font_name = lookup_font_via(&section4_char_runs)
+         .or_else(|| lookup_font_via(&section5_char_runs));
+ 
++    // Parallel lookup for the default BOLD / ITALIC / UNDERLINE, from the same
++    // char-run → style path as the font name.
++    let lookup_style_via = |runs: &[CharRun]| -> Option<(bool, bool, bool)> {
++        if declared_count == 0 {
++            return None;
++        }
++        let run = runs.first()?;
++        let style = style_data.styles.get(run.style_index as usize)?;
++        if !style.font_index_valid || style.font_name.is_empty() {
++            return None;
++        }
++        Some((style.bold, style.italic, style.underline))
++    };
++    let default_style = lookup_style_via(&section4_char_runs)
++        .or_else(|| lookup_style_via(&section5_char_runs));
++
+     // Parallel lookup for the default FORE COLOUR — same char-run → style path,
+     // so the (font, size, colour) triple all describe one authored style. This
+     // is the only route to the colour of a member authored with no text.
+@@ -858,6 +883,7 @@ pub fn parse_xmed(data: &[u8]) -> Result<XmedStyledText, String> {
+         default_font_size,
+         default_font_name,
+         default_fore_color,
++        default_style,
+         hyperlinks,
+     })
+ }
+@@ -1777,8 +1803,12 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
          info.line_spacing = packer.unpack_num();
          // dword274 if version >= 65547
          if doc_version >= 65547 { packer.unpack_num(); }
@@ -114,7 +158,7 @@ index 91e5d414..fe2718eb 100644
          // wordC if version >= 65552
          if doc_version >= 65552 { packer.unpack_num(); }
          // UnpackRefcon (variable)
-@@ -1793,10 +1800,11 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+@@ -1793,10 +1823,11 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
          if word_e > 0 {
              let actual = if word_e > 32 { 32 } else { word_e };
              for _ in 0..actual {
@@ -129,7 +173,7 @@ index 91e5d414..fe2718eb 100644
                  packer.unpack_refcon(doc_version);
              }
              if sizea > 32 {
-@@ -1838,6 +1846,9 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
+@@ -1838,6 +1869,9 @@ fn parse_section_8_par_infos(data: &[u8], doc_version: i32) -> Vec<ParInfo> {
              if doc_version >= 196616 { packer.unpack_num(); }
          }
  

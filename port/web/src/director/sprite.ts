@@ -176,8 +176,17 @@ export class Sprite {
     return [m.width, m.height];
   }
 
+  /**
+   * A text member's sprite is always the member's size, whatever the score's stretched
+   * size (measured in Adobe: the arena's ammo counters, 21 px in the match frame's score,
+   * are 22 like their member; garage and lobby text sprites likewise, wider or narrower).
+   */
+  private get sized(): boolean {
+    return this.stretch && !(this.member instanceof TextMember);
+  }
+
   get width() {
-    return this.stretch ? this.w : this.memberSize()[0];
+    return this.sized ? this.w : this.memberSize()[0];
   }
   set width(v: number) {
     this.h = this.height;
@@ -185,7 +194,7 @@ export class Sprite {
     this.stretch = true;
   }
   get height() {
-    return this.stretch ? this.h : this.memberSize()[1];
+    return this.sized ? this.h : this.memberSize()[1];
   }
   set height(v: number) {
     this.w = this.width;

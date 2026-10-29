@@ -190,6 +190,7 @@ fn main() {
                         "size": [width, height],
                         "defaultFont": t.default_font_name, "defaultSize": t.default_font_size,
                         "defaultColor": t.default_fore_color.map(|c| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2)),
+                        "defaultStyle": t.default_style.map(|(b, i, u)| json!({ "bold": b, "italic": i, "underline": u })),
                         "bg": t.bg_color.map(|c| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2)),
                         "paragraphs": t.par_infos.iter().map(|p| json!({
                             "lineSpacing": p.line_spacing, "lineHeight": p.line_height, "leftIndent": p.left_indent,
