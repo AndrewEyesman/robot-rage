@@ -52,7 +52,7 @@ export class BitmapFont {
 
   /** The font named `name` (as text members name it, e.g. "Impact *") at `size`. */
   static async load(assets: string, movie: string, name: string, size: number): Promise<BitmapFont> {
-    const index = await (await fetch(`${assets}/${movie}/index.json`)).json();
+    const index = await (await fetch(`${assets}/${movie}/index.json`, { cache: 'no-cache' })).json();
     const member = (index.members as { name: string; font?: { sizes: Record<string, AtlasDoc> } }[]).find(
       (m) => m.font && m.name === name,
     );

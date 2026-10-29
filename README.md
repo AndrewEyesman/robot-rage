@@ -93,10 +93,10 @@ APP_DIR=port/web/dist PORT=8080 npm start
 | `PORT`, `ICE_SERVERS`, `ADMIN_TOKEN` | as above |
 | `TRUST_PROXY=cloudflare` | take the client's address from `CF-Connecting-IP`: only behind the tunnel |
 
-The bundle (`/app/`, hashed) is cached for a year, the assets for a day, the page and the
-API not at all; text, fonts and meshes go out brotli- or gzip-compressed (compressed once,
-kept in memory). Players may see old assets for up to a day after `port/extract.sh` runs
-again. `node port/tools/prod-test.mjs` builds and checks all of it (also in
+The bundle (`/app/`, hashed) is cached for a year, the assets for a day (each movie's
+`index.json` is revalidated on every load), the page and the API not at all; text, fonts
+and meshes go out brotli- or gzip-compressed (compressed once, kept in memory). Players
+may see old images and sounds for up to a day after `port/extract.sh` runs again. `node port/tools/prod-test.mjs` builds and checks all of it (also in
 `npm run test:port`).
 
 **Cloudflare tunnel** (no open port on the host): create a tunnel in Cloudflare Zero

@@ -27,7 +27,7 @@ export class Sound {
   static async load(assets: string, movies: string[]): Promise<Sound> {
     const s = new Sound();
     for (const movie of movies) {
-      const index = await (await fetch(`${assets}/${movie}/index.json`)).json();
+      const index = await (await fetch(`${assets}/${movie}/index.json`, { cache: 'no-cache' })).json();
       for (const m of index.members as MemberDoc[]) {
         const key = m.name.toLowerCase();
         if (m.sound && m.name && !s.files.has(key)) s.files.set(key, `${assets}/${movie}/${m.sound.file}`);

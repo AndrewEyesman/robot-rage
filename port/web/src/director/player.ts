@@ -149,7 +149,9 @@ export class Player {
     const key = name.toLowerCase();
     let d = this.docs.get(key);
     if (!d) {
-      d = fetch(`${this.assets}/${key}/index.json`).then((r) => {
+      // Revalidated, not taken from the cache: a copy cached before a re-extract lacks
+      // the new member properties (the sounds' Loop flags, docs/port-issues.md #87).
+      d = fetch(`${this.assets}/${key}/index.json`, { cache: 'no-cache' }).then((r) => {
         if (!r.ok) throw new Error(`no assets for ${name}`);
         return r.json();
       });

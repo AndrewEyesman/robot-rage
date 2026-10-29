@@ -195,8 +195,11 @@ const asset = (r) => /^\/(app|assets)\//.test(new URL(r.url).pathname);
 const textual = ours.filter((r) => asset(r) && r.status === 200 && /\.(js|json|ttf|bin)$/.test(new URL(r.url).pathname));
 const plain = textual.filter((r) => !/^(br|gzip)$/.test(r.headers['content-encoding'] ?? '') && Number(r.headers['content-length'] ?? 2000) >= 1024);
 check(textual.length && !plain.length, `${textual.length} js/json/ttf/bin replies compressed in the browser${plain.length ? `; not: ${plain.slice(0, 5).map((r) => new URL(r.url).pathname).join(', ')}` : ''}`);
-const uncached = ours.filter((r) => asset(r) && !/max-age=\d{4,}/.test(r.headers['cache-control'] ?? ''));
-check(!uncached.length, `every /app and /assets reply cacheable${uncached.length ? `; not: ${uncached.slice(0, 5).map((r) => new URL(r.url).pathname).join(', ')}` : ''}`);
+const isIndex = (r) => /^\/assets\/.*\/index\.json$/.test(new URL(r.url).pathname);
+const uncached = ours.filter((r) => asset(r) && !isIndex(r) && !/max-age=\d{4,}/.test(r.headers['cache-control'] ?? ''));
+check(!uncached.length, `every /app and /assets reply but the movies' index.json cacheable${uncached.length ? `; not: ${uncached.slice(0, 5).map((r) => new URL(r.url).pathname).join(', ')}` : ''}`);
+const indexes = ours.filter(isIndex);
+check(indexes.length && indexes.every((r) => /no-cache/.test(r.headers['cache-control'] ?? '')), `the movies' index.json revalidated on every load (${indexes.length})`);
 const js = ours.find((r) => /^\/app\/.*\.js$/.test(new URL(r.url).pathname));
 check(/immutable/.test(js?.headers['cache-control'] ?? ''), `the hashed bundle is immutable (${js?.headers['cache-control']})`);
 

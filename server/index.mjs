@@ -179,12 +179,14 @@ async function serveStatic(req, res, pathname) {
 
 // The production build (APP_DIR): Vite's hashed files under /app never change, the
 // extracted assets only when they're extracted again, the page itself on every build.
+// A movie's index.json is checked on every load (a 304 when unchanged): it describes the
+// other assets, and a day-old copy could hide newly extracted member properties.
 async function serveApp(req, res, pathname) {
   const route = (root, rel, cacheControl) => {
     const path = resolveIn(root, rel);
     return path ? sendFile(req, res, path, { cacheControl }) : send(res, 403, "forbidden");
   };
-  if (pathname.startsWith("/assets/")) return route(ASSETS_DIR, pathname.slice("/assets".length), "public, max-age=86400");
+  if (pathname.startsWith("/assets/")) return route(ASSETS_DIR, pathname.slice("/assets".length), pathname.endsWith("/index.json") ? "no-cache" : "public, max-age=86400");
   if (pathname.startsWith("/game/")) {
     const name = pathname.slice("/game/".length);
     return GAME_FILES.has(name) ? route(GAME_DIR, name, "no-cache") : send(res, 404, "not found");
