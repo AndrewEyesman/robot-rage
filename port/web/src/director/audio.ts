@@ -42,6 +42,42 @@ export function preloadSound(m: SoundMember) {
   void buffer(m.url);
 }
 
+const loops = new WeakMap<AudioBuffer, { buf: AudioBuffer; start: number; end: number }>();
+
+/**
+ * A looping MP3 made seamless (docs/port-issues.md #88). The encoder pads every clip with
+ * silence, about 25 ms at the start and 115 ms at the end, which a loop of the decoded
+ * buffer plays at every turn (the files carry no gapless header to trim it by). The
+ * silence is cut off both ends, and the loop's last 10 ms crossfade into its first 10 ms,
+ * so it runs on from the tail into the head without the codec's smeared edges: played from
+ * the start, then looped from loopStart (the end of the crossfaded head) to loopEnd.
+ */
+export function seamlessLoop(ac: BaseAudioContext, buf: AudioBuffer) {
+  let l = loops.get(buf);
+  if (l) return l;
+  const data = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+  const audible = (i: number) => data.some((d) => Math.abs(d[i]) > 1 / 4096);
+  let s = 0;
+  let e = buf.length;
+  while (s < e && !audible(s)) s++;
+  while (e > s && !audible(e - 1)) e--;
+  const n = e - s;
+  const k = Math.min(Math.round(buf.sampleRate / 100), Math.floor(n / 4));
+  if (k < 1) l = { buf, start: 0, end: buf.duration };
+  else {
+    const out = ac.createBuffer(buf.numberOfChannels, n, buf.sampleRate);
+    data.forEach((d, c) => {
+      const o = out.getChannelData(c);
+      o.set(d.subarray(s, e));
+      // Equal power: the head and tail aren't in phase, so a linear fade would dip.
+      for (let i = 0; i < k; i++) o[n - k + i] = d[e - k + i] * Math.sqrt(1 - i / k) + d[s + i] * Math.sqrt(i / k);
+    });
+    l = { buf: out, start: k / buf.sampleRate, end: n / buf.sampleRate };
+  }
+  loops.set(buf, l);
+  return l;
+}
+
 /**
  * Not Director's: a sound played once outside the eight channels, so no channel's stop
  * cuts it (gameFixes.touchClick: the button click on a touch screen).
@@ -118,8 +154,13 @@ export class SoundChannel {
       }
       const source = ac.createBufferSource();
       const gain = ac.createGain();
-      source.buffer = buf;
       source.loop = opts.loopCount === undefined ? m.loop : opts.loopCount !== 1;
+      const l = source.loop && m.url.endsWith('.mp3') ? seamlessLoop(ac, buf) : null;
+      source.buffer = l ? l.buf : buf;
+      if (l) {
+        source.loopStart = l.start;
+        source.loopEnd = l.end;
+      }
       if (opts.rateShift) source.playbackRate.value = Math.pow(2, opts.rateShift / 12);
       gain.gain.value = this._volume / 255;
       source.connect(gain).connect(master!);

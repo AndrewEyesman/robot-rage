@@ -295,7 +295,8 @@ const CLAW_FORWARD = {
 
 /**
  * The saw (docs/port-issues.md #87): its "sag_loop" member has Director's Loop checkbox set, so the sound
- * keeps going while the key is held, past the clip's 2.9 s (the port used to play it once).
+ * keeps going while the key is held, past the clip's 2.9 s (the port used to play it once),
+ * and with no gap at the turn (#88): the MP3's padding is cut and the seam is loud on both sides.
  */
 const SAW_SOUND_LOOPS = {
   name: 'saw-sound-loops',
@@ -304,6 +305,19 @@ const SAW_SOUND_LOOPS = {
     ROBOT_READY,
     ['hold', 'z', 4000],
     ['expect', 'held 4 s, the saw is still heard', `Array.from({ length: 8 }, (_, i) => window.__sound(i + 1)).some((c) => c.member?.name === 'sag_loop' && c.isBusy())`, 500],
+    [
+      'expect',
+      'no silence at the loop\'s turn: the 10 ms before loopEnd and after loopStart are loud',
+      `(() => {
+        const src = Array.from({ length: 8 }, (_, i) => window.__sound(i + 1)).find((c) => c.member?.name === 'sag_loop')?.source;
+        if (!src?.loop || !(src.loopEnd > src.loopStart)) return false;
+        const d = src.buffer.getChannelData(0), r = src.buffer.sampleRate, a = Math.round(src.loopStart * r), b = Math.round(src.loopEnd * r);
+        const rms = (i, j) => Math.sqrt(d.slice(i, j).reduce((s, v) => s + v * v, 0) / (j - i));
+        // The decoded clip is 2.87 s with its padding; Adobe's player gives the member 2718 ms.
+        return b <= d.length && rms(b - r / 100, b) > 0.05 && rms(a, a + r / 100) > 0.05 && src.buffer.duration < 2.78;
+      })()`,
+      500,
+    ],
   ],
 };
 

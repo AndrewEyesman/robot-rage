@@ -84,7 +84,7 @@ Add a line whenever something is verified to work, and an automated check to
 | The power axe at the front swings forward | `axe-swings-forward-front` |
 | The claw at the front reaches out ahead of the chassis while it opens and closes | `claw-reaches-forward` |
 | The laser cannon's beam goes forward from the cannon | `laser-fires-forward` |
-| Sounds whose member has the Loop checkbox loop until stopped (the saw, drill and roller saw while their key is held, the minicar's engine): the extractor keeps the flag | `saw-sound-loops` |
+| Sounds whose member has the Loop checkbox loop until stopped (the saw, drill and roller saw while their key is held, the minicar's engine): the extractor keeps the flag. A looping MP3 turns without a gap, as in Adobe's player (measured: no dip in 9 s of `sag_loop`) | `saw-sound-loops` |
 | The flame thrower's flames stream ahead of the robot (the original mirrored them in z; `?quirks=flame`) | `flame-streams-forward` |
 | A spear gun fires head first out of its muzzle: forward from the front, backward from the back | `spear-head-first-front`, `spear-head-first-back`; `weapon-trace spear_front_five` (`--full`) |
 | Training starts again 3 s after the robot falls into the pit, off the roof or loses its armour (the original left it lying there; `?quirks=pit` restores that) | `training-respawn` |
