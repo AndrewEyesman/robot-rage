@@ -19,6 +19,15 @@
 // counts as before: the surrendering client reports the opponent as the winner.)
 // Rounds confirmed before the disconnect keep counting.
 //
+// Voids, for moderators: a round that didn't count is noted on its match (`voids`) and
+// counted on the accounts involved (`store.db.records`, by member id, beside the rounds
+// they had confirmed): two reports that disagree count against both accounts
+// (`disagreed`); a claim the other side never answered, once it can no longer count as a
+// walkover, against the silent one (`unanswered`), unless the claimant had left the match
+// first (then against nobody). Nothing is decided from them: a modified client can void a
+// round it's losing this way, and so can lag (an arena with a high ping doesn't report),
+// so a moderator reads the counts beside the match records (scripts/moderate.mjs).
+//
 // Win trading (off by default, RANKED_PER_PAIR_PER_DAY): the same two accounts play
 // at most rankedPerPairPerDay ranked matches (with a confirmed round) a day; later
 // starts play unranked: the rounds are checked as usual but change no stats or
@@ -37,15 +46,31 @@ const MATCH_KEEP_MS = 7 * 24 * 60 * 60_000; // settled or not, a match record is
 const WINS_TO_END = 3; // first to three rounds (arena main framescript #done)
 const MAX_ROUNDS = 15; // ties included; a cap on what one match can record
 const DAY_MS = 24 * 60 * 60_000;
+const MAX_VOIDS = 30; // the voids a match record keeps
 export const PRIZE_PER_ROUND = 10;
 
 /**
  * `onRound(winner, own, opponent)`: a ranked round counted (robots). `robot(id)`: a
- * robot by id. `reportWindowMs`, `rankedPerPairPerDay` (0: no limit): limits.mjs.
+ * robot by id. `reportWindowMs`, `walkoverMs`, `rankedPerPairPerDay` (0: no limit): limits.mjs.
  */
-export function createResults(store, log, { onRound, robot = (id) => store.robot(id), reportWindowMs = REPORT_WINDOW_MS, rankedPerPairPerDay = 0 }) {
+export function createResults(store, log, { onRound, robot = (id) => store.robot(id), reportWindowMs = REPORT_WINDOW_MS, walkoverMs = WALKOVER_MS, rankedPerPairPerDay = 0 }) {
   const REPORT_WINDOW_MS = reportWindowMs;
+  const WALKOVER_MS = walkoverMs;
+  // A lone claim is void once it can be neither confirmed nor a walkover.
+  const VOID_AFTER_MS = Math.max(REPORT_WINDOW_MS, WALKOVER_MS);
   const matches = () => (store.db.matches ||= {});
+  const records = () => (store.db.records ||= {});
+
+  /**
+   * Adds one to a field of the record of the account that owns robot `id`: its
+   * confirmed rounds (`rounds`) and the voids counted against it, by member id.
+   */
+  function bump(id, field) {
+    const memberId = robot(id)?.memberId;
+    if (memberId === undefined) return;
+    const r = (records()[memberId] ||= { rounds: 0, disagreed: 0, unanswered: 0 });
+    r[field] = (r[field] ?? 0) + 1;
+  }
 
   /** Drops match records with no activity for MATCH_KEEP_MS. Returns how many. */
   function prune(now = Date.now()) {
@@ -104,6 +129,8 @@ export function createResults(store, log, { onRound, robot = (id) => store.robot
   /** A confirmed round: the tally, and (ranked) the robots' stats and scores. */
   function count(m, winner, own, opponent) {
     m.rounds++;
+    bump(m.host, "rounds");
+    bump(m.guest, "rounds");
     const t = m.tally;
     if (!winner) {
       t[m.host].draw++;
@@ -115,6 +142,34 @@ export function createResults(store, log, { onRound, robot = (id) => store.robot
     }
     if (!m.unranked) onRound(winner, own, opponent);
     if (t[m.host].won >= WINS_TO_END || t[m.guest].won >= WINS_TO_END || m.rounds >= MAX_ROUNDS) m.closed = true;
+  }
+
+  const nameOf = (id) => robot(id)?.robotname ?? id;
+
+  /**
+   * A round that didn't count: `reports`, robot id -> the winner it reported; `blamed`,
+   * the robot ids whose accounts the void counts against, as `kind`.
+   */
+  function voidRound(m, kind, reports, blamed, now) {
+    (m.voids ||= []).push({ at: now, kind, reports, blamed });
+    if (m.voids.length > MAX_VOIDS) m.voids.splice(0, m.voids.length - MAX_VOIDS);
+    for (const id of blamed) bump(id, kind);
+    log("result void", m.id, kind, blamed.length ? `(${blamed.map(nameOf).join(", ")})` : "(nobody's: the claimant left first)");
+  }
+
+  /**
+   * `id`'s unconfirmed claim, past its window: void, against the other side for not
+   * answering, unless the claimant left first.
+   */
+  function expire(m, id, now) {
+    const claim = m.pending[id];
+    delete m.pending[id];
+    const otherId = id === m.host ? m.guest : m.host;
+    const myLeave = m.left?.[id];
+    const theirLeave = m.left?.[otherId];
+    const leftFirst = myLeave !== undefined && !(theirLeave < myLeave);
+    voidRound(m, "unanswered", { [id]: claim.winner }, leftFirst ? [] : [otherId], now);
+    store.save();
   }
 
   /**
@@ -157,9 +212,15 @@ export function createResults(store, log, { onRound, robot = (id) => store.robot
     }
   }
 
-  /** resolve() for every open match (the server calls it every few seconds). */
+  /**
+   * resolve() for every open match, then the voids of claims nobody answered (the server
+   * calls it every few seconds).
+   */
   function resolveAll(now = Date.now()) {
-    for (const m of Object.values(matches())) if (isOpen(m, now)) resolve(m, now);
+    for (const m of Object.values(matches())) {
+      if (isOpen(m, now)) resolve(m, now);
+      for (const id of Object.keys(m.pending ?? {}).map(Number)) if (now - m.pending[id].at > VOID_AFTER_MS) expire(m, id, now);
+    }
   }
 
   /**
@@ -175,12 +236,15 @@ export function createResults(store, log, { onRound, robot = (id) => store.robot
     resolve(m, now);
     if (m.closed) return "over";
     m.last = now;
+    // This side's last claim went unanswered (it has moved on to another round).
+    const mine = m.pending[own.robotid];
+    if (mine && now - mine.at > REPORT_WINDOW_MS) expire(m, own.robotid, now);
     const other = m.pending[opponent.robotid];
     if (other && now - other.at <= REPORT_WINDOW_MS) {
       delete m.pending[opponent.robotid];
       delete m.pending[own.robotid];
       if (other.winner !== winner) {
-        log("result ignored: reports disagree", m.id, winner, other.winner);
+        voidRound(m, "disagreed", { [own.robotid]: winner, [opponent.robotid]: other.winner }, [own.robotid, opponent.robotid], now);
         store.save();
         return "mismatch";
       }
@@ -221,5 +285,12 @@ export function createResults(store, log, { onRound, robot = (id) => store.robot
     return prizes;
   }
 
-  return { start, report, left, resolveAll, settle, openMatchOf, prune };
+  /** The latest match between two robots, open or not (an abuse report's match). */
+  function lastMatchOf(a, b) {
+    return Object.values(matches())
+      .filter((m) => (m.host === a && m.guest === b) || (m.host === b && m.guest === a))
+      .sort((x, y) => y.started - x.started)[0];
+  }
+
+  return { start, report, left, resolveAll, settle, openMatchOf, lastMatchOf, prune };
 }

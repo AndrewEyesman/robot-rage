@@ -139,6 +139,17 @@ opponent as the winner. Against trading wins between one person's accounts,
 `RANKED_PER_PAIR_PER_DAY` limits the ranked matches two accounts play each other a day
 (later ones play unranked); it's off (0) by default while there are few players.
 
+**Voids** are kept for a moderator, not decided on. A modified client can still void a
+round it's losing, by reporting the other result or by not reporting while it stays
+connected, and lag voids rounds too (the arena doesn't report a round with a high ping).
+So each void is noted on its match and counted on the accounts involved, beside their
+confirmed rounds: two reports that disagree count against both, a claim nobody answered
+against the side that stayed silent (once it can no longer be a walkover, after
+`WALKOVER_SEC`, 60 s), and nothing against anyone when the claimant had left first. The
+arena's report button files an abuse report with the latest match between the two robots,
+its voids and the end of its chat (kept 90 days; the addresses and email the arena adds
+aren't kept). `scripts/moderate.mjs record` and `reports` show both (below).
+
 **Money and parts** (`server/economy.mjs`). The server keeps each robot's ledger (its
 money and the parts it owns) and checks every save (`setrobot`) against it, with the
 game's own prices: a part costs its price, a Super Pack's seven parts 2100, a part sells
@@ -176,7 +187,13 @@ node scripts/moderate.mjs list
 node scripts/moderate.mjs kick <who> [--ip]                          # running server only
 node scripts/moderate.mjs ban <who> [--days 7] [--reason "..."] [--ip]
 node scripts/moderate.mjs unban <who>        # or: unban --id <ban id from list>
+node scripts/moderate.mjs record <who>       # ranked rounds, voids against it, recent matches
+node scripts/moderate.mjs reports [--limit 20]   # abuse reports, each with its match and chat
 ```
+
+A few voids mean nothing (lag causes them). Look for an account that voids far more of
+its rounds than others do, against several opponents, and read the reports' matches
+before banning.
 
 A kick ends the account's sessions and closes its lobby and match sockets; a ban does that
 and keeps it out: a banned account can't log in or join the lobby, a banned address can't

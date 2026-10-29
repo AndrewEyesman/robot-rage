@@ -22,8 +22,12 @@
 //
 // Moderation: a banned account can't log in (-1) and its sessions end (18, which logs
 // the client out); a banned address can't log in, create accounts or use a session.
-// The admin actions (adminkick, adminban, adminunban, adminbans; scripts/moderate.mjs)
-// answer only with ADMIN_TOKEN, from this machine.
+// The admin actions (adminkick, adminban, adminunban, adminbans, adminrecord,
+// adminreports; scripts/moderate.mjs) answer only with ADMIN_TOKEN, from this machine.
+//
+// Abuse reports (the arena's report button, reportabuse): kept with a copy of the
+// latest match between the two robots, voids included (results.mjs), and the match's
+// chat, for a moderator (moderation.mjs); never decided on automatically.
 
 import { createHash } from "node:crypto";
 import { toLingo, raw, parseLingo, LingoPropList } from "./lingo.mjs";
@@ -32,6 +36,7 @@ import { createResults } from "./results.mjs";
 import { LIMITS, Lockout, Window } from "./limits.mjs";
 import { mapProblem, memberProblem, robotDataProblem, robotNameProblem } from "./robotdata.mjs";
 import { redact, redactReply } from "./logs.mjs";
+import { abuseReports, accountRecord } from "./moderation.mjs";
 
 const MAX_ROBOTS = 5;
 const MAP_SAVE_WINDOW_MS = 30 * 60_000; // a session-less paint map save must follow its owner's own request this closely
@@ -39,6 +44,9 @@ const PRUNE_EVERY_MS = 60 * 60_000;
 const KNOWN_ADDRESS_MS = 30 * 24 * 60 * 60_000; // how long a login's address stays known to its account
 const DEFAULT_SCORE = 0;
 const SCORE_STEP = 10;
+const REPORT_KEEP_MS = 90 * 24 * 60 * 60_000; // abuse reports are dropped after this
+const REPORTS_MAX = 500; // and only the latest are kept
+const REPORT_CHAT_MAX = 4000; // the end of the match's chat kept with a report
 
 // Mirrors the client's check in its "load robot" behavior:
 // md5(StringToCapital(cleanSpace(props & friends & stats) & salt)).
@@ -69,6 +77,7 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
 
   const results = createResults(store, log, {
     reportWindowMs: limits.reportWindowMs,
+    walkoverMs: limits.walkoverMs,
     rankedPerPairPerDay: limits.rankedPerPairPerDay,
     onRound(winner, own, opponent) {
       if (winner === own.robotid) recordWin(own, opponent);
@@ -93,10 +102,17 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
     store.save();
   }
 
-  // Expired sessions and bans, long-finished matches, and the limits' old counters.
+  // Expired sessions and bans, long-finished matches, old abuse reports, and the limits' old counters.
   function prune() {
     const { sessions, bans } = store.prune();
     const matches = results.prune();
+    const reports = store.db.reports ?? [];
+    const keep = reports.filter((r) => Date.now() - r.at <= REPORT_KEEP_MS);
+    if (keep.length < reports.length) {
+      store.db.reports = keep;
+      store.save();
+      log(`store: pruned ${reports.length - keep.length} old abuse report(s)`);
+    }
     if (sessions || bans || matches) log(`store: pruned ${sessions} expired session(s), ${bans} expired ban(s), ${matches} old match(es)`);
     for (const l of [apiPerMinute, accountsPerDay, loginByAccount, loginByAddress]) l.sweep();
     const now = Date.now();
@@ -407,9 +423,48 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
       return { err: 0, hiscore };
     },
 
+    // The arena's report button: user1id is the reporter's robot, user2id its opponent,
+    // chattext the match's chat. The addresses and email the arena adds aren't kept. A
+    // second report of the same match by the same robot replaces the first.
     reportabuse(p, member, { address }) {
-      log("abuse report", address, redact(p));
+      const own = ownRobot(p, member);
+      const other = store.robot(p.user2id);
+      if (!own || Number(p.user1id) !== own.robotid || !other || other === own) {
+        log("abuse report refused", address, redact(p));
+        return { err: -1 };
+      }
+      const m = results.lastMatchOf(own.robotid, other.robotid);
+      const reports = (store.db.reports ||= []);
+      const same = reports.findIndex((r) => r.reporter === own.robotid && r.reported === other.robotid && r.match?.id === m?.id);
+      if (same >= 0) reports.splice(same, 1);
+      const report = {
+        id: store.nextId(),
+        at: Date.now(),
+        reporter: own.robotid,
+        reporterName: own.robotname,
+        reported: other.robotid,
+        reportedName: other.robotname,
+        match: m ? structuredClone(m) : undefined,
+        chat: String(p.chattext ?? "").slice(-REPORT_CHAT_MAX),
+      };
+      reports.push(report);
+      if (reports.length > REPORTS_MAX) reports.splice(0, reports.length - REPORTS_MAX);
+      store.save();
+      log(`abuse report #${report.id}: ${own.robotname} reported ${other.robotname}${m ? ` (match ${m.id})` : " (no match)"} (${address})`);
       return { err: 0 };
+    },
+
+    // An account's ranked record and recent matches, and the abuse reports, for
+    // scripts/moderate.mjs. JSON in base64: a Lingo string can't hold quotes.
+    adminrecord(p) {
+      const target = targetOf(p.who);
+      if (!target?.member) return { err: -1 };
+      return { err: 0, json: Buffer.from(JSON.stringify(accountRecord(store, target.member))).toString("base64") };
+    },
+
+    adminreports(p) {
+      const limit = Math.max(1, Math.min(REPORTS_MAX, Number(p.limit) || 20));
+      return { err: 0, json: Buffer.from(JSON.stringify(abuseReports(store, limit))).toString("base64") };
     },
   };
 
@@ -583,5 +638,5 @@ export function createApi(store, log, { adminToken = "", limits = LIMITS, kick =
   });
 }
 
-const ADMIN = new Set(["admingrant", "adminkick", "adminban", "adminunban", "adminbans"]);
+const ADMIN = new Set(["admingrant", "adminkick", "adminban", "adminunban", "adminbans", "adminrecord", "adminreports"]);
 const TOO_MANY = Object.freeze({ status: 429, body: "Too many requests; try again later.\n" });

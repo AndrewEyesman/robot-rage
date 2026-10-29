@@ -603,7 +603,7 @@ try {
     assert.equal(prop(await mainAsp({ action: "PING", sessionid: a.sid, robotid: a.robotid }), "err"), "0");
     const res = await fetch(`${HTTP}/api/abuse.asp`, {
       method: "POST",
-      body: new URLSearchParams({ action: "reportabuse", sessionid: a.sid, user1id: a.robotid, user2id: b.robotid }),
+      body: new URLSearchParams({ action: "reportabuse", sessionid: a.sid, robotid: a.robotid, user1id: a.robotid, user2id: b.robotid }),
     });
     assert.equal(prop(await res.text(), "err"), "0");
   });
@@ -1057,14 +1057,15 @@ try {
   });
 
   // ---------------------------------------------------------------- walkovers
-  // A fourth server with a short report window, two ranked matches a day per pair of
-  // accounts, and keepalive sockets closed after 0.6 s of silence.
+  // A fourth server with a short report window (and walkover window, so lone claims are
+  // void after 1 s), two ranked matches a day per pair of accounts, and keepalive sockets
+  // closed after 0.6 s of silence.
   const PORT4 = PORT + 3000;
   const HTTP4 = `http://127.0.0.1:${PORT4}`;
   const WS4 = `ws://127.0.0.1:${PORT4}`;
   const dataDir4 = join(dataDir, "walkovers");
   mkdirSync(dataDir4);
-  server4 = startServer(dataDir4, PORT4, { REPORT_WINDOW_SEC: "0.5", RANKED_PER_PAIR_PER_DAY: "2", RELAY_SILENT_SEC: "0.6" });
+  server4 = startServer(dataDir4, PORT4, { REPORT_WINDOW_SEC: "0.5", WALKOVER_SEC: "1", RANKED_PER_PAIR_PER_DAY: "2", RELAY_SILENT_SEC: "0.6" });
   await server4.ready;
   const player4 = async (email, robotname, addr) => {
     const sid = prop(await mainAsp({ action: "createmember", membername: email, password: "pw" }, HTTP4), "sid");
@@ -1211,6 +1212,72 @@ try {
       old.ws.close();
       lone.ws.close();
     }
+  });
+
+  await step("voids are counted for moderators: disagreeing reports against both, an unanswered claim against the silent side; abuse reports keep their match", async () => {
+    const admin = async (fields) => JSON.parse(Buffer.from(prop(await mainAsp({ token: ADMIN_TOKEN, ...fields }, HTTP4), "json"), "base64").toString("utf8"));
+    const record = async (who) => (await admin({ action: "adminrecord", who: who.robotname })).record;
+    // The claimant that closed its own listener earlier (the step above) voided its claim, against nobody.
+    assert.match(server4.output(), /result void \d+ unanswered \(nobody's: the claimant left first\)/);
+    const [pBefore, rBefore] = [await record(p), await record(r)];
+    await start4(p, r);
+    // They disagree: against both.
+    await report4(p, r, p.robotid);
+    await report4(r, p, r.robotid);
+    // p claims a round r never reports: against r, once the claim can't be a walkover any more.
+    await report4(p, r, p.robotid);
+    await pastWindow();
+    // r claims one p never answers, then reports the next round (a tie, which p confirms).
+    await report4(r, p, r.robotid);
+    await sleep(700);
+    await report4(r, p, 0);
+    await report4(p, r, 0);
+    const [pAfter, rAfter] = [await record(p), await record(r)];
+    assert.deepEqual(pAfter, { rounds: pBefore.rounds + 1, disagreed: pBefore.disagreed + 1, unanswered: pBefore.unanswered + 1 });
+    assert.deepEqual(rAfter, { rounds: rBefore.rounds + 1, disagreed: rBefore.disagreed + 1, unanswered: rBefore.unanswered + 1 });
+    const match = (await admin({ action: "adminrecord", who: p.robotname })).matches[0];
+    assert.deepEqual(match.voids.map((v) => [v.kind, v.against.sort().join()]), [["disagreed", "Hostbot,Thirdbot"], ["unanswered", "Thirdbot"], ["unanswered", "Hostbot"]]);
+    assert.equal(match.score, "Hostbot 0-0 Thirdbot, 1 draw(s)");
+    // p reports r from the arena (twice: the second replaces the first); the report keeps the match, not the addresses.
+    const abuse = (chattext) =>
+      fetch(`${HTTP4}/api/abuse.asp`, {
+        method: "POST",
+        body: new URLSearchParams({ action: "reportabuse", sessionid: p.sid, robotid: p.robotid, user1id: p.robotid, user2id: r.robotid, user1ip: "10.9.9.1", user2ip: "10.9.9.2", chattext, myemail: "someone@email.invalid" }),
+      }).then((res) => res.text());
+    assert.equal(prop(await abuse("first"), "err"), "0");
+    assert.equal(prop(await abuse("Thirdbot: ez\rHostbot: you voided that"), "err"), "0");
+    const forged = await mainAsp({ action: "reportabuse", sessionid: q.sid, robotid: p.robotid, user1id: p.robotid, user2id: r.robotid }, HTTP4);
+    assert.equal(prop(forged, "err"), "-1", "only from the reporter's own session");
+    const reports = await admin({ action: "adminreports" });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].reporter, "Hostbot");
+    assert.equal(reports[0].reported, "Thirdbot");
+    assert.equal(reports[0].match.id, match.id);
+    assert.equal(reports[0].match.voids.length, 3);
+    assert.equal(reports[0].chat, "Thirdbot: ez\rHostbot: you voided that");
+    await sleep(400); // the store's save
+    const saved = readFileSync(join(dataDir4, "db.json"), "utf8");
+    assert.ok(!saved.includes("10.9.9.") && !saved.includes("email.invalid"), "no addresses or email kept with the report");
+    // The moderation tool shows the same, through the server and from a copy of the data file.
+    const tool = (args, env = {}) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [join(ROOT, "scripts/moderate.mjs"), ...args], { env: { ...process.env, ...env } });
+        let out = "";
+        child.stdout.on("data", (d) => (out += d));
+        child.stderr.on("data", (d) => (out += d));
+        child.on("close", (code) => resolve({ code, out }));
+      });
+    const online = await tool(["record", "Thirdbot", "--url", HTTP4], { ADMIN_TOKEN });
+    assert.equal(online.code, 0, online.out);
+    assert.match(online.out, new RegExp(`voids against it: ${rAfter.disagreed} disagreed, ${rAfter.unanswered} unanswered`));
+    assert.match(online.out, /unanswered {2}Hostbot: Hostbot won {2}against: Thirdbot/);
+    const copy = join(dataDir4, "copy.json");
+    writeFileSync(copy, saved);
+    const offline = await tool(["reports", "--data", copy]);
+    assert.equal(offline.code, 0, offline.out);
+    assert.match(offline.out, /Hostbot reported Thirdbot/);
+    assert.match(offline.out, / {2}\| Hostbot: you voided that/);
+    assert.notEqual((await tool(["reports", "--url", HTTP4], { ADMIN_TOKEN: "" })).code, 0, "no token, no reports");
   });
 
   console.log(`\n${results.length} checks passed`);
